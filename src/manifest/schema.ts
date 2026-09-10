@@ -40,9 +40,19 @@ const ALLOWED_ENV_KEYS = new Set([
 ]);
 /** `owner/name`, the only shape `extraKnownMarketplaces` github sources take. */
 const REPO_SHAPE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+/**
+ * A dot segment is two legal characters either side of a slash, so the shape
+ * above cannot tell `../evil` from `a.b/c` — and a consumer joining it against
+ * `https://github.com/` gets `https://github.com/evil`, a different repository
+ * than the manifest named. Checked separately rather than by tightening the
+ * shape, because a dot is genuinely legal inside an owner or a repo name.
+ */
+const DOT_SEGMENTS = new Set([".", ".."]);
 const VERSION_SHAPE = /^\d+(\.\d+){0,2}(-[A-Za-z0-9.-]+)?$/;
 /** AWS region labels: `us-east-1`, `ap-southeast-2`, `us-gov-west-1`. */
 const REGION_SHAPE = /^[a-z]{2}(-[a-z]+)+-\d+$/;
+/** `2026-10-01`, optionally with a time and zone. */
+const ISO_DATE_SHAPE = /^\d{4}-\d{2}-\d{2}([T ][\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/;
 /**
  * Control characters, which a notice must not use to forge panel lines or to
  * hide text from the reader. Stripping them is the whole point of the rule
@@ -171,7 +181,7 @@ function validateMarketplaces(value: unknown, fail: Fail): JsonObject | undefine
     }
     const source = entry.source;
     if (source.source === "github") {
-      if (typeof source.repo !== "string" || !REPO_SHAPE.test(source.repo)) {
+      if (typeof source.repo !== "string" || !isSafeRepo(source.repo)) {
         fail(`${path}.source.repo`, "must be owner/name");
         continue;
       }
@@ -200,8 +210,9 @@ function validatePlugins(
     if (typeof entry === "boolean") {
       out[name] = entry;
     } else if (Array.isArray(entry) && entry.every((item) => typeof item === "string")) {
-      // The published settings schema allows a scope list as well as a boolean.
-      out[name] = entry as string[];
+      // Copied, not aliased: every other field is rebuilt, and a validated
+      // manifest that changes when its input is mutated is not validated.
+      out[name] = [...(entry as string[])];
     } else {
       fail(`defaults.enabledPlugins.${name}`, "must be a boolean or an array of strings");
     }
@@ -276,7 +287,11 @@ function validateNotices(value: unknown, fail: Fail): ManifestNotice[] | undefin
       fail(`${path}.level`, "must be info, warning or error");
       continue;
     }
-    if (typeof message !== "string" || message.trim() === "") {
+    // Sanitise before the emptiness check, not after: `trim` leaves control
+    // characters in place, so a message of nothing but them would otherwise
+    // pass here and render as a blank row in the panel.
+    const text = typeof message === "string" ? sanitizeNotice(message) : undefined;
+    if (text === undefined || text === "") {
       fail(`${path}.message`, "must be a non-empty string");
       continue;
     }
@@ -286,7 +301,7 @@ function validateNotices(value: unknown, fail: Fail): ManifestNotice[] | undefin
     }
     out.push({
       level,
-      message: sanitizeNotice(message),
+      message: text,
       ...(typeof expiresAt === "string" ? { expiresAt } : {}),
     });
   }
@@ -327,8 +342,18 @@ function isHttpsUrl(value: string): boolean {
   }
 }
 
+/**
+ * ISO 8601 as far as we need it: a date, optionally with a time. `Date.parse`
+ * alone accepts `March 5, 2026`, which the rejection message promises we do
+ * not — and a manifest that says one thing and enforces another is how a rule
+ * quietly stops holding.
+ */
 function isIsoDate(value: string): boolean {
-  return !Number.isNaN(Date.parse(value));
+  return ISO_DATE_SHAPE.test(value) && !Number.isNaN(Date.parse(value));
+}
+
+function isSafeRepo(repo: string): boolean {
+  return REPO_SHAPE.test(repo) && !repo.split("/").some((part) => DOT_SEGMENTS.has(part));
 }
 
 function isPlainObject(value: unknown): value is Record<string, JsonValue> {

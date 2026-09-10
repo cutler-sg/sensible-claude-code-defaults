@@ -334,10 +334,24 @@ describe("validateManifest", () => {
     // cannot reject `../evil`. It is accepted here and only becomes safe because
     // a consumer builds `github.com/<repo>`, where the segments then normalise
     // away. Worth knowing: the guard is the URL join, not this regex.
-    it("accepts a two-segment repo made only of dots, which the shape cannot distinguish", () => {
-      const manifest = accept(marketplace({ source: "github", repo: "../evil" }));
+    it.each([["../evil"], ["./evil"], ["acme/.."], ["../.."]])(
+      "refuses %s, which would resolve to a repository the manifest did not name",
+      (repo) => {
+        // `new URL("../evil", "https://github.com/")` is `https://github.com/evil`,
+        // so a dot segment silently redirects the marketplace somewhere else.
+        expect(refuse(marketplace({ source: "github", repo }))).toEqual([
+          {
+            path: "defaults.extraKnownMarketplaces.acme-tools.source.repo",
+            problem: "must be owner/name",
+          },
+        ]);
+      },
+    );
+
+    it("still accepts a dot inside an owner or repository name", () => {
+      const manifest = accept(marketplace({ source: "github", repo: "a.b/c.d" }));
       expect(manifest.defaults.extraKnownMarketplaces).toEqual({
-        "acme-tools": { source: { source: "github", repo: "../evil" } },
+        "acme-tools": { source: { source: "github", repo: "a.b/c.d" } },
       });
     });
 
@@ -728,11 +742,12 @@ describe("validateManifest", () => {
       );
     });
 
-    it("accepts a message that is nothing but control characters, having stripped it bare", () => {
-      expect(accept(notices({ level: "info", message: "\u0000\u0007\u001B" })).notices[0]).toEqual({
-        level: "info",
-        message: "",
-      });
+    it("refuses a message that is nothing but control characters", () => {
+      // `trim` leaves them in place, so emptiness has to be judged after
+      // sanitising or the panel renders a notice row with no text in it.
+      expect(refuse(notices({ level: "info", message: "\u0000\u0007\u001B" }))).toEqual([
+        { path: "notices[0].message", problem: "must be a non-empty string" },
+      ]);
     });
 
     it("leaves a message of exactly the cap untouched", () => {
