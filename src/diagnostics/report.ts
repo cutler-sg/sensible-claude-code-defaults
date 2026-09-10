@@ -23,16 +23,25 @@
 import { SECRET_KEYS } from "../config/managedKeys.js";
 import type { CheckResult, HealthReport, Level, ManifestStatus } from "../health/types.js";
 import type { LogLine, RecentLog } from "../util/log.js";
-import { redact, redactValue } from "../util/redact.js";
+import {
+  REDACTED,
+  redact,
+  redactValue,
+  registerSecretsIn,
+  registerSecretsInText,
+} from "../util/redact.js";
 
 /**
  * The `settings.json` as it stands, or why there is nothing to show.
  *
  * `malformed` carries the raw text rather than a parsed document, and that text
- * is the user's file — so it is scrubbed by `redact` alone, with no key rule to
- * fall back on. A malformed file is also the case most likely to have a token
- * in it in an unexpected shape, which is why the registry matters more here
- * than anywhere else in the report.
+ * is the user's file — so there are no keys for a key rule to apply to. A
+ * malformed file is also the case most likely to hold a token in an unexpected
+ * shape: `reader.ts` names an unquoted pasted key as the most likely way a user
+ * corrupts this file, and that is a shape that both breaks the parse and puts
+ * the credential in plain text. So this branch gets its own two rules — the
+ * registry armed from the raw bytes, and every line naming a secret key
+ * stripped of its value.
  */
 export type SettingsForReport =
   | { kind: "ok"; data: unknown }
@@ -97,6 +106,16 @@ const SECRET_LEAVES: ReadonlySet<string> = new Set(
 );
 
 export function buildDiagnostics(deps: DiagnosticsDeps): string {
+  armRegistry(deps.settings);
+
+  // Arm the registry before anything is rendered. It is fed by the credential
+  // store, so it holds something only once this window has read a token — and
+  // `copyDiagnostics` triggers no health run, so as the first action of a
+  // window it is empty. The settings document in hand is the best available
+  // source for what to scrub, and it has to be read *first*: the value it
+  // carries turns up again in a check detail and a log line further down, where
+  // no key rule can reach it.
+
   const sections = [
     "## Sensible Claude Code Defaults — diagnostics",
     "",
@@ -115,6 +134,27 @@ export function buildDiagnostics(deps: DiagnosticsDeps): string {
     `_The Bedrock API key is replaced with ${"`«redacted»`"} everywhere above._`,
   ];
   return `${sections.join("\n")}\n`;
+}
+
+/**
+ * Feed the registry from the file we are about to quote back.
+ *
+ * The malformed branch is the one that needs this most and is the one that had
+ * it least: `readTokenFromSettings` returns before its `register()` on any read
+ * that is not `ok`, so the single file state whose rendering depends on the
+ * registry alone was the state guaranteeing the registry was empty.
+ */
+function armRegistry(settings: SettingsForReport): void {
+  switch (settings.kind) {
+    case "ok":
+      registerSecretsIn(settings.data, SECRET_LEAVES);
+      return;
+    case "malformed":
+      registerSecretsInText(settings.raw, SECRET_LEAVES);
+      return;
+    case "absent":
+      return;
+  }
 }
 
 function environment(deps: DiagnosticsDeps): string {
@@ -163,14 +203,16 @@ function settingsSection(deps: DiagnosticsDeps): string {
       return `${heading}\n\nThere is no settings file yet.`;
     case "malformed":
       // No key rule is available: the document did not parse, so there are no
-      // keys. `redact` alone stands between the raw text and a public issue,
-      // which is exactly the case the registry exists for.
+      // keys to apply one to. `armRegistry` has read what it could out of the
+      // raw bytes, and `strippedLines` is the belt to that braces — a line
+      // naming a secret key loses its value whatever shape the value is in,
+      // including shapes too short or too odd for the registry to have guessed.
       return [
         heading,
         "",
         "The settings file could not be read as JSON. It is shown as-is:",
         "",
-        fence(redact(deps.settings.raw)),
+        fence(redact(strippedLines(deps.settings.raw))),
       ].join("\n");
     case "ok":
       return [
@@ -179,6 +221,31 @@ function settingsSection(deps: DiagnosticsDeps): string {
         fence(JSON.stringify(redactValue(deps.settings.data, SECRET_LEAVES), null, 2), "json"),
       ].join("\n");
   }
+}
+
+/**
+ * Line-oriented redaction for a file that did not parse.
+ *
+ * A parsed document is redacted by key; a malformed one has no keys, so the
+ * line is the coarsest thing that still stands in for one. Any line whose text
+ * names a `SECRET_KEYS` leaf loses everything after the key name — the value is
+ * on that line in every hand-edit that produces this state, and the key name
+ * itself is what the reader needs in order to know which setting was removed.
+ *
+ * Coarse on purpose. This branch renders a file we could not understand into
+ * something a stranger will read; over-redacting one line costs a support
+ * engineer a question, and under-redacting it costs the user their credential.
+ */
+function strippedLines(raw: string): string {
+  return raw
+    .split(/\r\n|[\n\r\u2028\u2029]/u)
+    .map((line) => {
+      const leaf = [...SECRET_LEAVES].find((name) => line.includes(name));
+      if (leaf === undefined) return line;
+      const at = line.indexOf(leaf) + leaf.length;
+      return `${line.slice(0, at)}${REDACTED}`;
+    })
+    .join("\n");
 }
 
 function healthSection(report: HealthReport | undefined): string {

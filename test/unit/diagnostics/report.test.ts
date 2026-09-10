@@ -18,7 +18,7 @@ import { runAll } from "../../../src/health/runner.js";
 import type { ClaudeCodeDetection, HealthReport } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import { Logger } from "../../../src/util/log.js";
-import { forgetAll, REDACTED } from "../../../src/util/redact.js";
+import { forgetAll, REDACTED, registeredCount } from "../../../src/util/redact.js";
 import { expectNoTokenLeak } from "../ui/credentialDeps.js";
 
 /**
@@ -218,6 +218,122 @@ describe("§10.4 #1 — a known token appears nowhere in the diagnostics", () =>
 
     expect(text).not.toContain(neverSeen);
     expect(text).toContain(`"AWS_BEARER_TOKEN_BEDROCK": "${REDACTED}"`);
+  });
+});
+
+/**
+ * F1 and F4: the report arms the registry from the document it is about to
+ * render, so a second copy of the key under a key we do not manage is scrubbed
+ * even when nothing has read a token this window.
+ *
+ * `copyDiagnostics` triggers no health run, so as the first action of a window
+ * the registry is empty — and the malformed case is worse than empty by
+ * construction: `readTokenFromSettings` returns before its `register()` on any
+ * read that is not `ok`, so the one file state that relies on the registry
+ * exclusively is the one state guaranteeing it holds nothing.
+ */
+describe("the report arms the registry from the file it renders", () => {
+  /** No pattern matches this, so only the registry can catch it. */
+  const PASTED = "Zq7Xk2Mv9Tb4Rn6Wc8Jd3Fp5Hs1Ly0Gu";
+
+  it("scrubs a duplicate copy under an unmanaged key, with an empty registry", () => {
+    forgetAll();
+
+    const text = buildDiagnostics(
+      deps({
+        settings: {
+          kind: "ok",
+          data: { env: { AWS_BEARER_TOKEN_BEDROCK: PASTED }, notes: `my key is ${PASTED}` },
+        },
+      }),
+    );
+
+    expect(text).not.toContain(PASTED);
+    expect(text).toContain(`"AWS_BEARER_TOKEN_BEDROCK": "${REDACTED}"`);
+  });
+
+  it("scrubs a copy that reached a check detail, with an empty registry", () => {
+    forgetAll();
+    const report: HealthReport = {
+      at: "2026-09-11T08:59:00.000Z",
+      results: [
+        {
+          id: "cred.leak",
+          group: "Credential",
+          level: "error",
+          label: "Your key is in a file in your project",
+          detail: `found ${PASTED} in .env`,
+          fix: { kind: "none" },
+        },
+      ],
+      counts: { pass: 0, info: 0, warning: 0, error: 1, skipped: 0 },
+    };
+
+    const text = buildDiagnostics(
+      deps({
+        settings: { kind: "ok", data: { env: { AWS_BEARER_TOKEN_BEDROCK: PASTED } } },
+        report,
+      }),
+    );
+
+    expect(text).not.toContain(PASTED);
+  });
+
+  /**
+   * The end-to-end F1 reproduction: the corruption `reader.ts` itself names as
+   * the most likely way a user breaks this file — a key pasted in unquoted —
+   * which is also the shape guaranteed to reach the report through the one
+   * branch that has no key rule at all.
+   */
+  it("scrubs an unquoted pasted key out of a malformed file", () => {
+    forgetAll();
+
+    const text = buildDiagnostics(
+      deps({
+        settings: {
+          kind: "malformed",
+          raw: `{\n  "env": {\n    "AWS_BEARER_TOKEN_BEDROCK": ${PASTED}\n  }\n}\n`,
+        },
+      }),
+    );
+
+    expect(text).toContain("could not be read as JSON");
+    expect(text).not.toContain(PASTED);
+    expect(text).toContain(REDACTED);
+  });
+
+  /**
+   * Line-oriented redaction, so that the value is gone even when the registry
+   * guess misses it — a key split across two lines, say, where no single line
+   * holds the whole value.
+   */
+  it("strips the value on any line naming a secret key, whatever its shape", () => {
+    forgetAll();
+
+    const text = buildDiagnostics(
+      deps({
+        settings: {
+          kind: "malformed",
+          raw: '  AWS_BEARER_TOKEN_BEDROCK = ab\n  "AWS_REGION": "us-east-1"\n',
+        },
+      }),
+    );
+
+    // Too short to register, and no pattern knows it — the line rule is the
+    // only thing that can remove it.
+    expect(text).not.toContain("= ab");
+    expect(text).toContain("AWS_BEARER_TOKEN_BEDROCK");
+    // A line that names no secret key is untouched, so the file is still
+    // readable enough to diagnose.
+    expect(text).toContain('"AWS_REGION": "us-east-1"');
+  });
+
+  it("registers nothing from a document with no secret key in it", () => {
+    forgetAll();
+
+    buildDiagnostics(deps({ settings: { kind: "ok", data: { model: "sonnet" } } }));
+
+    expect(registeredCount()).toBe(0);
   });
 });
 
