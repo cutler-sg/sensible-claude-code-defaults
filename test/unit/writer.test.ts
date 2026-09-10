@@ -95,7 +95,9 @@ describe("writeSettingsAtomic (FR-2.3)", () => {
   });
 
   it("tightens a pre-existing 0664 file to 0600", async () => {
-    await fs.writeFile(file, "{}\n", { mode: 0o664 });
+    await fs.writeFile(file, "{}\n");
+    // Explicit chmod: `mode:` on writeFile is masked by umask (022 on CI runners).
+    await fs.chmod(file, 0o664);
     expect(await mode(file)).toBe(0o664);
     await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
     expect(await mode(file)).toBe(0o600);
