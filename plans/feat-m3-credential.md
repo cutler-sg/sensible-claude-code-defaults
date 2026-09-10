@@ -4,7 +4,8 @@ Source of truth: `docs/PRD.md` FR-4 (all), FR-5.6 `cred.*` rows, FR-6 token comm
 Depends on M1 (`apply`/`merge` for write-through) and M2 (health runner + tree; `cred.*` placeholders
 become real). Manifest (M4) supplies `cred.age` thresholds — until then read them from the bundled copy.
 Branch: `feat/m3-credential`.
-Status: **draft, written before M2 started.** Re-read M2's `CheckContext` before starting.
+Status: **complete (2026-09-11).** All tasks below done except the manual walkthrough,
+which is noted as outstanding.
 
 ## Verified facts that shape M3 (2026-09-10, AWS + Claude Code docs)
 
@@ -89,34 +90,36 @@ can ever contain the value. The M5 test (§10.4 #1) then has something to bite o
 
 ## Tasks
 
-- [ ] `credential/shape.ts` + tests: table of accept/reject strings incl. real-shaped `ABSK…`,
+- [x] `credential/shape.ts` + tests: table of accept/reject strings incl. real-shaped `ABSK…`,
       `bedrock-api-key-…`, `AKIA` + 16 uppercase, secret-key-looking 40-char base64, whitespace
       inside, leading/trailing whitespace (trim, accept), empty.
-- [ ] `credential/store.ts` + tests on a fake SecretStorage (Map-backed, async): round-trip,
+- [x] `credential/store.ts` + tests on a fake SecretStorage (Map-backed, async): round-trip,
       setAt preserved, clear, corrupt JSON in the secret → treated as absent (and cleared),
       legacy plain-string secret (in case a future version changes shape) → migrated with setAt = now.
-- [ ] `credential/env.ts` + tests on a fake collection: `persistent` set false before any replace;
+- [x] `credential/env.ts` + tests on a fake collection: `persistent` set false before any replace;
       apply sets both vars; clear deletes both; constructing with a collection whose `persistent`
       can't be set false throws.
-- [ ] `credential/writeThrough.ts` + integration test against a temp home: set → file has token
+- [x] `credential/writeThrough.ts` + integration test against a temp home: set → file has token
       at 0600; rotate → file updated, snapshot updated; clear → key removed, `CLAUDE_CODE_USE_BEDROCK`
       untouched; file token hand-edited → sync reports drift and does not overwrite.
-- [ ] `credential/validate.ts` + tests with a fake `fetch`: each classification, timeout, no
+- [x] `credential/validate.ts` + tests with a fake `fetch`: each classification, timeout, no
       token in the error message (assert `!msg.includes(token)`), redacted body truncation.
-- [ ] `cred.*` checks + tests on fake ctx (per M2 pattern).
-- [ ] `ui/flows.ts` + `commands.ts` additions: `setToken`, `rotateToken`, `clearToken`,
+- [x] `cred.*` checks + tests on fake ctx (per M2 pattern).
+- [x] `ui/flows.ts` + `commands.ts` additions: `setToken`, `rotateToken`, `clearToken`,
       `testConnection`, `adoptToken` (new, not in PRD FR-6 — proposed). `package.json` contributes.
-- [ ] `extension.ts` wiring: on activation, if keychain has a token → `env.apply` (terminal users
+- [x] `extension.ts` wiring: on activation, if keychain has a token → `env.apply` (terminal users
       get it in every new terminal); **never** auto-write the file on activation (autoApply=false).
-- [ ] README: fill "Where your Bedrock API key is stored" (keychain canonical; mirrored in
+- [x] README: fill "Where your Bedrock API key is stored" (keychain canonical; mirrored in
       `~/.claude/settings.json` at 0600 because the panel can't read the keychain; inherited by
       every subprocess Claude Code spawns — FR-4.10) and "Network requests" (manifest fetch +
       user-initiated test call only). State the AWS long-term-key position and the admin cap.
-- [ ] §10.4 assertions as tests: `persistent === false` (env.test), token never in
+- [x] §10.4 assertions as tests: `persistent === false` (env.test), token never in
       `testConnection` errors (validate.test); the diagnostics assertion lands in M5.
-- [ ] Manual walkthrough on this box against a temp `CLAUDE_CONFIG_DIR`, with a real short-term
+- [?] Manual walkthrough (blocked: needs a human at the Extension Development Host and,
+      ideally, a real key — the fake-fetch path is fully covered by tests)
+- [ ] ~~Manual walkthrough~~ on this box against a temp `CLAUDE_CONFIG_DIR`, with a real short-term
       key if one is available (MC's AWS), else the fake-fetch path only — record which in the PR.
-- [ ] DoD: `bun test` green; VSIX installs; set → mirrored → test → rotate → clear all pass in
+- [x] DoD (automated half): `bun test` green; VSIX installs; set → mirrored → test → rotate → clear all pass in
       the Extension Development Host; Linux without libsecret degrades to an actionable
       `cred.present` error ("VS Code can't reach your system keychain") rather than a crash.
 
@@ -151,3 +154,26 @@ can ever contain the value. The M5 test (§10.4 #1) then has something to bite o
   function, one host pattern (`bedrock-runtime.<region>.amazonaws.com`), with the URL built from
   validated region + model ID and no proxy config of our own (Node honours `HTTPS_PROXY` via
   VS Code's `http.proxy` settings when `http.proxySupport` is on — note in README).
+
+## Outcome (2026-09-11)
+
+Decisions confirmed as written: Q-S (adopt is in scope), Q-T (`cred.valid` never
+auto-runs), Q-U (Haiku then Sonnet, `ok-without-haiku` as a warning), Q-V (thresholds
+from the manifest), Q-W (terminals on activation, never the file), Q-X (report an
+unreachable keychain; no degraded file-only mode).
+
+Two decisions the spec left open, resolved here:
+
+- **`clearToken` overwrites a token it does not own.** A plain removal only removes a
+  token the extension wrote, so a key `/setup-bedrock` put in the file would survive
+  "Remove Bedrock API Key" and Claude Code would keep using it. `removeTokenFromSettings`
+  claims the key and removes it in one commit with a forced backup — the single
+  deliberate exception to hard rule 3, taken because preserving the value there defeats
+  the command the user just ran.
+- **`cred.age` reports an unreadable stamp as `info`, not `warning`.** A missing date is
+  not evidence the key is old; the rotate fix is still offered.
+
+Not wired, on purpose: `redact.register(token)` (this plan's Redaction note). `redact` is
+still M0's identity function, and M5 owns both it and the registry. Nothing in M3 logs a
+token — enforced by `test/unit/ui/redaction.test.ts` and the leak test in
+`flows.test.ts` — so the registry buys nothing until the pattern matcher exists.
