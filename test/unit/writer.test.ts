@@ -139,7 +139,7 @@ describe("writeSettingsAtomic (FR-2.3)", () => {
     await fs.mkdir(realDir);
     const real = path.join(realDir, "claude-settings.json");
     await fs.writeFile(real, '{"old": true}\n', { mode: 0o600 });
-    await fs.symlink(real, file);
+    await fs.symlink(real, file, "file");
 
     await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
 
@@ -417,6 +417,13 @@ describe("backups (FR-2.4, plan Q-H)", () => {
   }
 });
 
+/**
+ * Every `symlink` here passes an explicit `"dir"` or `"file"` type. On POSIX the
+ * argument is ignored; on Windows it is the difference between a link the walk
+ * can follow and one it cannot, because Node defaults to a *file* link and a
+ * file link to a directory resolves to nothing. Omitting it made these guard
+ * tests pass on Windows for the wrong reason: no link, so nothing to defeat.
+ */
 describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
   it("refuses when the claude dir is a symlink into a workspace", async () => {
     const workspace = path.join(dir, "proj");
@@ -425,7 +432,7 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     const home = path.join(dir, "home");
     await fs.mkdir(home);
     const link = path.join(home, ".claude");
-    await fs.symlink(real, link);
+    await fs.symlink(real, link, "dir");
 
     await expect(
       writeRawAtomic(path.join(link, "settings.json"), '{"pwned":true}\n', {
@@ -444,7 +451,7 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     const real = path.join(dir, "real-proj");
     await fs.mkdir(path.join(real, ".claude"), { recursive: true });
     const link = path.join(dir, "proj-link");
-    await fs.symlink(real, link);
+    await fs.symlink(real, link, "dir");
     const target = path.join(real, ".claude", "settings.json");
 
     await expect(
@@ -458,7 +465,7 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     await fs.mkdir(workspace, { recursive: true });
     const target = path.join(workspace, "settings.json");
     await fs.writeFile(target, "{}\n");
-    await fs.symlink(target, file);
+    await fs.symlink(target, file, "file");
 
     await expect(
       writeRawAtomic(file, '{"pwned":true}\n', { workspaceFolders: [workspace] }),
@@ -472,7 +479,7 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     const workspace = path.join(dir, "proj");
     await fs.mkdir(workspace, { recursive: true });
     const link = path.join(dir, "linked-backups");
-    await fs.symlink(workspace, link);
+    await fs.symlink(workspace, link, "dir");
 
     await expect(
       backupSettings(file, link, new Date(), { workspaceFolders: [workspace] }),
@@ -485,7 +492,7 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     await fs.mkdir(workspace, { recursive: true });
     const target = path.join(workspace, "settings.json");
     await fs.writeFile(target, "{}\n");
-    await fs.symlink(target, file);
+    await fs.symlink(target, file, "file");
 
     await expect(
       backupSettings(file, backups, new Date(), { workspaceFolders: [workspace] }),
@@ -500,7 +507,7 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     const victim = path.join(workspace, "settings.json");
     await fs.writeFile(victim, "{}\n");
     const link = path.join(dir, "linked-settings.json");
-    await fs.symlink(victim, link);
+    await fs.symlink(victim, link, "file");
 
     await expect(
       restoreBackup(info?.path ?? "", link, { workspaceFolders: [workspace] }),
@@ -514,7 +521,7 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     const planted = path.join(workspace, "settings.2026-09-10T00-00-00.000Z.json");
     await fs.writeFile(planted, '{"planted":true}\n');
     const link = path.join(dir, "linked-backup.json");
-    await fs.symlink(planted, link);
+    await fs.symlink(planted, link, "file");
 
     await expect(
       restoreBackup(link, file, { workspaceFolders: [workspace] }),
@@ -527,7 +534,7 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     const real = path.join(dir, "dotfiles", "settings.json");
     await fs.mkdir(path.dirname(real), { recursive: true });
     await fs.writeFile(real, "{}\n");
-    await fs.symlink(real, file);
+    await fs.symlink(real, file, "file");
 
     await writeRawAtomic(file, '{"ok":true}\n', { workspaceFolders: [workspace] });
 

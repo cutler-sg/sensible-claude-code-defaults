@@ -219,15 +219,21 @@ describe("readSettings — the parse error never quotes file content", () => {
 });
 
 describe("readSettings — I/O errors propagate", () => {
-  it.skipIf(process.getuid?.() === 0)("does not swallow EACCES", async () => {
-    await write("{}\n");
-    await fs.chmod(file, 0o000);
-    try {
-      await expect(readSettings(file)).rejects.toMatchObject({ code: "EACCES" });
-    } finally {
-      await fs.chmod(file, 0o600);
-    }
-  });
+  // Root bypasses the mode bits, and Windows does not have them at all: a
+  // `chmod(0o000)` there is a no-op and the read simply succeeds. Neither case
+  // says anything about whether the error is swallowed, which is the assertion.
+  it.skipIf(process.getuid?.() === 0 || process.platform === "win32")(
+    "does not swallow EACCES",
+    async () => {
+      await write("{}\n");
+      await fs.chmod(file, 0o000);
+      try {
+        await expect(readSettings(file)).rejects.toMatchObject({ code: "EACCES" });
+      } finally {
+        await fs.chmod(file, 0o600);
+      }
+    },
+  );
 
   it("does not report a directory as absent", async () => {
     const asDir = path.join(dir, "adir");
