@@ -12,13 +12,20 @@
  * and the panel renders from cache immediately). Nothing here imports `vscode`;
  * the URL arrives as a function so a changed setting is picked up on the next
  * refresh rather than at wiring time.
+ *
+ * Two things make the throttle actually hold (F6). The attempt is stamped
+ * *before* the resolver is called, not after it returns, so a `globalState`
+ * that throws cannot leave the window fetching on every health run — and every
+ * `settings.json` write by Claude Code is a health run. And a refresh already
+ * in flight is joined rather than duplicated: a fetch window is 5 s wide, which
+ * is plenty for activation and a watcher event to overlap inside.
  */
 
 import type { ManifestStatus } from "../health/types.js";
 import { BUNDLED_MANIFEST } from "../manifest/bundled.js";
 import type { ManifestCache } from "../manifest/cache.js";
 import type { Resolution } from "../manifest/resolve.js";
-import { resolveManifest } from "../manifest/resolve.js";
+import { resolveManifest, THROTTLE_MS } from "../manifest/resolve.js";
 import type { Manifest } from "../manifest/types.js";
 import type { Logger } from "../util/log.js";
 
@@ -70,45 +77,78 @@ export function createManifestHolder(deps: ManifestHolderDeps): ManifestHolder {
     status: { revision: BUNDLED_MANIFEST.revision, source: "bundled" },
   };
   let lastAttemptAt: string | undefined;
+  // The refresh in flight, if any. Every overlapping caller awaits this one
+  // rather than starting a second fetch, and each gets the same answer — a
+  // `false` for the joiners would leave the host declining to repaint a panel
+  // that has in fact just changed.
+  let inFlight: Promise<boolean> | undefined;
+
+  const resolve = async (options: { force?: boolean } | undefined): Promise<boolean> => {
+    const now = deps.now ?? (() => new Date());
+    // Stamped before the call, not after it returns. `resolveManifest` decides
+    // whether the throttle admits this attempt, and it is given the same clock,
+    // so recording the intent up front costs nothing when it declines and is
+    // the whole fix when it throws on the way back (F6).
+    const previousAttemptAt = lastAttemptAt;
+    if (shouldAttempt(previousAttemptAt, now(), options?.force === true)) {
+      lastAttemptAt = now().toISOString();
+    }
+
+    let resolution: Resolution;
+    try {
+      resolution = await resolveManifest({
+        url: deps.url(),
+        extensionVersion: deps.extensionVersion,
+        cache: deps.cache,
+        ...(previousAttemptAt === undefined ? {} : { lastAttemptAt: previousAttemptAt }),
+        ...(options?.force === true ? { force: true } : {}),
+        ...(deps.now === undefined ? {} : { now: deps.now }),
+        ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+        ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
+      });
+    } catch (error) {
+      // `resolveManifest` is documented never to throw, and the fetch layer is
+      // written so it cannot. This is the belt to that braces: a throw here
+      // would come out of `void refresh()` as an unhandled rejection with the
+      // panel stuck on its welcome text. The attempt is already stamped, so a
+      // `globalState` that throws every time still costs one fetch an hour.
+      deps.log.error(`Could not resolve the recommended settings: ${messageOf(error)}`);
+      return false;
+    }
+
+    report(deps.log, resolution);
+
+    const next = toResolved(resolution);
+    if (sameStatus(held.status, next.status)) return false;
+    held = next;
+    return true;
+  };
 
   return {
     current: () => held,
-    async refresh(options): Promise<boolean> {
-      let resolution: Resolution;
-      try {
-        resolution = await resolveManifest({
-          url: deps.url(),
-          extensionVersion: deps.extensionVersion,
-          cache: deps.cache,
-          ...(lastAttemptAt === undefined ? {} : { lastAttemptAt }),
-          ...(options?.force === true ? { force: true } : {}),
-          ...(deps.now === undefined ? {} : { now: deps.now }),
-          ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
-          ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
-        });
-      } catch (error) {
-        // `resolveManifest` is documented never to throw, and the fetch layer
-        // is written so it cannot. This is the belt to that braces: a throw
-        // here would come out of `void refresh()` as an unhandled rejection
-        // with the panel stuck on its welcome text.
-        deps.log.error(`Could not resolve the recommended settings: ${messageOf(error)}`);
-        return false;
-      }
-
-      // The write-back the throttle is made of. It happens on every resolution,
-      // including the ones that fell through to the cache or the bundle: an
-      // attempt that failed is still an attempt, and only recording the
-      // successes would retry a dead network on every health run.
-      if (resolution.attemptedAt !== undefined) lastAttemptAt = resolution.attemptedAt;
-
-      report(deps.log, resolution);
-
-      const next = toResolved(resolution);
-      if (sameStatus(held.status, next.status)) return false;
-      held = next;
-      return true;
+    refresh(options): Promise<boolean> {
+      // Joined, not queued: the answer an overlapping caller wants is the
+      // answer to the question already being asked.
+      if (inFlight !== undefined) return inFlight;
+      const running = resolve(options).finally(() => {
+        inFlight = undefined;
+      });
+      inFlight = running;
+      return running;
     },
   };
+}
+
+/**
+ * FR-3.3's window, restated here so the attempt can be stamped before the
+ * resolver runs. `resolveManifest` applies the same rule against the same clock
+ * and remains the authority on whether a request is made; this only decides
+ * whether to remember having tried.
+ */
+function shouldAttempt(lastAttemptAt: string | undefined, now: Date, force: boolean): boolean {
+  if (force) return true;
+  const last = lastAttemptAt === undefined ? Number.NaN : Date.parse(lastAttemptAt);
+  return Number.isNaN(last) || now.getTime() - last >= THROTTLE_MS;
 }
 
 function toResolved(resolution: Resolution): ResolvedManifest {

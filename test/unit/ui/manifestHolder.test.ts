@@ -176,6 +176,122 @@ describe("FR-3.3 — one fetch per hour per window", () => {
     expect(requests).toBe(3);
   });
 
+  /**
+   * F6. The throttle stopped engaging when `globalState` misbehaved: a throw
+   * from `cache.save`/`cache.load` left `resolveManifest` before it returned,
+   * so `lastAttemptAt` was never assigned and every subsequent health run
+   * fetched again — and every `settings.json` write by Claude Code triggers a
+   * health run.
+   *
+   * The previous test for this case asserted only that `refresh()` resolves
+   * `false` and never counted requests, which is precisely why the regression
+   * was invisible.
+   */
+  it("still counts the attempt when the cache throws (F6)", async () => {
+    // `offline`, so the chain reaches `cache.load` at all: a successful fetch
+    // returns before the cache is consulted, which is what made the first
+    // version of this test pass without the fix.
+    const manifests = holder({
+      fetch: offline,
+      cache: {
+        load: () => {
+          throw new Error("globalState is unavailable");
+        },
+        save: async () => {},
+      },
+    });
+
+    await manifests.refresh();
+    expect(requests).toBe(1);
+
+    clock = new Date(START.getTime() + THROTTLE_MS - 1);
+    await manifests.refresh();
+    await manifests.refresh();
+
+    expect(requests).toBe(1);
+  });
+
+  it("still counts the attempt when saving to the cache throws (F6)", async () => {
+    const manifests = holder({
+      fetch: serving(() => manifest({ revision: "remote-1" })),
+      cache: {
+        load: () => undefined,
+        save: () => Promise.reject(new Error("globalState is full")),
+      },
+    });
+
+    await manifests.refresh();
+    expect(requests).toBe(1);
+
+    clock = new Date(START.getTime() + THROTTLE_MS - 1);
+    await manifests.refresh();
+
+    expect(requests).toBe(1);
+  });
+
+  /**
+   * F6, second half. Three concurrent `refresh()` calls made three fetches:
+   * nothing recorded an attempt until the first one *returned*, and a fetch
+   * window is 5 s wide — plenty for activation and a watcher event to overlap.
+   */
+  it("makes one request when three refreshes overlap (F6)", async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const manifests = holder({
+      fetch: (async () => {
+        requests += 1;
+        await gate;
+        return new Response(JSON.stringify(manifest({ revision: "remote-1" })), {
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof globalThis.fetch,
+    });
+
+    const all = Promise.all([manifests.refresh(), manifests.refresh(), manifests.refresh()]);
+    release();
+    const changed = await all;
+
+    expect(requests).toBe(1);
+    // Every caller gets the answer, not just the one that did the work: a
+    // `false` here would leave the host declining to repaint a panel that has
+    // in fact just changed.
+    expect(changed).toEqual([true, true, true]);
+    expect(manifests.current().manifest.revision).toBe("remote-1");
+  });
+
+  it("joins a forced refresh to the one already in flight (F6)", async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const manifests = holder({
+      fetch: (async () => {
+        requests += 1;
+        await gate;
+        return new Response(JSON.stringify(manifest({ revision: "remote-1" })), {
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof globalThis.fetch,
+    });
+
+    const all = Promise.all([manifests.refresh(), manifests.refresh({ force: true })]);
+    release();
+    await all;
+
+    expect(requests).toBe(1);
+  });
+
+  it("lets a later forced refresh through once the first has settled", async () => {
+    const manifests = holder({ fetch: serving(() => manifest({ revision: "remote-1" })) });
+
+    await manifests.refresh();
+    await manifests.refresh({ force: true });
+
+    expect(requests).toBe(2);
+  });
+
   it("restarts the hour from a forced attempt, so a manual check is not free", async () => {
     const manifests = holder({ fetch: serving(() => manifest({ revision: "remote-1" })) });
 
@@ -252,12 +368,49 @@ describe("FR-3.2 / FR-7.2 logging", () => {
 });
 
 describe("what it passes through to the resolver", () => {
-  it("forwards the fetch timeout", async () => {
-    let seen: number | undefined;
+  /**
+   * The previous version of this test asserted that a signal existed and then
+   * hardcoded the number it claimed to have observed, so deleting the
+   * forwarding line outright left it green. This one measures the deadline the
+   * signal actually carries: a `fetch` that never settles is aborted, and the
+   * clock the abort happens on is the one this test controls.
+   */
+  it("forwards the fetch timeout, at the value it was given", async () => {
+    const aborted: number[] = [];
     const manifests = holder({
-      timeoutMs: 250,
+      timeoutMs: 40,
+      fetch: ((_input: string, init: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          const started = Date.now();
+          init.signal?.addEventListener("abort", () => {
+            aborted.push(Date.now() - started);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        })) as unknown as typeof globalThis.fetch,
+    });
+
+    await manifests.refresh();
+
+    // One abort, and it happened on the injected deadline rather than on
+    // `fetch.ts`'s 5 s default — which is the difference a hardcoded
+    // expectation could not see.
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]).toBeLessThan(2000);
+    expect(logged).toContain("warn Manifest (fetched): timeout");
+  });
+
+  /**
+   * The mutation the test above is built to catch, stated directly: with no
+   * `timeoutMs` forwarded the request would run against `fetch.ts`'s default,
+   * so a holder that drops the option is a holder whose 5 s budget is not
+   * configurable at all. Asserting the *absence* of an abort within the window
+   * is what makes the pair asymmetric enough to fail.
+   */
+  it("does not abort early when no timeout is configured", async () => {
+    let signal: AbortSignal | undefined;
+    const manifests = holder({
       fetch: ((_input: string, init: { signal?: AbortSignal }) => {
-        seen = init.signal === undefined ? undefined : 250;
+        signal = init.signal;
         return Promise.resolve(
           new Response(JSON.stringify(manifest()), {
             headers: { "content-type": "application/json" },
@@ -268,7 +421,7 @@ describe("what it passes through to the resolver", () => {
 
     await manifests.refresh();
 
-    expect(seen).toBe(250);
+    expect(signal?.aborted).toBe(false);
   });
 
   /**
