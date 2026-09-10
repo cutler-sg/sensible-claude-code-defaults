@@ -83,8 +83,8 @@ export interface CheckContext {
   read: ReadResult;
   snapshot: Snapshot;
   manifest: Manifest;
-  /** `plan(env, desiredFromManifest(manifest))`, or undefined when read is malformed. */
-  plan: PlanResult | undefined;
+  /** `plan(env, desiredFromManifest(manifest))`; `blocked` when the file is malformed. */
+  plan: PlanResult;
   drift: Drift[];
   detection: ClaudeCodeDetection;
   /** Outcome of the silent FR-2.8 repair run before the checks (plan Q-N). */

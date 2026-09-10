@@ -1,5 +1,5 @@
 import type { ReadResult, Settings } from "../../../src/config/types.js";
-import { EMPTY_SNAPSHOT } from "../../../src/config/types.js";
+import { DEFAULT_STYLE, EMPTY_SNAPSHOT } from "../../../src/config/types.js";
 import type { CheckContext } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 
@@ -33,7 +33,13 @@ export function makeCtx(overrides: Partial<CheckContext> = {}): CheckContext {
     read: okRead(),
     snapshot: EMPTY_SNAPSHOT,
     manifest: BUNDLED_MANIFEST,
-    plan: undefined,
+    plan: {
+      kind: "ready",
+      read: okRead(),
+      merge: { next: okSettings(), changes: [], drift: [], snapshotValues: {} },
+      style: DEFAULT_STYLE,
+      noop: true,
+    },
     drift: [],
     detection: {
       extension: { installed: true, version: BUNDLED_MANIFEST.minimumClaudeCodeVersion },

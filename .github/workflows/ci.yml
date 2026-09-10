@@ -33,6 +33,9 @@ jobs:
       - name: Package
         run: bun run package
 
+      - name: Integration test (extension host)
+        run: xvfb-run -a bun run test:integration
+
       - uses: actions/upload-artifact@v4
         with:
           name: vsix

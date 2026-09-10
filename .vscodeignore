@@ -7,3 +7,5 @@
 !LICENSE
 !package.json
 dist/**/*.map
+.vscode-test/**
+out/**
