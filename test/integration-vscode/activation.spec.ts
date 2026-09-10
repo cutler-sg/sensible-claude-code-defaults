@@ -1,5 +1,5 @@
+/// <reference types="mocha" />
 import * as assert from "node:assert/strict";
-import { describe, it } from "mocha";
 import * as vscode from "vscode";
 
 const EXTENSION_ID = "cutler.sensible-claude-code-defaults";
