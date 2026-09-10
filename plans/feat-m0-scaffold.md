@@ -50,10 +50,10 @@ Re-checked §17 before planning. Deltas from the PRD:
 
 Module layout (`src/config/`), all `vscode`-free:
 
-- [ ] `paths.ts` — `resolveClaudeDir(env)` (Q-F), `settingsPath`, `backupsDir`, `assertOutsideWorkspace(target, folders)` guard used by every write.
-- [ ] `managedKeys.ts` — `MANAGED_KEYS` const (FR-2.1), `getPath`/`setPath`/`deletePath` for dotted keys; `env` created when absent, other `env` entries untouched.
-- [ ] `reader.ts` — `readSettings(path)` → `{kind:'absent'} | {kind:'ok', data, style} | {kind:'malformed', raw, error}`. `style` = detected indent + trailing-newline so writes don't reformat the user's file. Root not a plain object, or `env` present but not an object → `malformed`.
-- [ ] `merge.ts` — pure `merge(current, snapshot, desired) → { next, changes, drift }`. One function, no I/O. Rows:
+- [x] `paths.ts` — `resolveClaudeDir(env)` (Q-F), `settingsPath`, `backupsDir`, `assertOutsideWorkspace(target, folders)` guard used by every write.
+- [x] `managedKeys.ts` — `MANAGED_KEYS` const (FR-2.1), `getPath`/`setPath`/`deletePath` for dotted keys; `env` created when absent, other `env` entries untouched.
+- [x] `reader.ts` — `readSettings(path)` → `{kind:'absent'} | {kind:'ok', data, style} | {kind:'malformed', raw, error}`. `style` = detected indent + trailing-newline so writes don't reformat the user's file. Root not a plain object, or `env` present but not an object → `malformed`.
+- [x] `merge.ts` — pure `merge(current, snapshot, desired) → { next, changes, drift }`. One function, no I/O. Rows:
 
   | current vs snapshot | desired present | desired absent (removal, Q-G) |
   |---|---|---|
@@ -65,18 +65,18 @@ Module layout (`src/config/`), all `vscode`-free:
 
   Preserved keys are **not** adopted into the snapshot: the snapshot records only what we wrote, so a later manifest bump can never overwrite a user value we never owned. Ownership transfers only via explicit "reset to recommended" (M2).
   Equality: deep-equal; arrays order-insensitive for `permissions.deny` (Claude Code declares `uniqueItems`). Granularity for array/map keys: Q-E.
-- [ ] `snapshot.ts` — `SnapshotStore` interface; `FileSnapshotStore` (used by tests, and by the extension if Q-D goes my way) + `MementoSnapshotStore` adapter (10 lines, lives in `src/ui` side since it touches `vscode`).
-- [ ] `writer.ts` — `writeSettingsAtomic(path, data, style)`: `realpath` the target first (a symlinked `settings.json` from a dotfiles repo must not be replaced by a regular file), write temp in the *target's* directory with mode `0600`, `fsync`, `rename`, `chmod 0600` after rename (POSIX; Windows ACL deferred to M6, Q-K), temp removed on any failure. `ensureMode0600(path)`. `backupOnce(session)`, `listBackups`, `restoreBackup`, retain 10 (dir per Q-H).
-- [ ] `apply.ts` — two-phase orchestrator so FR-6.1's diff preview is structural, not bolted on: `plan(desired) → {changes, drift, next}` then `commit(plan)` → backup-once → write → snapshot save. `plan` on a malformed file returns `{blocked:'malformed'}` and `commit` refuses (FR-2.5).
+- [x] `snapshot.ts` — `SnapshotStore` interface; `FileSnapshotStore` (used by tests, and by the extension if Q-D goes my way) + `MementoSnapshotStore` adapter (10 lines, lives in `src/ui` side since it touches `vscode`).
+- [x] `writer.ts` — `writeSettingsAtomic(path, data, style)`: `realpath` the target first (a symlinked `settings.json` from a dotfiles repo must not be replaced by a regular file), write temp in the *target's* directory with mode `0600`, `fsync`, `rename`, `chmod 0600` after rename (POSIX; Windows ACL deferred to M6, Q-K), temp removed on any failure. `ensureMode0600(path)`. `backupOnce(session)`, `listBackups`, `restoreBackup`, retain 10 (dir per Q-H).
+- [x] `apply.ts` — two-phase orchestrator so FR-6.1's diff preview is structural, not bolted on: `plan(desired) → {changes, drift, next}` then `commit(plan)` → backup-once → write → snapshot save. `plan` on a malformed file returns `{blocked:'malformed'}` and `commit` refuses (FR-2.5).
 
 Tests (write alongside, per CLAUDE.md):
 
-- [ ] `merge.test.ts` — every cell of the table above × three value shapes (scalar `env.*`, array `permissions.deny`, map `enabledPlugins`), plus: `enabledPlugins` value is `string[]` (schema allows it), `env` absent, `env` non-object, unmanaged keys and `$schema` untouched and order-preserved, snapshot has keys no longer in `MANAGED_KEYS`.
-- [ ] `reader.test.ts` — absent, ok, malformed (trailing comma, BOM, comment), root array, indent/newline detection.
-- [ ] `writer.test.ts` — atomicity (inject a failing rename, assert original intact and no `.tmp` left), mode `0600` after write, symlink target preserved, formatting preserved, backup rotation keeps exactly 10 newest, restore round-trip.
-- [ ] `paths.test.ts` — `CLAUDE_CONFIG_DIR` honoured/ignored per Q-F, `assertOutsideWorkspace` rejects a target inside any folder (§10.4 assertion #2; also rejects `.claude/settings.local.json` inside a workspace by construction).
-- [ ] `integration/apply.test.ts` under a temp dir — fresh install, hand-written existing config, malformed (no write, no backup), drifted, `/setup-bedrock`-style rewrite of a model pin between two applies, backup/restore round-trip.
-- [ ] DoD: `bun test` green; coverage of `src/config` ≥ 95% lines (merge.ts 100%); no `vscode` import under `src/config`.
+- [x] `merge.test.ts` — every cell of the table above × three value shapes (scalar `env.*`, array `permissions.deny`, map `enabledPlugins`), plus: `enabledPlugins` value is `string[]` (schema allows it), `env` absent, `env` non-object, unmanaged keys and `$schema` untouched and order-preserved, snapshot has keys no longer in `MANAGED_KEYS`.
+- [x] `reader.test.ts` — absent, ok, malformed (trailing comma, BOM, comment), root array, indent/newline detection.
+- [x] `writer.test.ts` — atomicity (inject a failing rename, assert original intact and no `.tmp` left), mode `0600` after write, symlink target preserved, formatting preserved, backup rotation keeps exactly 10 newest, restore round-trip.
+- [x] `paths.test.ts` — `CLAUDE_CONFIG_DIR` honoured/ignored per Q-F, `assertOutsideWorkspace` rejects a target inside any folder (§10.4 assertion #2; also rejects `.claude/settings.local.json` inside a workspace by construction).
+- [x] `integration/apply.test.ts` under a temp dir — fresh install, hand-written existing config, malformed (no write, no backup), drifted, `/setup-bedrock`-style rewrite of a model pin between two applies, backup/restore round-trip.
+- [x] DoD: `bun test` green (229 tests, 8 files); coverage of `src/config` 99% lines (every module 100%, `index.ts` barrel uncovered); no `vscode` import under `src/config`. Adversarial review pending (2026-09-10).
 
 ## Open questions
 
