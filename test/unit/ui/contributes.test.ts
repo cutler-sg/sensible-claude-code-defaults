@@ -1,64 +1,110 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import manifest from "../../../package.json";
+import type { JsonObject, Settings } from "../../../src/config/types.js";
+import { ALL_CHECKS } from "../../../src/health/catalogue.js";
+import type { CheckContext, Remediation } from "../../../src/health/types.js";
+import { makeCtx, okRead, okSettings } from "../health/fixture.js";
 
-const ROOT = path.resolve(__dirname, "../../..");
-const COMMAND_ID = /["'`](sensibleDefaults\.[A-Za-z.]+)["'`]/g;
-
-/**
- * Both halves of this matter. A command referenced in code but not contributed
- * throws "command not found" the first time a user clicks it, and a command
- * contributed but never registered shows up in the palette and does nothing —
- * neither is caught by a type check.
- */
-function referencedCommands(): Set<string> {
-  const found = new Set<string>();
-  for (const file of sources()) {
-    for (const [, id] of readFileSync(file, "utf8").matchAll(COMMAND_ID)) {
-      if (id !== undefined) found.add(id);
-    }
-  }
-  // Contributed by the platform for the view container, not by us.
-  found.delete("sensibleDefaults.health.focus");
-  return found;
-}
-
-function sources(): string[] {
-  const roots = [path.join(ROOT, "src/ui/commands.ts"), path.join(ROOT, "src/health/checks")];
-  return roots.flatMap((entry) => {
-    try {
-      return statSync(entry).isDirectory() ? walk(entry) : [entry];
-    } catch {
-      // `src/health/checks/` lands with the check catalogue; until then there is
-      // simply nothing there to cross-check.
-      return [];
-    }
-  });
-}
-
-function walk(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return walk(full);
-    return entry.name.endsWith(".ts") ? [full] : [];
-  });
-}
+// The catalogue is `vscode`-free by design, but `commands.ts` is not, and the
+// COMMAND_IDS import below reaches it. The command stub is the right half of
+// the API to stand in here.
+vi.mock("vscode", async () => await import("./commandsHost.js"));
 
 const contributed = new Set(manifest.contributes.commands.map((c) => c.command));
 
+/**
+ * Commands the platform already owns. A check may nominate one as its fix, and
+ * we neither contribute nor register those — but the list is closed, because
+ * "some other extension probably provides it" is how a wrench button comes to
+ * do nothing at all.
+ */
+const BUILT_INS = new Set(["workbench.extensions.installExtension", "extension.open"]);
+
+/**
+ * The check bodies are the only place a command id is invented rather than
+ * called, so the catalogue is run over contexts that reach every remediation
+ * branch and the ids are read off the results.
+ */
+function fixCommands(): string[] {
+  const found = new Set<string>();
+  for (const ctx of CONTEXTS) {
+    for (const check of ALL_CHECKS) {
+      const result = check.run(ctx);
+      if (result instanceof Promise) throw new Error(`${check.id} is async; widen this test`);
+      collect(found, result.fix);
+      for (const child of result.children ?? []) collect(found, child.fix);
+    }
+  }
+  return [...found];
+}
+
+function collect(into: Set<string>, fix: Remediation): void {
+  if (fix.kind === "command") into.add(fix.command);
+}
+
+const CONTEXTS: CheckContext[] = [
+  makeCtx(),
+  makeCtx({ read: { kind: "absent" }, permissions: { kind: "absent" } }),
+  makeCtx({
+    read: { kind: "malformed", raw: "{,}", error: "settings.json is not valid JSON" },
+    permissions: { kind: "failed", error: "EPERM" },
+  }),
+  makeCtx({
+    drift: [
+      {
+        key: "env.AWS_REGION",
+        current: "eu-west-9",
+        lastApplied: "us-east-1",
+        recommended: "us-east-1",
+      },
+    ],
+  }),
+  makeCtx({ detection: { extension: { installed: false }, cli: { found: false } } }),
+  makeCtx({
+    detection: { extension: { installed: true, version: "0.0.1" }, cli: { found: false } },
+  }),
+  makeCtx({ platform: "win32", permissions: { kind: "unsupported" } }),
+  makeCtx({ read: okRead(withRegion("eu-west-9")) }),
+  makeCtx({ read: okRead(withoutRegion()) }),
+];
+
+/** `Settings` is an untyped JSON object, so `env` is narrowed by hand here. */
+function envOf(settings: Settings): JsonObject {
+  const env = settings.env;
+  if (env === undefined || typeof env !== "object" || Array.isArray(env) || env === null) {
+    throw new Error("the fixture lost its env block");
+  }
+  return env;
+}
+
+function withRegion(region: string): Settings {
+  const settings = okSettings();
+  settings.env = { ...envOf(settings), AWS_REGION: region };
+  return settings;
+}
+
+function withoutRegion(): Settings {
+  const settings = okSettings();
+  const { AWS_REGION: _dropped, ...rest } = envOf(settings);
+  settings.env = rest;
+  return settings;
+}
+
+describe("check remediations", () => {
+  it("reaches enough branches to be worth asserting on", () => {
+    expect(fixCommands().length).toBeGreaterThan(3);
+  });
+
+  it("nominates only commands we contribute or the platform already owns", () => {
+    for (const id of fixCommands()) {
+      if (BUILT_INS.has(id)) continue;
+      expect(id).toMatch(/^sensibleDefaults\./);
+      expect([...contributed]).toContain(id);
+    }
+  });
+});
+
 describe("contributed commands", () => {
-  it("declares every command the source refers to", () => {
-    const missing = [...referencedCommands()].filter((id) => !contributed.has(id));
-    expect(missing).toEqual([]);
-  });
-
-  it("refers to every command it declares", () => {
-    const referenced = referencedCommands();
-    const unused = [...contributed].filter((id) => !referenced.has(id));
-    expect(unused).toEqual([]);
-  });
-
   it("files every command under the Sensible Defaults category (FR-6)", () => {
     for (const command of manifest.contributes.commands) {
       expect(command.category).toBe("Sensible Defaults");
@@ -128,6 +174,41 @@ describe("contributed commands", () => {
       for (const [, id] of entry.contents.matchAll(/\(command:([^)\s]+)\)/g)) {
         expect(contributed).toContain(id);
       }
+    }
+  });
+});
+
+/**
+ * A command contributed but never registered appears in the palette and does
+ * nothing; one registered but never contributed throws "command not found" the
+ * first time a user clicks it. Neither is a type error, and the previous
+ * version of this test looked for either by grepping the source for quoted
+ * `sensibleDefaults.*` strings — which matched the very `register(...)` call
+ * sites it was meant to be checking, so both directions passed vacuously and
+ * would have kept passing if `registerCommands` had been deleted outright.
+ *
+ * The list now comes from the module that registers it.
+ */
+describe("registered commands", () => {
+  it("declares every command it registers", async () => {
+    const { COMMAND_IDS } = await import("../../../src/ui/commands.js");
+    const missing = [...COMMAND_IDS].filter((id) => !contributed.has(id));
+    expect(missing).toEqual([]);
+  });
+
+  it("registers every command it declares", async () => {
+    const { COMMAND_IDS } = await import("../../../src/ui/commands.js");
+    const registered = new Set<string>(COMMAND_IDS);
+    const unused = [...contributed].filter((id) => !registered.has(id));
+    expect(unused).toEqual([]);
+  });
+
+  it("registers every command a check nominates as its fix", async () => {
+    const { COMMAND_IDS } = await import("../../../src/ui/commands.js");
+    const registered = new Set<string>(COMMAND_IDS);
+    for (const id of fixCommands()) {
+      if (BUILT_INS.has(id)) continue;
+      expect([...registered]).toContain(id);
     }
   });
 });
