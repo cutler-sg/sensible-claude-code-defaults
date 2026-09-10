@@ -12,17 +12,15 @@ import { configModelsCheck } from "./checks/config.models.js";
 import { configParsesCheck } from "./checks/config.parses.js";
 import { configPermsCheck } from "./checks/config.perms.js";
 import { configRegionCheck } from "./checks/config.region.js";
+import { credAgeCheck } from "./checks/cred.age.js";
+import { credLeakCheck } from "./checks/cred.leak.js";
+import { credMirroredCheck } from "./checks/cred.mirrored.js";
+import { credPresentCheck } from "./checks/cred.present.js";
+import { credValidCheck } from "./checks/cred.valid.js";
 import { installCliCheck } from "./checks/install.cli.js";
 import { installExtensionCheck } from "./checks/install.extension.js";
 import { installVersionCheck } from "./checks/install.version.js";
-import {
-  configStaleCheck,
-  credAgeCheck,
-  credLeakCheck,
-  credMirroredCheck,
-  credPresentCheck,
-  credValidCheck,
-} from "./checks/placeholders.js";
+import { configStaleCheck } from "./checks/placeholders.js";
 import { pluginsEnabledCheck } from "./checks/plugins.enabled.js";
 import { pluginsMarketplaceCheck } from "./checks/plugins.marketplace.js";
 import type { Check } from "./types.js";

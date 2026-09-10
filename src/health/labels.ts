@@ -67,13 +67,18 @@ export const LABELS = {
     skipped: "Checking for newer recommended settings arrives in a later update",
   },
   "cred.present": {
-    skipped: "Not set up yet — API key management arrives in the next update",
+    pass: "Your Bedrock API key is saved in this computer's keychain",
+    inFileOnly: "Your Bedrock API key isn't in this computer's keychain yet",
+    missing: "No Bedrock API key has been set",
+    keychainUnreachable: "This computer's keychain can't be opened, so your key can't be checked",
   },
   "cred.mirrored": {
-    skipped: "Not set up yet — API key management arrives in the next update",
+    pass: "Claude Code can see your Bedrock API key",
+    missing: "Claude Code can't see your Bedrock API key",
+    differs: "Claude Code is using a different Bedrock API key from the one you saved",
+    skipped: "Nothing to check until a Bedrock API key is saved",
   },
   "cred.valid": {
-    skipped: "Not set up yet — connection testing arrives in the next update",
     untested: "Your Bedrock API key hasn't been tried yet — test it to be sure it works",
     pass: "Your Bedrock API key works",
     withoutHaiku: "Your key works, but the small, fast Claude model isn't turned on for you",
@@ -84,10 +89,11 @@ export const LABELS = {
     unknown: "Amazon gave an answer we didn't understand when we tried your key",
   },
   "cred.age": {
-    skipped: "Not set up yet — API key reminders arrive in the next update",
+    unknown: "We don't know how long ago your Bedrock API key was saved",
+    skipped: "Nothing to check until a Bedrock API key is saved",
   },
   "cred.leak": {
-    skipped: "Not set up yet — API key safety scanning arrives in the next update",
+    skipped: "Checking your project files for a copy of your key arrives in a later update",
   },
   "plugins.marketplace": {
     none: "No plugin marketplace is recommended yet",
@@ -136,4 +142,43 @@ export function driftLabel(key: ManagedKey): string {
   return CLAUDE_CODE_WRITES.has(key)
     ? `Claude Code changed the ${name}`
     : `You changed the ${name}`;
+}
+
+/**
+ * FR-4.6's label. The age is approximate and never a date: the exact instant is
+ * noise to the person reading it, and a date invites "but I set it in March"
+ * arguments the check cannot win.
+ */
+export function credAgeLabel(level: "ok" | "warn" | "fail", days: number): string {
+  const age = `Your Bedrock API key is ${approximateAge(days)} old`;
+  switch (level) {
+    case "ok":
+      return age;
+    case "warn":
+      return `${age} — worth replacing it soon`;
+    case "fail":
+      return `${age} — time to replace it`;
+  }
+}
+
+const DAYS_PER_WEEK = 7;
+/** Averaged, because "about 3 months" is the claim, not a calendar calculation. */
+const DAYS_PER_MONTH = 30.44;
+
+/**
+ * Weeks up to two months, months after that. A key set in the future — a clock
+ * that moved — reads as new rather than as a negative age.
+ */
+export function approximateAge(days: number): string {
+  if (days < DAYS_PER_WEEK) {
+    return "less than a week";
+  }
+  if (days < 2 * DAYS_PER_MONTH) {
+    return plural(Math.round(days / DAYS_PER_WEEK), "week");
+  }
+  return plural(Math.round(days / DAYS_PER_MONTH), "month");
+}
+
+function plural(count: number, unit: string): string {
+  return `about ${count} ${unit}${count === 1 ? "" : "s"}`;
 }

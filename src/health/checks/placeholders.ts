@@ -22,16 +22,3 @@ export const configStaleCheck = placeholder(
   "Configuration",
   LABELS["config.stale"].skipped,
 );
-export const credPresentCheck = placeholder(
-  "cred.present",
-  "Credential",
-  LABELS["cred.present"].skipped,
-);
-export const credMirroredCheck = placeholder(
-  "cred.mirrored",
-  "Credential",
-  LABELS["cred.mirrored"].skipped,
-);
-export const credValidCheck = placeholder("cred.valid", "Credential", LABELS["cred.valid"].skipped);
-export const credAgeCheck = placeholder("cred.age", "Credential", LABELS["cred.age"].skipped);
-export const credLeakCheck = placeholder("cred.leak", "Credential", LABELS["cred.leak"].skipped);

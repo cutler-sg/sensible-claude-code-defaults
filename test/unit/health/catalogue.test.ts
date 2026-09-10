@@ -58,14 +58,9 @@ describe("catalogue", () => {
 
   it("skips every check whose milestone has not landed", async () => {
     const ctx = makeCtx();
-    const deferred: CheckId[] = [
-      "config.stale",
-      "cred.present",
-      "cred.mirrored",
-      "cred.valid",
-      "cred.age",
-      "cred.leak",
-    ];
+    // M4 owns `config.stale`; M5 owns the workspace leak scan. Everything else
+    // in the Credential group became real in M3.
+    const deferred: CheckId[] = ["config.stale", "cred.leak"];
     for (const id of deferred) {
       const check = ALL_CHECKS.find((candidate) => candidate.id === id);
       expect(check).toBeDefined();
