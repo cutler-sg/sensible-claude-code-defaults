@@ -57,6 +57,12 @@ export const state = {
   ) => string | undefined,
   /** Answers a modal/notification by message; default dismisses. */
   answer: ((_shown: Shown) => undefined) as (shown: Shown) => string | undefined,
+  /** What `env.clipboard.writeText` last received (FR-7.1). */
+  clipboard: "",
+  /** What `extensions.getExtension` reports for Claude Code. */
+  claudeCodeVersion: undefined as string | undefined,
+  /** `env.remoteName`: undefined is a local window. */
+  remoteName: undefined as string | undefined,
 };
 
 export function reset(): void {
@@ -75,6 +81,9 @@ export function reset(): void {
   state.quickPickAnswer = () => undefined;
   state.inputBoxAnswer = () => undefined;
   state.answer = () => undefined;
+  state.clipboard = "";
+  state.claudeCodeVersion = undefined;
+  state.remoteName = undefined;
 }
 
 function record(into: Shown[], message: string, rest: unknown[]): Promise<string | undefined> {
@@ -161,6 +170,28 @@ export const commands = {
 
 export const Uri = {
   file: (fsPath: string) => ({ fsPath }),
+};
+
+/** A fixed VS Code version, so a diagnostics assertion is deterministic. */
+export const version = "1.98.2";
+
+export const env = {
+  get remoteName(): string | undefined {
+    return state.remoteName;
+  },
+  clipboard: {
+    writeText: (text: string): Promise<void> => {
+      state.clipboard = text;
+      return Promise.resolve();
+    },
+  },
+};
+
+export const extensions = {
+  getExtension: (id: string) =>
+    id === "anthropic.claude-code" && state.claudeCodeVersion !== undefined
+      ? { packageJSON: { version: state.claudeCodeVersion } }
+      : undefined,
 };
 
 export const Disposable = {

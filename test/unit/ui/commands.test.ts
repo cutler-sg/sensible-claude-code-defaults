@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import type { ApplySession } from "../../../src/config/apply.js";
 import { backupsDir, settingsPath } from "../../../src/config/paths.js";
 import { MemorySnapshotStore } from "../../../src/config/snapshot.js";
 import type { ConfigEnv, JsonObject, Settings } from "../../../src/config/types.js";
+import type { HealthReport } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import type { Manifest } from "../../../src/manifest/types.js";
 import { registerCommands } from "../../../src/ui/commands.js";
@@ -27,10 +28,23 @@ let logged: string[];
 let healthRuns: number;
 let disposable: { dispose(): void };
 
+/**
+ * The `Logger` surface the commands use, plus the FR-7.1 ring buffer — a fake
+ * that only recorded lines would let `copyDiagnostics` pass without ever
+ * reaching the log section of the report.
+ */
 const log = {
   info: (message: string) => logged.push(`info ${message}`),
   warn: (message: string) => logged.push(`warn ${message}`),
   error: (message: string) => logged.push(`error ${message}`),
+  recent: () =>
+    logged.map((line) => {
+      const space = line.indexOf(" ");
+      return {
+        level: line.slice(0, space) as "info" | "warn" | "error",
+        message: line.slice(space + 1),
+      };
+    }),
 };
 
 /**
@@ -45,6 +59,8 @@ let forcedRefreshes: number;
 let refreshChanged: boolean;
 /** The manifest the refresh puts in force, if it changes one. */
 let refreshResolves: Manifest | undefined;
+/** The last health report the diagnostics command should render, if any. */
+let lastReport: HealthReport | undefined;
 
 function register(manifest: Manifest = BUNDLED_MANIFEST): void {
   currentManifest = manifest;
@@ -68,6 +84,13 @@ function register(manifest: Manifest = BUNDLED_MANIFEST): void {
     },
     markWrite: () => {},
     credential: fakeCredentialDeps(),
+    extensionVersion: "0.1.0",
+    diagnostics: {
+      manifest: () => ({ revision: currentManifest.revision, source: "bundled" }),
+      report: () => lastReport,
+      cliVersion: () => "2.1.267",
+      now: () => new Date("2026-09-10T12:00:00Z"),
+    },
     now: () => new Date("2026-09-10T12:00:00Z"),
   });
 }
@@ -86,6 +109,7 @@ beforeEach(async () => {
   forcedRefreshes = 0;
   refreshChanged = false;
   refreshResolves = undefined;
+  lastReport = undefined;
   reset();
   register();
 });
@@ -1052,5 +1076,121 @@ describe("the command wrapper", () => {
     await run("sensibleDefaults.runHealthCheck");
 
     expect(healthRuns).toBe(1);
+  });
+});
+
+/**
+ * FR-7.1. Clipboard, not a file (plan Q-AC) — a file is one more artefact
+ * carrying a redacted-but-still-sensitive dump of a user's configuration.
+ */
+describe("copyDiagnostics (FR-7.1)", () => {
+  const TOKEN = "ABSKQ29tbWFuZExlYWtUZXN0S2V5VmFsdWVIZXJl";
+
+  it("puts a report on the clipboard rather than writing a file", async () => {
+    const before = await readdir(dir);
+
+    await run("sensibleDefaults.copyDiagnostics");
+
+    expect(state.clipboard).toContain("Sensible Claude Code Defaults — diagnostics");
+    expect(state.clipboard).toContain("| Extension | 0.1.0 |");
+    // No new artefact: the report exists only on the clipboard.
+    expect(await readdir(dir)).toEqual(before);
+  });
+
+  it("names what it included and what it removed", async () => {
+    await run("sensibleDefaults.copyDiagnostics");
+
+    const message = state.info.at(-1)?.message ?? "";
+    expect(message).toContain("Diagnostics copied");
+    expect(message).toContain("your Claude Code settings file");
+    expect(message).toContain("the last 50 lines from the output log");
+    expect(message).toContain("does not include your Bedrock API key");
+  });
+
+  it("includes the settings file with the key replaced", async () => {
+    await seed({ env: { AWS_BEARER_TOKEN_BEDROCK: TOKEN, AWS_REGION: "us-east-1" } });
+
+    await run("sensibleDefaults.copyDiagnostics");
+
+    expect(state.clipboard).toContain("us-east-1");
+    expect(state.clipboard).toContain('"AWS_BEARER_TOKEN_BEDROCK": "«redacted»"');
+    expect(state.clipboard).not.toContain(TOKEN);
+  });
+
+  it("includes the health results when a run has finished", async () => {
+    lastReport = {
+      at: "2026-09-10T11:59:00.000Z",
+      results: [
+        {
+          id: "cred.present",
+          group: "Credential",
+          level: "error",
+          label: "No Bedrock API key is saved",
+          fix: { kind: "none" },
+        },
+      ],
+      counts: { pass: 0, info: 0, warning: 0, error: 1, skipped: 0 },
+    };
+
+    await run("sensibleDefaults.copyDiagnostics");
+
+    expect(state.clipboard).toContain("| cred.present | error | No Bedrock API key is saved |");
+  });
+
+  it("reads the VS Code and Claude Code versions from the host", async () => {
+    state.claudeCodeVersion = "2.1.267";
+    state.remoteName = "wsl";
+
+    await run("sensibleDefaults.copyDiagnostics");
+
+    expect(state.clipboard).toContain("| VS Code | 1.98.2 |");
+    expect(state.clipboard).toContain("| Claude Code extension | 2.1.267 |");
+    expect(state.clipboard).toContain("| Remote | wsl |");
+  });
+
+  it("still produces a report when the settings file cannot be parsed", async () => {
+    await seedRaw("{ not json");
+
+    await run("sensibleDefaults.copyDiagnostics");
+
+    // The report is what a user reaches for when something is broken, so a
+    // broken file must not be the thing that stops them getting one.
+    expect(state.clipboard).toContain("could not be read as JSON");
+    expect(state.error).toEqual([]);
+  });
+
+  it("still produces a report when the settings file cannot even be read", async () => {
+    // A directory where the file should be: `readSettings` throws EISDIR
+    // rather than reporting a content problem, and the command must survive it
+    // — this is one of the states a user copies diagnostics *because* of.
+    await rm(settingsPath(dir), { force: true });
+    await mkdir(settingsPath(dir));
+
+    await run("sensibleDefaults.copyDiagnostics");
+
+    expect(state.clipboard).toContain("There is no settings file yet.");
+    expect(state.error).toEqual([]);
+  });
+
+  it("says so rather than throwing when the host has not wired the report", async () => {
+    disposable.dispose();
+    reset();
+    disposable = registerCommands({
+      env,
+      session,
+      manifest: () => BUNDLED_MANIFEST,
+      settingsFile: settingsPath(dir),
+      backupsDir: backupsDir(dir),
+      log: log as never,
+      runHealth: async () => {},
+      markWrite: () => {},
+      credential: fakeCredentialDeps(),
+    });
+
+    await run("sensibleDefaults.copyDiagnostics");
+
+    expect(state.clipboard).toBe("");
+    expect(state.info.at(-1)?.message).toContain("aren't available in this window yet");
+    expect(state.error).toEqual([]);
   });
 });

@@ -23,10 +23,12 @@ import {
   restore,
 } from "../config/index.js";
 import type { Desired, ManagedKey, PlanResult } from "../config/types.js";
+import { DIAGNOSTICS_EXCLUDES, DIAGNOSTICS_INCLUDES } from "../diagnostics/report.js";
 import { keyDisplayName } from "../health/labels.js";
 import { desiredFromManifest, type Manifest } from "../manifest/types.js";
 import type { Logger } from "../util/log.js";
 import { redact } from "../util/redact.js";
+import { collectDiagnostics, type DiagnosticsHostDeps } from "./diagnostics.js";
 import {
   adoptToken,
   type CredentialFlowDeps,
@@ -74,6 +76,15 @@ export interface CommandDeps {
    * working command surface; the command then simply re-runs the checks.
    */
   refreshManifest?: (options: { force: true }) => Promise<boolean>;
+  /**
+   * FR-7.1's inputs, injected. Optional so a host that has not wired the
+   * report — every test of another command, and the M0 shape of `activate` —
+   * still gets a working command surface; `copyDiagnostics` then says the
+   * checks have not run rather than throwing.
+   */
+  diagnostics?: Omit<DiagnosticsHostDeps, "extensionVersion" | "settingsFile" | "log">;
+  /** This extension's version, for the diagnostics header. */
+  extensionVersion?: string;
   now?: () => Date;
 }
 
@@ -104,6 +115,7 @@ const HANDLERS = {
   "sensibleDefaults.selectRegion": (deps) => selectRegion(deps),
   "sensibleDefaults.repairPermissions": (deps) => repairPermissionsCommand(deps),
   "sensibleDefaults.runFix": (deps, node) => runFix(deps, node),
+  "sensibleDefaults.copyDiagnostics": (deps) => copyDiagnostics(deps),
   // FR-4's flows. They take the same injected shape, so `CommandDeps` is a
   // `FlowDeps` and the two files share one dependency graph rather than two.
   "sensibleDefaults.setToken": (deps) => setToken(deps),
@@ -399,6 +411,45 @@ function permissionMessage(kind: "repaired" | "ok" | "absent" | "unsupported"): 
     case "unsupported":
       return "File permissions work differently on this system; nothing to change.";
   }
+}
+
+/**
+ * FR-7.1. To the clipboard, not a file (plan Q-AC): the report is a
+ * redacted-but-still-revealing dump of a user's configuration, and writing it
+ * to disk creates a second artefact nobody remembers to delete — one that would
+ * also have to live somewhere, and the one place hard rule 1 forbids is the
+ * folder the user is looking at.
+ *
+ * The confirmation names what went in and what came out. A user who is about to
+ * paste this into a public issue is entitled to know before they do, and
+ * "diagnostics copied" tells them nothing they can act on.
+ */
+async function copyDiagnostics(deps: CommandDeps): Promise<void> {
+  if (deps.diagnostics === undefined || deps.extensionVersion === undefined) {
+    deps.log.warn("copyDiagnostics: the report is not wired in this host.");
+    await vscode.window.showInformationMessage(
+      "Diagnostics aren't available in this window yet — run Check Configuration first.",
+    );
+    return;
+  }
+
+  const text = await collectDiagnostics({
+    ...deps.diagnostics,
+    extensionVersion: deps.extensionVersion,
+    settingsFile: deps.settingsFile,
+    log: deps.log,
+  });
+  await vscode.env.clipboard.writeText(text);
+  deps.log.info("Copied the diagnostics report to the clipboard.");
+  await vscode.window.showInformationMessage(
+    `Diagnostics copied. It includes ${listOf(DIAGNOSTICS_INCLUDES)}. It does not include ${DIAGNOSTICS_EXCLUDES}.`,
+  );
+}
+
+/** An Oxford-comma list, so the confirmation reads as a sentence. */
+function listOf(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 }
 
 /** The wrench button: run whatever command the check nominated as its fix. */
