@@ -320,6 +320,16 @@ describe("buildContext credential", () => {
     expect(ctx.credential.now).toEqual(NOW);
   });
 
+  it("carries the stamp of the key a test result was recorded against (F5)", async () => {
+    const lastTest = {
+      at: "2026-09-10T11:00:00.000Z",
+      tokenSetAt: SET_AT,
+      result: { kind: "ok", model: "haiku" },
+    } satisfies NonNullable<CredentialDeps["lastTest"]>;
+    const ctx = await build({ credential: credentialDeps({ lastTest }) });
+    expect(ctx.credential.lastTest).toEqual(lastTest);
+  });
+
   it("defaults the clock to now when the host injects none", async () => {
     const before = Date.now();
     const ctx = await build({

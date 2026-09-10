@@ -174,6 +174,84 @@ describe("cred.valid", () => {
     expect(new Set(labels).size).toBe(outcomes.length);
   });
 
+  /**
+   * F5. A result recorded against one key says nothing about the key that
+   * replaced it, and "Your Bedrock API key works" against a key the user has
+   * since changed is the worst possible thing this check can say.
+   */
+  describe("a result that predates the current key", () => {
+    const SET_AT = daysAgo(1);
+
+    it("stays authoritative when the stamps match", () => {
+      const result = credValidCheck.run(
+        ctxWith({
+          stored: { setAt: SET_AT },
+          lastTest: {
+            at: "2026-09-10T11:00:00.000Z",
+            tokenSetAt: SET_AT,
+            result: { kind: "ok", model: "haiku" },
+          },
+        }),
+      );
+      expect(result.level).toBe("pass");
+    });
+
+    it("skips rather than vouching when the key has been replaced since", () => {
+      const result = credValidCheck.run(
+        ctxWith({
+          stored: { setAt: daysAgo(0) },
+          lastTest: {
+            at: "2026-09-10T11:00:00.000Z",
+            tokenSetAt: daysAgo(30),
+            result: { kind: "ok", model: "haiku" },
+          },
+        }),
+      );
+      expect(result.level).toBe("skipped");
+      expect(result.label).toBe(LABELS["cred.valid"].untested);
+      expect(result.fix).toMatchObject({ command: "sensibleDefaults.testConnection" });
+    });
+
+    it("skips a stale failure too, so a fixed key is not still accused", () => {
+      const result = credValidCheck.run(
+        ctxWith({
+          stored: { setAt: daysAgo(0) },
+          lastTest: {
+            at: "2026-09-10T11:00:00.000Z",
+            tokenSetAt: daysAgo(30),
+            result: { kind: "bad-credential", status: 403 },
+          },
+        }),
+      );
+      expect(result.level).toBe("skipped");
+    });
+
+    it("skips when the result was recorded against a key no longer stored", () => {
+      const result = credValidCheck.run(
+        nothing({
+          lastTest: {
+            at: "2026-09-10T11:00:00.000Z",
+            tokenSetAt: SET_AT,
+            result: { kind: "ok", model: "haiku" },
+          },
+        }),
+      );
+      expect(result.level).toBe("skipped");
+    });
+
+    it("trusts a result from a host that does not stamp them yet", () => {
+      // `tokenSetAt` is optional: an older host records without one, and the
+      // check must not blank out every result waiting for a field.
+      const result = credValidCheck.run(
+        ctxWith({
+          stored: { setAt: SET_AT },
+          lastTest: { at: "2026-09-10T11:00:00.000Z", result: { kind: "ok", model: "haiku" } },
+        }),
+      );
+      expect(result.level).toBe("pass");
+    });
+  });
+
   it("never repeats a status code or a model id at the user", () => {
     const label = withResult({ kind: "unknown", status: 500 }).label;
     expect(label).not.toMatch(/500/);

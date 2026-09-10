@@ -100,8 +100,14 @@ export interface CredentialContext {
   /**
    * The last user-initiated test call, if one has been made in this window.
    * `cred.valid` reports it and never triggers one (plan Q-T).
+   *
+   * `tokenSetAt` is the `setAt` of the token the call was made with. A result
+   * only speaks for the key it tested, so when it does not match the stored
+   * key's stamp `cred.valid` reports "untested" rather than vouching for a key
+   * that has since been replaced. Optional: a host that does not stamp its
+   * results yet is trusted rather than ignored.
    */
-  lastTest?: { at: string; result: ConnectionResult };
+  lastTest?: { at: string; tokenSetAt?: string; result: ConnectionResult };
   /**
    * Set when `SecretStorage` threw — Linux without libsecret, most often. The
    * token's presence is then unknowable rather than false (plan Q-X).

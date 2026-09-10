@@ -19,7 +19,7 @@ export const credValidCheck = {
   group: "Credential",
   run(ctx: CheckContext): CheckResult {
     const { lastTest } = ctx.credential;
-    if (lastTest === undefined) {
+    if (lastTest === undefined || isStale(ctx)) {
       // `skipped`, not `warning`: an untested key is not evidence of a broken
       // one, and this is the state every correctly-configured user starts in.
       return { ...base("skipped", LABELS["cred.valid"].untested), fix: TEST };
@@ -28,6 +28,20 @@ export const credValidCheck = {
     return { ...base(level, label), fix: TEST };
   },
 } satisfies Check;
+
+/**
+ * A result speaks only for the key it tested. When the host stamps its results
+ * with the tested key's `setAt` and that stamp no longer matches the stored
+ * key, the result is about a key the user has replaced — reporting it would
+ * vouch for, or accuse, the wrong credential (F5).
+ *
+ * An unstamped result is trusted: `tokenSetAt` is optional so that a host that
+ * does not record it yet keeps working, rather than every result blanking out.
+ */
+function isStale(ctx: CheckContext): boolean {
+  const tokenSetAt = ctx.credential.lastTest?.tokenSetAt;
+  return tokenSetAt !== undefined && tokenSetAt !== ctx.credential.stored?.setAt;
+}
 
 /**
  * One plain-language sentence per outcome. `ok-without-haiku` is the only

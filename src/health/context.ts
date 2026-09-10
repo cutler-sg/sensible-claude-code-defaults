@@ -11,7 +11,7 @@
 import { plan, repairPermissions, settingsPath } from "../config/index.js";
 import type { ConfigEnv, Drift, PlanResult } from "../config/types.js";
 import { normalizeToken } from "../credential/shape.js";
-import type { ConnectionResult, TokenPresence, TokenStore } from "../credential/types.js";
+import type { TokenPresence, TokenStore } from "../credential/types.js";
 import type { Manifest } from "../manifest/types.js";
 import { desiredFromManifest } from "../manifest/types.js";
 import type { CheckContext, ClaudeCodeDetection, CredentialContext } from "./types.js";
@@ -42,8 +42,12 @@ export interface CredentialDeps {
   store: TokenStore;
   /** `readTokenFromSettings(env)`, injected so the context stays testable. */
   readFromSettings: () => Promise<string | undefined>;
-  /** The last user-initiated test call this window, held in memory by the host. */
-  lastTest?: { at: string; result: ConnectionResult };
+  /**
+   * The last user-initiated test call this window, held in memory by the host.
+   * Carries `tokenSetAt` — the `setAt` of the key it tested — so `cred.valid`
+   * can tell a current verdict from one about a key since replaced (F5).
+   */
+  lastTest?: CredentialContext["lastTest"];
   now?: () => Date;
 }
 
