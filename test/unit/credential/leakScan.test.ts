@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -627,6 +628,88 @@ describe("running out of budget", () => {
     const outcome = await scan({ now: () => 10_000, budgetMs: 0 });
 
     expect(outcome).toEqual({ kind: "partial", hits: [], reason: "timeout" });
+  });
+});
+
+/**
+ * The README makes promises about this scan in a section a user reads *instead
+ * of* running it — "it skips `node_modules`, `.git`, `dist`, `out` and `.venv`"
+ * was one of them, and it was wrong in a way that mattered: `dist` and `out`
+ * were skipped at every depth, so a key in `src/out/notes.md` reported clean
+ * while the README implied only build output was passed over (F10).
+ *
+ * A promise nothing checks is how that happens. These read the shipped file.
+ */
+describe("what the README promises", () => {
+  // Relative to the repo root, which is vitest's cwd — `import.meta` is not
+  // available in this project's CommonJS-targeted compile.
+  const readme = readFileSync("README.md", "utf8");
+  const section = readme.slice(readme.indexOf("### The project scan finds"));
+
+  it("has a section about the scan to check", () => {
+    expect(section).not.toBe("");
+    expect(section.length).toBeGreaterThan(500);
+  });
+
+  it.each([...SKIPPED_DIRS_ANYWHERE])("names %s as skipped wherever it appears", (skipped) => {
+    expect(section).toContain(`\`${skipped}\``);
+  });
+
+  it.each([...SKIPPED_DIRS_AT_ROOT])("says %s is skipped only at the top", (skipped) => {
+    expect(section).toContain(`\`${skipped}\``);
+    // The distinction is the whole point of F10: naming the folder without
+    // saying "only at the top" is the sentence that was wrong before.
+    expect(section).toMatch(/only when they sit\s+directly\s+inside a folder you have open/);
+  });
+
+  /**
+   * Every extension the scan reads is named. The reverse direction matters
+   * more than it looks: a README that lists a type the scan does not read is a
+   * user who believes a file was checked when it was not.
+   */
+  it.each([
+    ".env",
+    ".envrc",
+    ".json",
+    ".md",
+    ".txt",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".sh",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".bak",
+    "Dockerfile",
+    ".zshrc",
+    ".bashrc",
+    ".bash_profile",
+    ".zprofile",
+    ".profile",
+  ])("names %s among the files it looks at", (name) => {
+    expect(section).toContain(`\`${name}\``);
+  });
+
+  it("still states the three-second budget and the 1 MB cap", () => {
+    expect(section).toContain("three seconds");
+    expect(section).toContain("1 MB");
+  });
+
+  /** F7: the README must describe the found-and-incomplete case too. */
+  it("says a scan can both find something and run out of time", () => {
+    expect(section).toMatch(/finds a copy of\s+your key \*and\* runs out of time/);
+  });
+
+  /** F5, in the words a user reads. */
+  it("says the scan stays inside the folders the user opened", () => {
+    expect(section).toContain("stays inside the folders you opened");
+    expect(section).toMatch(/shortcut to\s+somewhere else/);
+  });
+
+  /** Hard rule 1, stated to the user and asserted here. */
+  it("still promises it never edits a project file", () => {
+    expect(section).toContain("It never edits your files");
   });
 });
 

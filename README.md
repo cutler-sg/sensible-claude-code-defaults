@@ -102,18 +102,37 @@ When a key is saved, the panel checks your open project folders for a copy of it
 its way to a git remote. A clean result is worth something, but it is not a
 guarantee. Here is exactly what it does and does not do.
 
-**It looks at** files named `.env` or `.env.something`, and files ending in
-`.json`, `.md`, `.sh` or `.ps1`, inside the folders you currently have open.
+**It looks at** the places a key actually gets pasted, inside the folders you
+currently have open:
+
+- files named `.env` or `.env.something`, and `.envrc`
+- files ending in `.json`, `.md`, `.txt`, `.yaml`, `.yml`, `.toml`, `.sh`,
+  `.ps1`, `.bat`, `.cmd` or `.bak` — the last one because a settings file
+  copied before editing becomes `settings.json.bak`
+- `Dockerfile`, and `Dockerfile.anything`
+- the shell profiles: `.zshrc`, `.bashrc`, `.bash_profile`, `.zprofile` and
+  `.profile`
 
 **It does not look at** anything else — your source files, your notebooks, your
 editor's own settings, your shell history, your terminal scrollback, or any
-folder you do not have open in this window. It skips `node_modules`, `.git`,
-`dist`, `out` and `.venv`, does not follow shortcuts or symbolic links out of
-the folder, and ignores files larger than 1 MB.
+folder you do not have open in this window. It ignores files larger than 1 MB.
+
+**It skips some folders.** `node_modules`, `.git` and `.venv` are skipped
+wherever they appear. `dist` and `out` are skipped only when they sit directly
+inside a folder you have open, because that is where build output lives — a
+`dist` or `out` further down is an ordinary source folder and is read normally.
+
+**It stays inside the folders you opened.** It does not follow shortcuts or
+symbolic links out of a folder. If a folder you opened is itself a shortcut to
+somewhere else, the scan reads the real location it points at and names files
+by where they actually are.
 
 **It stops after three seconds.** On a large project it will not have looked at
 everything, and it says so — a row reading "we ran out of time" is not a clean
-result, and the panel never reports one as if it were.
+result, and the panel never reports one as if it were. If it finds a copy of
+your key *and* runs out of time, it tells you both: the file it found is real,
+but the list is not necessarily the whole list, and running the check again
+picks up where it left off.
 
 **It does not look inside your git history.** If the key has ever been
 committed, it is in past versions of the repository and in every clone of it.
