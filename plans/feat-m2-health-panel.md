@@ -2,7 +2,7 @@
 
 Source of truth: `docs/PRD.md` FR-1.4/1.6, FR-2.5, FR-2.7, FR-2.8, FR-5, FR-6 (subset), §13. Depends on M1 (`src/config/*`).
 Branch: `feat/m2-health-panel` (from `feat/m0-scaffold` once merged, else stacked).
-Status: **draft, written while M1 was in flight — re-read M1's final APIs before starting.**
+Status: **implemented 2026-09-10 on the stated assumptions (Q-M..Q-R); adversarial review in flight.**
 
 ## Scope
 
@@ -52,14 +52,14 @@ src/extension.ts  wiring only: build env (resolveClaudeDir, workspaceFolders, Fi
 
 ## Tasks
 
-- [ ] `src/health/types.ts` + `labels.ts` + `runner.ts` with tests: runner never throws, crashed
+- [x] `src/health/types.ts` + `labels.ts` + `runner.ts` with tests: runner never throws, crashed
       check → error result, report counts, transition detection (healthy→fail true only once).
-- [ ] `context.ts`: `detectClaudeCode()` three signals (FR-1.4) — extension via injected
+- [x] `context.ts`: `detectClaudeCode()` three signals (FR-1.4) — extension via injected
       `getExtension`, CLI via `execFile('claude', ['--version'], {timeout: 5000})` (signal 2
       failing while 1 passes is **not** an error — info only), settings via `readSettings`.
       Version floor (FR-1.6) via a tiny semver compare (no dependency): `install.version` is
       warning below `minimumClaudeCodeVersion` from the bundled manifest.
-- [ ] Checks, each with a unit test on a fake ctx:
+- [x] Checks, each with a unit test on a fake ctx:
   - `install.extension` error + fix `workbench.extensions.installExtension` with `anthropic.claude-code`
   - `install.version` warning + fix `extension.open`
   - `install.cli` info only
@@ -78,24 +78,24 @@ src/extension.ts  wiring only: build env (resolveClaudeDir, workspaceFolders, Fi
   - `plugins.marketplace` / `plugins.enabled` info, fix applyDefaults (§4.2 "install once") — or
     dropped entirely if plan Q-L resolves to removing those keys from MANAGED_KEYS
   - `cred.*`, `config.stale` → `skipped` placeholders with honest labels
-- [ ] `ui/treeProvider.ts`: groups always present in fixed order; leaf `tooltip` = detail +
+- [x] `ui/treeProvider.ts`: groups always present in fixed order; leaf `tooltip` = detail +
       remediation hint; `accessibilityInformation.label` = "<group>: <label>, <level>";
       `viewsWelcome` contribution for the empty/first-run state with an "Apply recommended
       configuration" button link; badge = error count (FR-5.4)
-- [ ] `ui/commands.ts`: `runHealthCheck`, `applyDefaults` (diff QuickPick → commit → rerun),
+- [x] `ui/commands.ts`: `runHealthCheck`, `applyDefaults` (diff QuickPick → commit → rerun),
       `openSettings`, `restoreBackup` (QuickPick newest-first with relative time; confirm modal
       naming the backup; then rerun), `resetKey(key)` — implemented as `plan({[key]: desired[key]})`
       with the snapshot **pre-seeded to current** for that key so merge treats it as ours → this is
       the only path that transfers ownership (M1 plan note). `package.json` contributes all of
       them + `view/title` (refresh, apply) + `view/item/context` (fix, reset) menus.
-- [ ] `ui/watcher.ts` with debounce + self-write suppression; test the debounce with fake timers.
-- [ ] `ui/notify.ts` FR-5.5 with tests on the gate logic (pure function over prev/next report).
-- [ ] `extension.ts` wiring; activation timing assertion in the integration smoke test
+- [x] `ui/watcher.ts` with debounce + self-write suppression; test the debounce with fake timers.
+- [x] `ui/notify.ts` FR-5.5 with tests on the gate logic (pure function over prev/next report).
+- [x] `extension.ts` wiring; activation timing assertion in the integration smoke test
       (`@vscode/test-electron`, one file): activates, view registers, `runHealthCheck` executes
       against a temp `CLAUDE_CONFIG_DIR`, no notification on second run.
-- [ ] README: fill "What this extension writes" (now true) — list of managed keys in plain words.
-- [ ] DoD: all checks unit-tested on fake ctx; `labels.ts` lint test; `bun test` green; VSIX
-      installs; manual walkthrough on this box against a temp `CLAUDE_CONFIG_DIR`: fresh → apply →
+- [x] README: fill "What this extension writes" (now true) — list of managed keys in plain words.
+- [ ] DoD: all checks unit-tested on fake ctx ✅; `labels.ts` lint test ✅; `bun test` green (543) ✅; VSIX
+      builds and the extension-host smoke passes headless ✅; **manual walkthrough outstanding**: fresh → apply →
       edit a model pin by hand → drift shows → reset → pass.
 
 ## Decisions to confirm before starting (assumption in bold)
