@@ -216,19 +216,34 @@ describe("redactValue", () => {
    * assignment lands, nothing readable survives it — and `Object.prototype` is
    * untouched, so the pollution cannot reach any other object.
    */
-  it("lets no secret escape through a __proto__ key", () => {
+  it("keeps a __proto__ key in the report instead of losing it to the prototype", () => {
     register(UNRECOGNISED);
     const parsed = JSON.parse(
       `{"a":1,"__proto__":{"AWS_BEARER_TOKEN_BEDROCK":"x","note":"${UNRECOGNISED}"}}`,
     ) as unknown;
 
     const out = redactValue(parsed, LEAVES) as Record<string, unknown>;
+    const rendered = JSON.stringify(out);
 
-    expect(JSON.stringify(out)).not.toContain(UNRECOGNISED);
-    expect(JSON.stringify(out)).toBe('{"a":1}');
-    const inherited = Object.getPrototypeOf(out) as Record<string, unknown>;
-    expect(inherited.AWS_BEARER_TOKEN_BEDROCK).toBe(REDACTED);
-    expect(inherited.note).toBe(REDACTED);
+    // Redacted, and still *there*: assigning would have set the prototype, so
+    // the entry would vanish from the report the user is pasting for help.
+    expect(rendered).not.toContain(UNRECOGNISED);
+    expect(rendered).toContain("__proto__");
+    expect(rendered).toContain(REDACTED);
+    expect(rendered).toContain('"a":1');
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
     expect(({} as Record<string, unknown>).AWS_BEARER_TOKEN_BEDROCK).toBeUndefined();
+  });
+
+  it("matches a dotted secret key as well as a bare leaf name", () => {
+    const out = redactValue(
+      { env: { AWS_BEARER_TOKEN_BEDROCK: "hand-pasted-unknown-shape" } },
+      new Set(["env.AWS_BEARER_TOKEN_BEDROCK"]),
+    );
+
+    // SECRET_KEYS is dotted; a caller handing it over unchanged must not
+    // silently fall back to the pattern net alone.
+    expect(JSON.stringify(out)).not.toContain("hand-pasted");
+    expect(JSON.stringify(out)).toContain(REDACTED);
   });
 });

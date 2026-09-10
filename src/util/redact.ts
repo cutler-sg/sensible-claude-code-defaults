@@ -93,6 +93,11 @@ export function redact(message: string): string {
  * Key-based redaction is the half that still works when the pattern set is
  * wrong and the registry is empty — which is exactly the situation on a machine
  * where the user pasted a key by hand and the extension has never held it.
+ *
+ * `secretKeys` may hold either dotted paths (`env.AWS_BEARER_TOKEN_BEDROCK`, as
+ * `SECRET_KEYS` does) or bare leaf names; both match. Handing this the project's
+ * own constant and having it silently match nothing, degrading the key rule to
+ * the pattern net, is the trap a caller falls into exactly once.
  */
 export function redactValue(value: unknown, secretKeys: ReadonlySet<string>): unknown {
   if (typeof value === "string") return redact(value);
@@ -100,9 +105,37 @@ export function redactValue(value: unknown, secretKeys: ReadonlySet<string>): un
   if (typeof value === "object" && value !== null) {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      out[key] = secretKeys.has(key) ? REDACTED : redactValue(entry, secretKeys);
+      const redacted = isSecret(key, secretKeys) ? REDACTED : redactValue(entry, secretKeys);
+      // Defined, not assigned: `out.__proto__ = x` sets the prototype instead of
+      // adding a key, so the entry vanishes from `JSON.stringify` and the report
+      // silently omits part of the file the user is pasting to get help.
+      Object.defineProperty(out, key, {
+        value: redacted,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
     return out;
   }
   return value;
+}
+
+/**
+ * A key is secret when the caller named it directly or named a dotted path
+ * ending in it. Comparing leaf-to-leaf rather than requiring the caller to
+ * flatten means `SECRET_KEYS` works handed over unchanged.
+ */
+function isSecret(key: string, secretKeys: ReadonlySet<string>): boolean {
+  if (secretKeys.has(key)) return true;
+  for (const candidate of secretKeys) {
+    if (leafOf(candidate) === key) return true;
+  }
+  return false;
+}
+
+/** The last segment of a dotted key. */
+function leafOf(key: string): string {
+  const at = key.lastIndexOf(".");
+  return at === -1 ? key : key.slice(at + 1);
 }
