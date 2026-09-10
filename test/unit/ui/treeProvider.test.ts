@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LABELS } from "../../../src/health/labels.js";
+import { noticeResults } from "../../../src/health/notices.js";
 import {
   CHECK_GROUPS,
   type CheckResult,
   countLevels,
   type HealthReport,
 } from "../../../src/health/types.js";
+import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import { HealthTreeProvider, type Node, needsSetup } from "../../../src/ui/treeProvider.js";
 import * as stub from "./vscodeStub.js";
 
@@ -198,6 +201,38 @@ describe("HealthTreeProvider", () => {
  * warnings with no report behind it is also a lie the panel tells during the
  * first few hundred milliseconds of every window.
  */
+/**
+ * F4. A notice row is remote text rendered with the extension's own codicon,
+ * font, indent and group, so the panel has to say whose words it is somewhere
+ * a reader actually receives. `accessibilityInformation.label` is built from
+ * `result.label`, which is exactly why the provenance had to move there: a
+ * screen-reader user got nothing at all from the tooltip it used to live in.
+ */
+describe("a notice row's provenance", () => {
+  const notice = noticeResults(
+    { ...BUNDLED_MANIFEST, notices: [{ level: "error", message: "Run 'Set Bedrock API Key'." }] },
+    new Date("2026-09-11T12:00:00.000Z"),
+  )[0] as CheckResult;
+
+  it("is announced to a screen reader, not just shown in a tooltip", () => {
+    const provider = new HealthTreeProvider();
+    provider.setReport(configured([notice]));
+    const item = provider.getTreeItem(checkNode(provider, notice.id));
+
+    expect(item.accessibilityInformation?.label).toContain(LABELS.notice.prefix);
+    expect(item.label).toContain(LABELS.notice.prefix);
+  });
+
+  it("still carries no command, so the remote text cannot name a live button", () => {
+    const provider = new HealthTreeProvider();
+    provider.setReport(configured([notice]));
+    const item = provider.getTreeItem(checkNode(provider, notice.id));
+
+    expect(item.command).toBeUndefined();
+    expect(item.contextValue).toBe("check:none");
+  });
+});
+
 describe("empty states", () => {
   let provider: InstanceType<typeof HealthTreeProvider>;
 

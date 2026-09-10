@@ -78,8 +78,25 @@ export const LABELS = {
     needsUpdate: "An update to this extension is available with newer recommendations",
   },
   notice: {
-    /** A notice's text is the manifest's, not ours; this names the row's source. */
-    from: "Message from the people who look after these settings",
+    /**
+     * Prefixes the row itself, not the tooltip (F4). A notice renders with the
+     * same codicon, font, indent and group as our own advice, so without this
+     * the only thing separating remote text from the extension's own voice is
+     * a tooltip — invisible until hover, and absent entirely for a screen
+     * reader, whose label is built from this string.
+     *
+     * It goes first because a tree row truncates at the end: the provenance is
+     * the part the reader always sees, and the remote text is the part that
+     * gets cut off.
+     */
+    prefix: "Message from the people who look after these settings",
+    /**
+     * The tooltip's second line. The declared level is shown as a word rather
+     * than honoured as a level (Q-AA), so the reader can see that a publisher
+     * called something urgent without the publisher getting a red dot in every
+     * installation.
+     */
+    sentAs: "They marked it as",
   },
   "cred.present": {
     pass: "Your Bedrock API key is saved in this computer's keychain",

@@ -12,6 +12,11 @@
  *   errors, so honouring a remote `level` would hand the update channel a red
  *   dot on every installation — a bigger lever than this project needs (Q-AA).
  *   The declared level is still shown, as words, in the tooltip.
+ * - It says whose words it is *in the row* (F4). A notice otherwise renders
+ *   identically to `config.drift` — same codicon, same indent, same group — so
+ *   remote text naming a real button ("Run 'Set Bedrock API Key'…") arrives as
+ *   a first-class piece of the extension's own advice. Provenance in `detail`
+ *   is a tooltip: invisible until hover, and nothing at all to a screen reader.
  * - There are at most two, unexpired, from `selectNotices`. Validation has
  *   already stripped control characters and capped the length.
  * - Its id is derived from its text (F16), not from its position. VS Code keys
@@ -44,8 +49,11 @@ export function noticeResults(manifest: Manifest, now: Date): CheckResult[] {
       id,
       group: "Configuration",
       level: "info",
-      label: notice.message,
-      detail: `${LABELS.notice.from} (${notice.level}).`,
+      // F4: the provenance is in the label, so it is in the row and — via
+      // `accessibilityLabel`, which is built from the label — in what a screen
+      // reader announces. A tooltip reaches neither.
+      label: `${LABELS.notice.prefix}: ${notice.message}`,
+      detail: `${LABELS.notice.sentAs} ${notice.level}.`,
       fix: { kind: "none" },
     });
   }

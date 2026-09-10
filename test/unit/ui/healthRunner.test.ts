@@ -8,6 +8,7 @@ import type { ConfigEnv } from "../../../src/config/types.js";
 import { MemoryTokenStore } from "../../../src/credential/store.js";
 import { readTokenFromSettings } from "../../../src/credential/writeThrough.js";
 import type { CredentialDeps } from "../../../src/health/context.js";
+import { LABELS } from "../../../src/health/labels.js";
 import type { ClaudeCodeDetection, HealthReport } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import {
@@ -387,7 +388,9 @@ describe("reading the resolved manifest afresh on every run", () => {
     expect(notice).toMatchObject({
       level: "info",
       group: "Configuration",
-      label: "Bedrock maintenance on the 3rd.",
+      // F4: provenance in the label, so it reaches the row and the screen
+      // reader rather than only the tooltip.
+      label: `${LABELS.notice.prefix}: Bedrock maintenance on the 3rd.`,
       fix: { kind: "none" },
     });
   });

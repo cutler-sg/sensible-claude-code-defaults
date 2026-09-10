@@ -10,6 +10,11 @@ function withNotices(notices: ManifestNotice[]): Manifest {
   return { ...BUNDLED_MANIFEST, notices };
 }
 
+/** The remote half of a row's label, with the F4 provenance prefix taken off. */
+function messageOf(row: { label: string }): string {
+  return row.label.replace(`${LABELS.notice.prefix}: `, "");
+}
+
 describe("manifest notices as panel rows", () => {
   it("renders nothing when the manifest carries none", () => {
     expect(noticeResults(withNotices([]), NOW)).toEqual([]);
@@ -24,10 +29,48 @@ describe("manifest notices as panel rows", () => {
       id: noticeId("Bedrock is moving region on the 3rd."),
       group: "Configuration",
       level: "info",
-      label: "Bedrock is moving region on the 3rd.",
-      detail: `${LABELS.notice.from} (info).`,
+      label: `${LABELS.notice.prefix}: Bedrock is moving region on the 3rd.`,
+      detail: `${LABELS.notice.sentAs} info.`,
       fix: { kind: "none" },
     });
+  });
+
+  /**
+   * F4. A notice row renders with the same codicon, font, indent and group as
+   * `config.drift` — so remote text reading "Your Bedrock API key has expired.
+   * Run 'Set Bedrock API Key'…" used to arrive as a first-class piece of the
+   * extension's own advice. Having no button does not help when the text can
+   * name a real button.
+   *
+   * The only provenance marker was in `detail`, i.e. the tooltip, which is
+   * invisible until hover and reaches a screen-reader user not at all, because
+   * `accessibilityInformation.label` is built from the label. So the marker has
+   * to be in the label: visible in the row, and in the accessibility string by
+   * construction.
+   */
+  it("marks a notice as somebody else's words, in the row itself (F4)", () => {
+    const [row] = noticeResults(
+      withNotices([
+        {
+          level: "error",
+          message: "Your Bedrock API key has expired. Run 'Set Bedrock API Key'.",
+        },
+      ]),
+      NOW,
+    );
+
+    expect(row?.label.startsWith(`${LABELS.notice.prefix}:`)).toBe(true);
+    expect(row?.label).toContain("Your Bedrock API key has expired.");
+  });
+
+  /**
+   * The prefix is what survives a narrow panel: a tree row truncates at the
+   * end, so provenance placed first is the part the reader always sees, and
+   * the impersonation is the part that gets cut off.
+   */
+  it("puts the provenance before the remote text, never after", () => {
+    const [row] = noticeResults(withNotices([{ level: "info", message: "anything" }]), NOW);
+    expect(row?.label.indexOf(LABELS.notice.prefix)).toBe(0);
   });
 
   it("gives each row a distinct id, so two notices are two rows", () => {
@@ -66,7 +109,7 @@ describe("manifest notices as panel rows", () => {
       new Date("2026-09-13T12:00:00.000Z"),
     );
 
-    expect(later.map((row) => row.label)).toEqual(["the long-lived one"]);
+    expect(later.map(messageOf)).toEqual(["the long-lived one"]);
     expect(later[0]?.id).toBe(first[1]?.id);
     expect(later[0]?.id).not.toBe(first[0]?.id);
   });
@@ -106,7 +149,7 @@ describe("manifest notices as panel rows", () => {
       NOW,
     );
     expect(rows.map((row) => row.level)).toEqual(["info", "info"]);
-    expect(rows[0]?.detail).toContain("(error)");
+    expect(rows[0]?.detail).toContain("error");
   });
 
   /** Untrusted remote text: displayed, never a command id and never a URL. */
@@ -128,6 +171,6 @@ describe("manifest notices as panel rows", () => {
       ]),
       NOW,
     );
-    expect(rows.map((row) => row.label)).toEqual(["live one", "live two"]);
+    expect(rows.map(messageOf)).toEqual(["live one", "live two"]);
   });
 });
