@@ -74,7 +74,7 @@ export {
   EMPTY_SNAPSHOT,
   MANAGED_KEYS,
 } from "./types.js";
-export type { WriteOptions } from "./writer.js";
+export type { ModeRepair, WriteOptions } from "./writer.js";
 export {
   backupSettings,
   ensureMode0600,

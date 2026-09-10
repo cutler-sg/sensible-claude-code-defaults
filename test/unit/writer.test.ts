@@ -197,25 +197,35 @@ describe("writeSettingsAtomic (FR-2.3)", () => {
 });
 
 describe("ensureMode0600 (FR-2.8)", () => {
-  it("reports no repair when the file is already 0600", async () => {
-    await fs.writeFile(file, "{}\n", { mode: 0o600 });
-    expect(await ensureMode0600(file, "linux")).toEqual({ repaired: false, before: 0o600 });
+  it("reports ok when the file is already 0600", async () => {
+    await fs.writeFile(file, "{}\n");
+    await fs.chmod(file, 0o600);
+    expect(await ensureMode0600(file, "linux")).toEqual({ kind: "ok", before: 0o600 });
   });
 
   it("repairs a world-readable file and reports the previous mode", async () => {
-    await fs.writeFile(file, "{}\n", { mode: 0o644 });
-    expect(await ensureMode0600(file, "linux")).toEqual({ repaired: true, before: 0o644 });
+    await fs.writeFile(file, "{}\n");
+    await fs.chmod(file, 0o644);
+    expect(await ensureMode0600(file, "linux")).toEqual({ kind: "repaired", before: 0o644 });
     expect(await mode(file)).toBe(0o600);
   });
 
-  it("is a no-op on win32 (plan Q-K defers ACL work to M6)", async () => {
-    await fs.writeFile(file, "{}\n", { mode: 0o644 });
-    expect(await ensureMode0600(file, "win32")).toEqual({ repaired: false, before: 0 });
+  it("reports unsupported on win32 rather than a fabricated mode (plan Q-K, F10)", async () => {
+    await fs.writeFile(file, "{}\n");
+    await fs.chmod(file, 0o644);
+    expect(await ensureMode0600(file, "win32")).toEqual({ kind: "unsupported" });
     expect(await mode(file)).toBe(0o644);
   });
 
-  it("propagates ENOENT for a missing file", async () => {
-    await expect(ensureMode0600(file, "linux")).rejects.toMatchObject({ code: "ENOENT" });
+  it("reports absent for a missing file rather than throwing (F10)", async () => {
+    expect(await ensureMode0600(file, "linux")).toEqual({ kind: "absent" });
+  });
+
+  it("propagates an error that is not ENOENT", async () => {
+    await fs.writeFile(file, "{}\n");
+    await expect(ensureMode0600(path.join(file, "nested.json"), "linux")).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
   });
 });
 

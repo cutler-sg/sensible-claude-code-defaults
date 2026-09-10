@@ -37,6 +37,13 @@ export interface WriteOptions {
   platform?: NodeJS.Platform;
 }
 
+/** Outcome of a permission repair. `before` exists only when there was a mode to read. */
+export type ModeRepair =
+  | { kind: "repaired"; before: number }
+  | { kind: "ok"; before: number }
+  | { kind: "absent" }
+  | { kind: "unsupported" };
+
 /** Serialize `data` in the file's own style and replace the file atomically. */
 export async function writeSettingsAtomic(
   file: string,
@@ -82,21 +89,33 @@ async function writeBytesAtomic(file: string, bytes: Buffer, opts: WriteOptions)
 /**
  * FR-2.8: re-assert mode 0600. Claude Code rewrites this file itself and can
  * reset its permissions. Windows ACL repair is deferred to M6 (plan Q-K).
+ *
+ * A fresh install has no `settings.json` yet, and a health check that runs
+ * before the first apply must not fail on that — hence `absent` rather than a
+ * thrown ENOENT (F10).
  */
 export async function ensureMode0600(
   file: string,
   platform: NodeJS.Platform = process.platform,
-): Promise<{ repaired: boolean; before: number }> {
+): Promise<ModeRepair> {
   if (platform === "win32") {
-    return { repaired: false, before: 0 };
+    return { kind: "unsupported" };
   }
-  const stats = await fs.stat(file);
+  let stats: Awaited<ReturnType<typeof fs.stat>>;
+  try {
+    stats = await fs.stat(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { kind: "absent" };
+    }
+    throw error;
+  }
   const before = stats.mode & 0o777;
   if (before === MODE_0600) {
-    return { repaired: false, before };
+    return { kind: "ok", before };
   }
   await fs.chmod(file, MODE_0600);
-  return { repaired: true, before };
+  return { kind: "repaired", before };
 }
 
 /**
