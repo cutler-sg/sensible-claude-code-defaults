@@ -38,7 +38,13 @@ import {
   setToken,
   testConnection,
 } from "./flows.js";
-import { describeChange, pluralize, relativeAge } from "./present.js";
+import {
+  describeChange,
+  describeDroppedProtection,
+  droppedProtections,
+  pluralize,
+  relativeAge,
+} from "./present.js";
 import type { Node } from "./treeProvider.js";
 
 export interface CommandDeps {
@@ -161,21 +167,32 @@ async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> 
   const changes = redactChanges(planned.merge.changes);
   const count = changes.length;
   const confirmLabel = `Apply all ${pluralize(count, "change")}`;
+  // F2: protections this apply would drop, said as sentences and placed above
+  // everything else. They are already in the change rows, as a before-set and
+  // an after-set joined by commas — which is a diff the reader has to compute,
+  // and computing it is the thing this audience cannot do. A QuickPick shows
+  // only its first few items, so a loss below the fold is a loss unseen.
+  const dropped = droppedProtections(changes);
   // Multi-step QuickPick rather than an untitled-document diff (plan Q-P): the
   // design target is a user for whom a JSON diff is not a readable object.
   // Only the first item confirms; the change rows are there to be read, so
   // picking one is treated as "I was reading, not deciding" — i.e. cancel.
+  // That covers the loss rows too: they inform, they do not consent.
   const picked = await vscode.window.showQuickPick(
     [
       // Cancel is first so the highlighted item on open is the harmless one: a
       // stray Enter on a dialog the user has not read yet must never write.
       { label: CANCEL, description: "" },
+      ...dropped.map((rule) => ({
+        label: describeDroppedProtection(rule),
+        description: PROTECTION_LOST,
+      })),
       { label: confirmLabel, description: "Writes the changes listed below" },
       ...changes.map((change) => ({ label: describeChange(change), description: "" })),
     ],
     {
       canPickMany: false,
-      title: `Apply ${pluralize(count, "recommended change")}?`,
+      title: applyTitle(count, dropped.length),
       placeHolder: "Review the changes, then choose Apply",
       ignoreFocusOut: true,
     },
@@ -228,6 +245,21 @@ async function checkForUpdates(deps: CommandDeps): Promise<void> {
       ? "Updated to the latest recommended settings."
       : "You already have the latest recommended settings.",
   );
+}
+
+const PROTECTION_LOST = "Claude Code will be allowed to do this again";
+
+/**
+ * F2. The dialog is not neutral about a narrowing: the title says what is being
+ * lost before the user reaches any row. `permissions.deny` is the only managed
+ * key whose contents are a safety boundary, so this is the only apply that gets
+ * a second sentence.
+ */
+function applyTitle(count: number, dropped: number): string {
+  const ask = `Apply ${pluralize(count, "recommended change")}?`;
+  return dropped === 0
+    ? ask
+    : `${ask} ${pluralize(dropped, "thing")} Claude Code cannot do today will stop being blocked.`;
 }
 
 async function openSettings(deps: CommandDeps): Promise<void> {
@@ -426,7 +458,12 @@ async function confirmReplace(planned: ReadyPlan): Promise<boolean> {
   const changes = redactChanges(planned.merge.changes);
   const first = changes[0];
   const name = first === undefined ? "these settings" : keyDisplayName(first.key);
-  const detail = changes.map(describeChange).join("\n");
+  // F2, on the other write path: a reset of the blocked-commands list restores
+  // the manifest's list over the user's, which can drop rules. Same
+  // unreadable before/after set, same fix — the losses stated first, as
+  // sentences, above the diff they would otherwise be buried in.
+  const lost = droppedProtections(changes).map(describeDroppedProtection);
+  const detail = [...lost, ...changes.map(describeChange)].join("\n");
   const choice = await vscode.window.showWarningMessage(
     `Replace your ${name} with the recommended value?`,
     { modal: true, detail: `${detail}\n\nYour current settings are saved first.` },

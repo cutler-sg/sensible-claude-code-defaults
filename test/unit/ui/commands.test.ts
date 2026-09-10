@@ -236,7 +236,128 @@ describe("applyDefaults", () => {
 
     expect(messages()).toContain("There are no saved copies to restore yet.");
   });
+});
 
+/**
+ * F2, the critical one. `permissions.deny` is element-owned, so an element we
+ * wrote is ours to remove: a manifest revision that simply stops listing
+ * `Read(./.env)` and `Read(./.aws/**)` removes them from every install at once.
+ * `drift` stays empty (nothing was contested), nothing reports it, and
+ * `config.stale` says only "there are newer recommended settings to apply" —
+ * which the user presses. Claude Code can then read `.env` and `.aws/**`.
+ *
+ * The removal is technically in the preview already, as a before-set and an
+ * after-set joined by commas. Reading that means diffing two comma-separated
+ * lists by eye, which is the exact task this extension exists because its
+ * audience cannot do. A protection being dropped has to be a sentence.
+ */
+describe("a manifest that narrows the blocked commands list (F2)", () => {
+  const DENY = ["Bash(rm -rf:*)", "Read(./.env)", "Read(./.aws/**)"];
+
+  function narrowedTo(deny: string[]): Manifest {
+    return {
+      ...BUNDLED_MANIFEST,
+      revision: "remote-2",
+      defaults: { ...BUNDLED_MANIFEST.defaults, permissions: { deny } },
+    };
+  }
+
+  /** Put the full list in the file, owned by us, so a narrower manifest removes from it. */
+  async function seedApplied(): Promise<void> {
+    currentManifest = narrowedTo(DENY);
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+    await run("sensibleDefaults.applyDefaults");
+    reset();
+    register();
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+  }
+
+  it("says which protections stop being blocked, in its own row", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect(quickPickLabels()).toContain("Stops blocking: Read(./.env)");
+    expect(quickPickLabels()).toContain("Stops blocking: Read(./.aws/**)");
+  });
+
+  /**
+   * Above the change rows and above the confirm item, so it is on screen before
+   * the user has scrolled or decided — a QuickPick shows only its first few
+   * items, and this is the one item nobody may miss.
+   */
+  it("puts the losses above the confirmation, not below the diff", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const labels = quickPickLabels();
+    const firstLoss = labels.findIndex((label) => label.startsWith("Stops blocking:"));
+    const confirm = labels.findIndex((label) => label.startsWith("Apply all"));
+    expect(firstLoss).toBeGreaterThan(-1);
+    expect(firstLoss).toBeLessThan(confirm);
+  });
+
+  it("says so in the title, so the dialog itself is not neutral about it", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const options = state.quickPicks[0]?.options as { title?: string } | undefined;
+    expect(options?.title).toContain("stop being blocked");
+  });
+
+  it("adds no such row to an ordinary apply that drops nothing", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect(quickPickLabels().some((label) => label.startsWith("Stops blocking:"))).toBe(false);
+    const options = state.quickPicks[0]?.options as { title?: string } | undefined;
+    expect(options?.title).not.toContain("stop being blocked");
+  });
+
+  it("still writes what the user accepted, so the row informs rather than blocks", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toEqual(["Bash(rm -rf:*)"]);
+  });
+
+  it("keeps Cancel first, so the loud dialog still cannot be Entered through", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+    state.quickPickAnswer = (call) => call.items[0];
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect(quickPickLabels()[0]).toBe("Cancel");
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toEqual(DENY);
+  });
+
+  /** A "Stops blocking:" row is text to read, not a decision — like every change row. */
+  it("treats picking a loss row as reading, not as consent", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+    state.quickPickAnswer = (call) =>
+      call.items.find((item) => labelOf(item).startsWith("Stops blocking:"));
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toEqual(DENY);
+  });
+});
+
+describe("applyDefaults, continued", () => {
   it("retries a stale plan exactly once", async () => {
     await seed({ env: { AWS_REGION: "eu-west-1" } });
     // Every `plan` loads the snapshot; nudging the file there makes every
@@ -382,6 +503,51 @@ describe("resetKey", () => {
     await run("sensibleDefaults.resetKey", "env.AWS_REGION");
 
     expect(state.error[0]?.message).toContain("can't be read");
+  });
+});
+
+/**
+ * F2's other write path, and why it is not one. `resetKey` on the blocked
+ * commands list restores the manifest's list over the user's — but
+ * `claimElements` claims only the rules the manifest still lists, so rules the
+ * user added stay unowned and the merge engine preserves them (hard rule 3).
+ *
+ * That makes a reset structurally incapable of narrowing the list, which is
+ * worth pinning: it is the reason F2's fix lives on the apply path, and a
+ * future change to `claimElements` that claimed the container would reopen the
+ * hole silently.
+ */
+describe("resetting the blocked commands list cannot narrow it (F2)", () => {
+  const denying = (deny: string[]): Manifest => ({
+    ...BUNDLED_MANIFEST,
+    defaults: { ...BUNDLED_MANIFEST.defaults, permissions: { deny } },
+  });
+
+  it("keeps a rule the manifest no longer lists, rather than removing it", async () => {
+    await seed({ permissions: { deny: ["Bash(rm -rf:*)", "Read(./.env)"] } });
+    register(denying(["Bash(rm -rf:*)"]));
+    state.answer = (shown) => (shown.items.includes("Replace") ? "Replace" : undefined);
+
+    await run("sensibleDefaults.resetKey", "permissions.deny");
+
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toContain("Read(./.env)");
+  });
+
+  /**
+   * And the confirmation is wired to report a loss if one ever did occur — the
+   * belt to `claimElements`' braces, on the shared modal every single-key write
+   * goes through.
+   */
+  it("says nothing about losses when there are none to report", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-9" } });
+    state.answer = (shown) => (shown.items.includes("Replace") ? "Replace" : undefined);
+
+    await run("sensibleDefaults.resetKey", "env.AWS_REGION");
+
+    const detail = (state.warn[0]?.options as { detail?: string } | undefined)?.detail ?? "";
+    expect(detail).not.toContain("Stops blocking:");
+    expect(detail).toContain("Amazon region");
   });
 });
 
