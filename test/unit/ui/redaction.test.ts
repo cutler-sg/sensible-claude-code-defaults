@@ -54,13 +54,24 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+/**
+ * `TreeItem`'s label and tooltip are each a string or a small object
+ * (`TreeItemLabel`, `MarkdownString`). Both carry text a user reads, so both
+ * are flattened rather than narrowed away — narrowing to `string` would let a
+ * leak hide in the variant the test skipped.
+ */
+function textOf(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 /** Every string the tree would put in front of a user, plus the ids behind it. */
 function rendered(provider: HealthTreeProvider): string[] {
   const out: string[] = [];
   const walk = (node?: Node): void => {
     for (const child of provider.getChildren(node)) {
       const item = provider.getTreeItem(child);
-      out.push(item.label, item.id ?? "", item.tooltip ?? "", item.contextValue ?? "");
+      out.push(textOf(item.label), item.id ?? "", textOf(item.tooltip), item.contextValue ?? "");
       out.push(item.accessibilityInformation?.label ?? "");
       walk(child);
     }
