@@ -19,7 +19,17 @@ export {
   resetKeyPlan,
   restore,
 } from "./apply.js";
-export { deletePath, getPath, isElementOwned, isJsonObject, setPath } from "./managedKeys.js";
+export {
+  deletePath,
+  getPath,
+  isElementOwned,
+  isJsonObject,
+  REDACTED,
+  redactChanges,
+  redactDrift,
+  SECRET_KEYS,
+  setPath,
+} from "./managedKeys.js";
 export { merge } from "./merge.js";
 export {
   assertOutsideWorkspace,

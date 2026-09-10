@@ -8,7 +8,9 @@
  */
 
 import {
+  type Change,
   ConfigError,
+  type Drift,
   ELEMENT_OWNED_KEYS,
   type ElementOwnedKey,
   type JsonObject,
@@ -105,4 +107,50 @@ export function deletePath(settings: Settings, key: ManagedKey): Settings {
   const node = parentObject(settings, parent);
   if (node === undefined || !Object.hasOwn(node, leaf)) return settings;
   return { ...settings, [parent]: omit(node, leaf) };
+}
+
+/**
+ * Managed keys whose value is a credential (hard rule 4: the Bedrock token is
+ * never logged, never in an error message, never in diagnostics output).
+ */
+export const SECRET_KEYS: ReadonlySet<ManagedKey> = new Set<ManagedKey>([
+  "env.AWS_BEARER_TOKEN_BEDROCK",
+]);
+
+/** What a secret's value looks like once it has left the engine. */
+export const REDACTED = "\u00abredacted\u00bb";
+
+/**
+ * Redact at the boundary, not at the source: `merge` returns the real value
+ * because `commit` has to write it. Everything that *renders* a change or a
+ * drift entry — the diff preview, the health panel, the log — passes it
+ * through these first.
+ *
+ * `undefined` is left alone: an add has no `before` and a remove has no
+ * `after`, and printing «redacted» there would claim a secret that never
+ * existed.
+ */
+export function redactChanges(changes: readonly Change[]): Change[] {
+  return changes.map((change) =>
+    SECRET_KEYS.has(change.key)
+      ? { ...change, before: mask(change.before), after: mask(change.after) }
+      : change,
+  );
+}
+
+export function redactDrift(drift: readonly Drift[]): Drift[] {
+  return drift.map((entry) =>
+    SECRET_KEYS.has(entry.key)
+      ? {
+          ...entry,
+          current: mask(entry.current),
+          lastApplied: mask(entry.lastApplied),
+          recommended: mask(entry.recommended),
+        }
+      : entry,
+  );
+}
+
+function mask(value: JsonValue | undefined): JsonValue | undefined {
+  return value === undefined ? undefined : REDACTED;
 }

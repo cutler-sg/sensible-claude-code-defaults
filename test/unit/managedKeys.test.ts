@@ -4,9 +4,19 @@ import {
   getPath,
   isElementOwned,
   isJsonObject,
+  REDACTED,
+  redactChanges,
+  redactDrift,
+  SECRET_KEYS,
   setPath,
 } from "../../src/config/managedKeys.js";
-import { ConfigError, type ManagedKey, type Settings } from "../../src/config/types.js";
+import {
+  type Change,
+  ConfigError,
+  type Drift,
+  type ManagedKey,
+  type Settings,
+} from "../../src/config/types.js";
 
 const baseEnv = { AWS_REGION: "us-east-1", MY_OWN: "keep me" };
 
@@ -217,5 +227,116 @@ describe("keys that collide with Object.prototype", () => {
     const settings: Settings = { env: { A: "1" } };
     expect(deletePath(settings, PROTO)).toBe(settings);
     expect(deletePath(settings, "toString" as ManagedKey)).toBe(settings);
+  });
+});
+
+describe("SECRET_KEYS", () => {
+  it("covers the Bedrock bearer token", () => {
+    expect([...SECRET_KEYS]).toEqual(["env.AWS_BEARER_TOKEN_BEDROCK"]);
+  });
+});
+
+describe("redactChanges", () => {
+  const tokenChange: Change = {
+    key: "env.AWS_BEARER_TOKEN_BEDROCK",
+    kind: "update",
+    before: "ABSK-old-secret",
+    after: "ABSK-new-secret",
+  };
+
+  it("replaces both sides of a secret change", () => {
+    expect(redactChanges([tokenChange])).toEqual([
+      {
+        key: "env.AWS_BEARER_TOKEN_BEDROCK",
+        kind: "update",
+        before: REDACTED,
+        after: REDACTED,
+      },
+    ]);
+  });
+
+  it("keeps `undefined` distinguishable from a redacted value", () => {
+    // An add has no `before` and a remove has no `after`; showing «redacted»
+    // there would claim a secret existed when none did.
+    expect(redactChanges([{ ...tokenChange, kind: "add", before: undefined }])[0]).toMatchObject({
+      before: undefined,
+      after: REDACTED,
+    });
+    expect(redactChanges([{ ...tokenChange, kind: "remove", after: undefined }])[0]).toMatchObject({
+      before: REDACTED,
+      after: undefined,
+    });
+  });
+
+  it("leaves non-secret changes untouched", () => {
+    const change: Change = {
+      key: "env.AWS_REGION",
+      kind: "update",
+      before: "us-east-1",
+      after: "eu-west-1",
+    };
+    expect(redactChanges([change])).toEqual([change]);
+  });
+
+  it("does not mutate the input", () => {
+    const changes = [tokenChange];
+    redactChanges(changes);
+    expect(changes[0]?.after).toBe("ABSK-new-secret");
+  });
+
+  it("redacts only the secret entries of a mixed list", () => {
+    const region: Change = {
+      key: "env.AWS_REGION",
+      kind: "add",
+      before: undefined,
+      after: "us-east-1",
+    };
+    expect(redactChanges([region, tokenChange]).map((change) => change.after)).toEqual([
+      "us-east-1",
+      REDACTED,
+    ]);
+  });
+});
+
+describe("redactDrift", () => {
+  const tokenDrift: Drift = {
+    key: "env.AWS_BEARER_TOKEN_BEDROCK",
+    current: "ABSK-theirs",
+    lastApplied: "ABSK-ours",
+    recommended: "ABSK-manifest",
+  };
+
+  it("replaces every value of a secret drift entry", () => {
+    expect(redactDrift([tokenDrift])).toEqual([
+      {
+        key: "env.AWS_BEARER_TOKEN_BEDROCK",
+        current: REDACTED,
+        lastApplied: REDACTED,
+        recommended: REDACTED,
+      },
+    ]);
+  });
+
+  it("keeps `undefined` fields as they are", () => {
+    expect(redactDrift([{ ...tokenDrift, lastApplied: undefined }])[0]).toMatchObject({
+      lastApplied: undefined,
+      current: REDACTED,
+    });
+  });
+
+  it("leaves non-secret drift untouched", () => {
+    const drift: Drift = {
+      key: "permissions.deny",
+      current: ["a"],
+      lastApplied: undefined,
+      recommended: ["a", "b"],
+    };
+    expect(redactDrift([drift])).toEqual([drift]);
+  });
+
+  it("does not mutate the input", () => {
+    const entries = [tokenDrift];
+    redactDrift(entries);
+    expect(entries[0]?.current).toBe("ABSK-theirs");
   });
 });
