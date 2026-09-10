@@ -47,19 +47,40 @@ describe("the registry", () => {
     expect(redact(`token=${UNRECOGNISED}`)).toBe(`token=${REDACTED}`);
   });
 
-  it("refuses a value too short to be a credential rather than a coincidence", () => {
-    register("abc");
-    register("1234567");
-
-    expect(registeredCount()).toBe(0);
-    expect(redact("abc 1234567")).toBe("abc 1234567");
-  });
-
-  it("accepts a value exactly at the length floor", () => {
-    register("12345678");
+  /**
+   * The store is the authority on what counts as a credential, and it accepts
+   * a short value on purpose: `shape.ts` returns `too-short` as a *warning*
+   * because a rule that turns away a real key costs the user their whole setup.
+   * So a five-character value is stored, mirrored into the settings file and
+   * exported to terminals — and a registry floor above that would silently drop
+   * the one value the store just told us to scrub. Two floors that disagree is
+   * a policy hole; this one is closed in the store's favour.
+   */
+  it("registers a value the store would accept, however short", () => {
+    register("abcde");
 
     expect(registeredCount()).toBe(1);
-    expect(redact("x12345678y")).toBe(`x${REDACTED}y`);
+    expect(redact("key=abcde")).toBe(`key=${REDACTED}`);
+  });
+
+  it("registers a value one character long", () => {
+    register("x");
+
+    expect(registeredCount()).toBe(1);
+    expect(redact("axb")).toBe(`a${REDACTED}b`);
+  });
+
+  /**
+   * The one value with nothing to lose: `shape.ts` calls an empty string an
+   * error and the store reads it as plain absence, so there is no credential
+   * here to protect — and registering it would replace every empty position in
+   * every line.
+   */
+  it("refuses a value that is empty or only whitespace", () => {
+    register("");
+    register("   \n ");
+
+    expect(registeredCount()).toBe(0);
   });
 
   it("holds one entry per distinct value", () => {

@@ -20,13 +20,6 @@
 export const REDACTED = "«redacted»";
 
 /**
- * Below this, an exact-value match is more likely to be coincidence than a
- * disclosure — and redacting a common substring would corrupt every log line
- * that happened to contain it.
- */
-const MIN_REGISTERED_LENGTH = 8;
-
-/**
  * The distinct secrets we have been told about. Kept apart from `scrubbing`
  * because a count of "how many secrets are known" is a different question from
  * "how many strings do we replace", and conflating them would make
@@ -80,7 +73,15 @@ const PATTERNS: readonly RegExp[] = [
 export function register(secret: string | undefined): void {
   if (secret === undefined) return;
   const trimmed = secret.trim();
-  if (trimmed.length < MIN_REGISTERED_LENGTH) return;
+  // Whatever the store accepts is registered — no length floor of our own. The
+  // store is the authority on what counts as a credential, and `shape.ts`
+  // returns `too-short` as a *warning* on purpose, so a five-character value is
+  // stored, mirrored into the settings file and exported to terminals. A floor
+  // here above the store's would silently drop exactly that value: two floors
+  // that disagree is a policy hole, and this is the side of it that leaks.
+  // Empty is the one value with nothing to protect, and registering it would
+  // replace every empty position in every line.
+  if (trimmed === "") return;
   registry.add(trimmed);
   for (const form of formsOf(trimmed)) scrubbing.add(form);
 }
