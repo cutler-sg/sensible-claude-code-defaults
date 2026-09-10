@@ -216,6 +216,82 @@ describe("resolveManifest — FR-3.5 minExtensionVersion gate", () => {
     expect(resolution.needsExtensionVersion).toBe("0.9.0");
   });
 
+  /**
+   * F12. `minExtensionVersion` is the one field a manifest can use to disable
+   * the update channel permanently. `"999.999.999"` gates every install to the
+   * bundled copy for good — no future manifest can lift it, because the gate is
+   * evaluated *before* the manifest is used — while `config.stale` tells every
+   * user that an extension update with newer recommendations is available. It
+   * is not, and never will be.
+   *
+   * The gate is a compatibility signal, not an off switch. A demand a plausible
+   * release could never satisfy is not a compatibility signal, so it is ignored
+   * and the manifest is admitted on its merits.
+   */
+  it("ignores a version gate no release could ever satisfy (F12)", async () => {
+    const resolution = await resolveManifest(
+      deps({
+        fetch: serving(manifest({ revision: "remote-1", minExtensionVersion: "999.999.999" })),
+      }),
+    );
+
+    expect(resolution.source).toBe("fetched");
+    expect(resolution.manifest.revision).toBe("remote-1");
+    expect(resolution.needsExtensionVersion).toBeUndefined();
+  });
+
+  it("logs the absurd gate rather than swallowing it", async () => {
+    const resolution = await resolveManifest(
+      deps({ fetch: serving(manifest({ minExtensionVersion: "999.999.999" })) }),
+    );
+
+    expect(resolution.problems).toContainEqual({
+      source: "fetched",
+      problem: "minExtensionVersion: ignoring an implausible 999.999.999",
+    });
+  });
+
+  it("caches a manifest admitted past an absurd gate, so it survives a restart", async () => {
+    const cache = cacheWith();
+
+    await resolveManifest(
+      deps({
+        cache,
+        fetch: serving(manifest({ revision: "remote-1", minExtensionVersion: "999.999.999" })),
+      }),
+    );
+
+    expect(cache.load(URL_)?.manifest.revision).toBe("remote-1");
+  });
+
+  /**
+   * The gate still has to work for the thing it is for: a real next release.
+   * A cap that swallowed every demand would be its own bug — the FR-3.5 story
+   * exists so a manifest can safely use fields this extension cannot read yet.
+   */
+  it("still honours a gate a real next release would satisfy", async () => {
+    for (const wanted of ["0.2.0", "1.0.0", "9.9.9"]) {
+      const resolution = await resolveManifest(
+        deps({ fetch: serving(manifest({ minExtensionVersion: wanted })) }),
+      );
+      expect(resolution.source).toBe("bundled");
+      expect(resolution.needsExtensionVersion).toBe(wanted);
+    }
+  });
+
+  it("ignores an absurd gate on the cached copy too, not only the fetched one", async () => {
+    const cached: CachedManifest = {
+      manifest: manifest({ revision: "cached-1", minExtensionVersion: "999.0.0" }),
+      fetchedAt: "2026-09-01T00:00:00.000Z",
+      url: URL_,
+    };
+
+    const resolution = await resolveManifest(deps({ cache: cacheWith(cached), fetch: offline }));
+
+    expect(resolution.source).toBe("cached");
+    expect(resolution.manifest.revision).toBe("cached-1");
+  });
+
   it("admits a manifest whose minExtensionVersion equals the running version", async () => {
     const resolution = await resolveManifest(
       deps({ fetch: serving(manifest({ minExtensionVersion: EXTENSION_VERSION })) }),
