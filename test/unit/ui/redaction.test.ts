@@ -12,6 +12,7 @@ import { runAll } from "../../../src/health/runner.js";
 import type { ClaudeCodeDetection } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import { HealthTreeProvider, type Node } from "../../../src/ui/treeProvider.js";
+import { expectNoTokenLeak, MIN_LEAK_RUN } from "./credentialDeps.js";
 import * as stub from "./vscodeStub.js";
 
 vi.mock("vscode", async () => await import("./vscodeStub.js"));
@@ -24,13 +25,17 @@ vi.mock("vscode", async () => await import("./vscodeStub.js"));
  * real run is searched for it: labels, details, tooltips, accessibility text,
  * and the tree item ids.
  *
- * The value is deliberately searched for as a *substring*, so a partial
- * disclosure ("ends in …VmFsdWU") fails as loudly as the whole thing. The
- * complementary test for the command surface lives in `flows.test.ts`.
+ * A whole-value `not.toContain` is not enough: the reviewer inserted
+ * `` `…${token.slice(-4)}` `` into a toast and every assertion here still
+ * passed (F11). So the search is for any contiguous *run* of a token rather
+ * than for the token, and a partial disclosure fails as loudly as the whole
+ * thing. The complementary test for the command surface lives in
+ * `flows.test.ts`, over the same detector.
  */
 const TOKEN = "ABSKTGVha1Rlc3RCZWRyb2NrQVBJS2V5VmFsdWU";
 /** A different value in the file, so the mismatch branches render too. */
 const FILE_TOKEN = "ABSKRmlsZUxlYWtUZXN0QmVkcm9ja0tleVZhbHVl";
+const SECRETS = [TOKEN, FILE_TOKEN];
 
 const DETECTED: ClaudeCodeDetection = {
   extension: { installed: true, version: "2.1.267" },
@@ -79,6 +84,37 @@ function rendered(provider: HealthTreeProvider): string[] {
   walk();
   return out;
 }
+
+/**
+ * The detector is only worth what it catches, so it is tested on the exact
+ * mutation that slipped past the assertions it replaces.
+ */
+describe("the leak detector itself", () => {
+  it("catches the last four characters, which a whole-value match misses", () => {
+    const toast = `Saved your key ending in …${TOKEN.slice(-4)}`;
+
+    expect(toast).not.toContain(TOKEN);
+    expect(() => expectNoTokenLeak([toast], SECRETS)).toThrow(/reached a rendered string/);
+  });
+
+  it("names no part of the token when it fails", () => {
+    const attempt = (): void => {
+      expectNoTokenLeak([`leaked ${TOKEN.slice(0, 12)}`], SECRETS);
+    };
+
+    expect(attempt).toThrow();
+    try {
+      attempt();
+    } catch (error) {
+      expect((error as Error).message).not.toContain(TOKEN.slice(0, MIN_LEAK_RUN));
+    }
+  });
+
+  it("passes a string that merely shares a shorter fragment with the token", () => {
+    const nearMiss = `Your key ${TOKEN.slice(0, MIN_LEAK_RUN - 1)} is saved`;
+    expect(() => expectNoTokenLeak([nearMiss], SECRETS)).not.toThrow();
+  });
+});
 
 describe("a token that exists in every place at once", () => {
   it("appears in no label, detail, tooltip or id the panel produces", async () => {
@@ -132,10 +168,7 @@ describe("a token that exists in every place at once", () => {
 
     // Guards the assertion itself: an empty or tiny list would pass vacuously.
     expect(strings.length).toBeGreaterThan(60);
-    for (const text of strings) {
-      expect(text).not.toContain(TOKEN);
-      expect(text).not.toContain(FILE_TOKEN);
-    }
+    expectNoTokenLeak(strings, SECRETS);
   });
 
   it("renders the drift row for the key without its value", async () => {
@@ -176,10 +209,7 @@ describe("a token that exists in every place at once", () => {
     const row = rendered(provider).find((text) => text.includes("Amazon Bedrock API key"));
     expect(row).toBeDefined();
 
-    for (const text of rendered(provider)) {
-      expect(text).not.toContain(TOKEN);
-      expect(text).not.toContain(FILE_TOKEN);
-    }
+    expectNoTokenLeak(rendered(provider), SECRETS);
     expect(stub.TreeItemCollapsibleState.Expanded).toBe(2);
   });
 });
