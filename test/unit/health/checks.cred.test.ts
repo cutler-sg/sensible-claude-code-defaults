@@ -5,6 +5,7 @@ import { credLeakCheck } from "../../../src/health/checks/cred.leak.js";
 import { credMirroredCheck } from "../../../src/health/checks/cred.mirrored.js";
 import { credPresentCheck } from "../../../src/health/checks/cred.present.js";
 import { credValidCheck } from "../../../src/health/checks/cred.valid.js";
+import { LABELS } from "../../../src/health/labels.js";
 import type { CheckContext, CredentialContext } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import { daysAgo, makeCtx, NOW, okCredential } from "./fixture.js";
@@ -131,8 +132,16 @@ describe("cred.valid", () => {
     expect(result.label).toMatch(/works/);
   });
 
+  it("errors on an IAM policy denial with its own sentence, not the model one (F8)", () => {
+    const result = withResult({ kind: "insufficient-permissions", status: 403 });
+    expect(result.level).toBe("error");
+    expect(result.label).toMatch(/permission/i);
+    expect(result.label).not.toBe(LABELS["cred.valid"].modelNotEnabled);
+  });
+
   it.each([
     ["bad-credential", { kind: "bad-credential", status: 403 } as const],
+    ["insufficient-permissions", { kind: "insufficient-permissions", status: 403 } as const],
     ["model-not-enabled", { kind: "model-not-enabled", model: "haiku" } as const],
     ["wrong-region", { kind: "wrong-region", region: "eu-west-9" } as const],
     ["network", { kind: "network", reason: "timeout" } as const],
@@ -146,6 +155,7 @@ describe("cred.valid", () => {
       { kind: "ok", model: "haiku" },
       { kind: "ok-without-haiku", model: "sonnet" },
       { kind: "bad-credential", status: 403 },
+      { kind: "insufficient-permissions", status: 403 },
       { kind: "model-not-enabled", model: "haiku" },
       { kind: "wrong-region", region: "eu-west-9" },
       { kind: "network", reason: "dns" },

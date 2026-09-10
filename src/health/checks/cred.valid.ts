@@ -43,6 +43,8 @@ function describe(result: ConnectionResult): { level: Level; label: string } {
       return { level: "warning", label: LABELS["cred.valid"].withoutHaiku };
     case "bad-credential":
       return { level: "error", label: LABELS["cred.valid"].badCredential };
+    case "insufficient-permissions":
+      return { level: "error", label: LABELS["cred.valid"].insufficientPermissions };
     case "model-not-enabled":
       return { level: "error", label: LABELS["cred.valid"].modelNotEnabled };
     case "wrong-region":

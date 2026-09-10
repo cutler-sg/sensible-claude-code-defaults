@@ -83,6 +83,8 @@ export const LABELS = {
     pass: "Your Bedrock API key works",
     withoutHaiku: "Your key works, but the small, fast Claude model isn't turned on for you",
     badCredential: "Amazon wouldn't accept your Bedrock API key — it may have expired",
+    insufficientPermissions:
+      "Your Bedrock API key is valid, but it isn't allowed to use Claude — whoever issued it needs to widen its permissions",
     modelNotEnabled: "Amazon accepted your key, but the Claude models aren't turned on for you",
     wrongRegion: "The Claude models aren't available in the Amazon region you chose",
     network: "Couldn't reach Amazon to try your Bedrock API key",

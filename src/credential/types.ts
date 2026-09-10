@@ -73,6 +73,8 @@ export type ConnectionResult =
   | { kind: "ok"; model: string }
   | { kind: "ok-without-haiku"; model: string }
   | { kind: "bad-credential"; status: number }
+  /** The key is genuine and the models are enabled; its IAM policy forbids the call. */
+  | { kind: "insufficient-permissions"; status: number }
   | { kind: "model-not-enabled"; model: string }
   | { kind: "wrong-region"; region: string }
   | { kind: "network"; reason: "timeout" | "dns" | "tls" | "proxy" | "unknown" }

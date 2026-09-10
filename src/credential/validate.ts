@@ -26,10 +26,33 @@ const CREDENTIAL_MARKERS = [
   "security token",
 ] as const;
 
+/**
+ * Phrases that make a denial about the *policy on the key* rather than about a
+ * model the account never enabled. IAM denials quote the ARN of the resource
+ * they refused, and a Bedrock model ARN ends in the model id — so "the body
+ * mentions a model" is true of every one of them and cannot be the test.
+ */
+const POLICY_DENIAL_MARKERS = ["not authorized to perform", "explicit deny", "no identity-based"];
+
+/**
+ * Phrases AWS uses when the *model* is the thing unavailable. A denial that
+ * carries one of these is about model access even though it is also worded as
+ * an authorization failure, so it outranks the policy markers above.
+ */
+const MODEL_STATE_MARKERS = ["access to the model", "model access", "not been granted"];
+
 /** Error markers that mean "the key is fine, this model is not available to it". */
 const MODEL_MARKERS = ["accessdeniedexception", "validationexception"] as const;
 
 const WRONG_REGION_MARKER = "not supported in";
+
+/**
+ * Fields only a real Bedrock answer carries. A 200 that has none of them did
+ * not come from Bedrock — an intercepting proxy or captive portal answering
+ * with its own sign-in page is the case this exists for, and treating that as
+ * proof the key works would make the extension's only proof-of-function lie.
+ */
+const BEDROCK_RESPONSE_FIELDS = ["content", "stop_reason", "usage"] as const;
 
 export async function testConnection(input: TestConnectionInput): Promise<ConnectionResult> {
   if (!REGION_SHAPE.test(input.region)) {
@@ -43,9 +66,33 @@ export async function testConnection(input: TestConnectionInput): Promise<Connec
   const call = input.fetch ?? globalThis.fetch;
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+  // One budget for the whole call, not one per model. The user is watching a
+  // progress notification, and Q-U's Sonnet retry must not be able to double
+  // how long they wait for an answer.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await race(call, region, input.models, input.token, controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function race(
+  call: typeof globalThis.fetch,
+  region: string,
+  models: readonly string[],
+  token: string,
+  signal: AbortSignal,
+): Promise<ConnectionResult> {
   let deniedModel: string | undefined;
-  for (const model of input.models) {
-    const outcome = await attempt(call, region, model, input.token, timeoutMs);
+  for (const model of models) {
+    if (signal.aborted) {
+      // The budget went on the previous model. Starting another attempt would
+      // put the token on the wire again for a request already out of time.
+      return { kind: "network", reason: "timeout" };
+    }
+    const outcome = await attempt(call, region, model, token, signal);
 
     if (outcome.kind === "ok") {
       // Q-U: Haiku is tried first and is the model Claude Code uses for
@@ -74,11 +121,9 @@ async function attempt(
   region: string,
   model: string,
   token: string,
-  timeoutMs: number,
+  signal: AbortSignal,
 ): Promise<ConnectionResult> {
   const host = `bedrock-runtime.${region}.amazonaws.com`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await call(`https://${host}/model/${encodeURIComponent(model)}/invoke`, {
       method: "POST",
@@ -93,13 +138,11 @@ async function attempt(
         max_tokens: 1,
         messages: [{ role: "user", content: "." }],
       }),
-      signal: controller.signal,
+      signal,
     });
     return classifyResponse(response, model, region, await bodyText(response));
   } catch (error) {
     return classifyThrown(error, region, host);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -122,7 +165,10 @@ function classifyResponse(
 ): ConnectionResult {
   const status = response.status;
   if (status === 200 || status === 201) {
-    return { kind: "ok", model };
+    // A 200 is only proof the key works if the answer came from Bedrock. An
+    // intercepting proxy or captive portal answers 200 with its own page, and
+    // this is the extension's only proof-of-function (F9).
+    return looksLikeBedrock(body) ? { kind: "ok", model } : { kind: "unknown", status };
   }
   if (status === 407) {
     return { kind: "network", reason: "proxy" };
@@ -136,6 +182,12 @@ function classifyResponse(
   if ((status === 401 || status === 403) && CREDENTIAL_MARKERS.some((m) => body.includes(m))) {
     return { kind: "bad-credential", status };
   }
+  // Before the model branch: an IAM denial quotes the ARN it refused, and a
+  // Bedrock model ARN ends in the model id, so the model branch would claim
+  // every policy denial and send the user to enable models that are already on.
+  if ((status === 401 || status === 403 || status === 400) && isPolicyDenial(body)) {
+    return { kind: "insufficient-permissions", status };
+  }
   if ((status === 403 || status === 400) && namesModel(body, model)) {
     return { kind: "model-not-enabled", model };
   }
@@ -148,8 +200,44 @@ function classifyResponse(
 }
 
 /**
+ * A 200 that is a JSON object carrying at least one field only Bedrock sends.
+ * Deliberately field-presence rather than schema validation: the point is to
+ * separate "an answer from a model" from "an answer from something else on the
+ * path", and a stricter shape would fail the day Bedrock adds a field.
+ */
+function looksLikeBedrock(body: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return false;
+  }
+  return BEDROCK_RESPONSE_FIELDS.some((field) => field in parsed);
+}
+
+/**
+ * The key is real and the models are on; the policy attached to the key does
+ * not allow the call. Distinct from `model-not-enabled` because the remedy is
+ * different — an IAM policy, not the model-access console page — and because
+ * retrying another model with the same key can never succeed (F8).
+ */
+function isPolicyDenial(body: string): boolean {
+  return (
+    POLICY_DENIAL_MARKERS.some((marker) => body.includes(marker)) &&
+    !MODEL_STATE_MARKERS.some((marker) => body.includes(marker))
+  );
+}
+
+/**
  * The body names the model when it quotes the id back, or when it is one of the
  * two exceptions AWS raises for an unavailable model and mentions models at all.
+ *
+ * The loose second half is only safe because policy denials are taken out
+ * above: every Bedrock error quotes a model ARN, so on its own "mentions a
+ * model" matched a plain IAM refusal too (F8).
  */
 function namesModel(body: string, model: string): boolean {
   return (

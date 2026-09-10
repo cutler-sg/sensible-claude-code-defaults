@@ -7,6 +7,33 @@ const HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
 const SONNET = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
 const REGION = "us-east-1";
 
+/**
+ * What Bedrock actually answers with. A bare `{}` is what a proxy returns, not
+ * what a model returns, so it is never used as a success body here (F9).
+ */
+const BEDROCK_BODY = JSON.stringify({
+  id: "msg_bdrk_01",
+  type: "message",
+  role: "assistant",
+  content: [{ type: "text", text: "." }],
+  stop_reason: "max_tokens",
+  usage: { input_tokens: 8, output_tokens: 1 },
+});
+
+/** A pure IAM policy denial. Names an action and a model ARN, not a model state. */
+const IAM_DENIAL = JSON.stringify({
+  message:
+    "User: arn:aws:sts::123456789012:assumed-role/Developer/mc is not authorized to perform: " +
+    `bedrock:InvokeModel on resource: arn:aws:bedrock:us-east-1::foundation-model/${HAIKU} ` +
+    "because no identity-based policy allows the bedrock:InvokeModel action",
+});
+
+/** What Bedrock says when the account has never enabled the model. */
+const MODEL_NOT_ENABLED = JSON.stringify({
+  __type: "AccessDeniedException",
+  message: "You don't have access to the model with the specified model ID.",
+});
+
 interface Call {
   url: string;
   init: RequestInit | undefined;
@@ -65,7 +92,7 @@ async function run(
 
 describe("testConnection request shape", () => {
   it("posts to the regional runtime host with the encoded model id", async () => {
-    const { calls } = await run([respond(200, "{}")]);
+    const { calls } = await run([respond(200, BEDROCK_BODY)]);
     expect(calls[0]?.url).toBe(
       `https://bedrock-runtime.us-east-1.amazonaws.com/model/${encodeURIComponent(HAIKU)}/invoke`,
     );
@@ -74,7 +101,7 @@ describe("testConnection request shape", () => {
   });
 
   it("sends the bearer token, the json content type, and the minimal body", async () => {
-    const { calls } = await run([respond(200, "{}")]);
+    const { calls } = await run([respond(200, BEDROCK_BODY)]);
     const init = calls[0]?.init;
     expect(init?.method).toBe("POST");
     expect(init?.headers).toMatchObject({
@@ -105,12 +132,92 @@ describe("testConnection request shape", () => {
     expect(result).toEqual({ kind: "network", reason: "timeout" });
   });
 
+  it("spends one timeout budget across every model, not one each", async () => {
+    // The user is watching a progress notification: two models must not be able
+    // to hold it for two full timeouts.
+    const started: number[] = [];
+    const hang = ((_url: string, init?: RequestInit) => {
+      started.push(Date.now());
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+        );
+      });
+    }) as typeof globalThis.fetch;
+
+    const began = Date.now();
+    const result = await testConnection({
+      token: TOKEN,
+      region: REGION,
+      models: [HAIKU, SONNET],
+      fetch: hang,
+      timeoutMs: 40,
+    });
+    const elapsed = Date.now() - began;
+
+    expect(result).toEqual({ kind: "network", reason: "timeout" });
+    // One budget, not two. The generous ceiling keeps this from being a
+    // timing-flaky test while still failing the per-attempt controller.
+    expect(elapsed).toBeLessThan(80);
+    expect(started).toHaveLength(1);
+  });
+
+  it("stops before the next model when the budget expired mid-attempt", async () => {
+    // The first model answers, but only after the budget is gone. Trying the
+    // second would put the token on the wire for a request already out of time.
+    let calls = 0;
+    const late = (() => {
+      calls += 1;
+      return new Promise<Response>((resolve) => {
+        setTimeout(
+          () => resolve(new Response('{"__type":"AccessDeniedException: model"}', { status: 403 })),
+          25,
+        );
+      });
+    }) as typeof globalThis.fetch;
+
+    const result = await testConnection({
+      token: TOKEN,
+      region: REGION,
+      models: [HAIKU, SONNET],
+      fetch: late,
+      timeoutMs: 5,
+    });
+    expect(result).toEqual({ kind: "network", reason: "timeout" });
+    expect(calls).toBe(1);
+  });
+
+  it("does not start a second model once the shared budget is spent", async () => {
+    let calls = 0;
+    const slowThenFast = ((_url: string, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+          );
+        });
+      }
+      return Promise.resolve(new Response(BEDROCK_BODY, { status: 200 }));
+    }) as typeof globalThis.fetch;
+
+    const result = await testConnection({
+      token: TOKEN,
+      region: REGION,
+      models: [HAIKU, SONNET],
+      fetch: slowThenFast,
+      timeoutMs: 20,
+    });
+    expect(result).toEqual({ kind: "network", reason: "timeout" });
+    expect(calls).toBe(1);
+  });
+
   it("falls back to the global fetch when none is injected", async () => {
     const original = globalThis.fetch;
     const seen: string[] = [];
     globalThis.fetch = ((url: string | URL | Request) => {
       seen.push(String(url));
-      return Promise.resolve(new Response("{}", { status: 200 }));
+      return Promise.resolve(new Response(BEDROCK_BODY, { status: 200 }));
     }) as typeof globalThis.fetch;
     try {
       await expect(
@@ -124,7 +231,7 @@ describe("testConnection request shape", () => {
 
   it("uses the default timeout when none is given", async () => {
     // Resolves immediately; the assertion is that the default path is exercised.
-    const { fetch } = scriptedFetch([respond(200, "{}")]);
+    const { fetch } = scriptedFetch([respond(200, BEDROCK_BODY)]);
     await expect(
       testConnection({ token: TOKEN, region: REGION, models: [HAIKU], fetch }),
     ).resolves.toEqual({ kind: "ok", model: HAIKU });
@@ -133,13 +240,54 @@ describe("testConnection request shape", () => {
 
 describe("testConnection classification", () => {
   it("200 is ok", async () => {
-    const { result } = await run([respond(200, "{}")]);
+    const { result } = await run([respond(200, BEDROCK_BODY)]);
     expect(result).toEqual({ kind: "ok", model: HAIKU });
   });
 
   it("201 is ok", async () => {
-    const { result } = await run([respond(201, "{}")]);
+    const { result } = await run([respond(201, BEDROCK_BODY)]);
     expect(result).toEqual({ kind: "ok", model: HAIKU });
+  });
+
+  it("a captive portal's HTML sign-in page is not a working key (F9)", async () => {
+    const { result } = await run([
+      respond(200, "<html><body><h1>Sign in to continue</h1></body></html>"),
+    ]);
+    expect(result).toEqual({ kind: "unknown", status: 200 });
+  });
+
+  it("a 200 with an empty body is not a working key", async () => {
+    const { result } = await run([respond(200, "")]);
+    expect(result).toEqual({ kind: "unknown", status: 200 });
+  });
+
+  it("a 200 whose JSON is not Bedrock-shaped is not a working key", async () => {
+    const { result } = await run([respond(200, '{"ok":true}')]);
+    expect(result).toEqual({ kind: "unknown", status: 200 });
+  });
+
+  it.each([
+    ["null", "null"],
+    ["a number", "42"],
+    ["a quoted string", '"signed in"'],
+  ])("a 200 whose body is JSON %s is not a working key", async (_shape, body) => {
+    const { result } = await run([respond(200, body)]);
+    expect(result).toEqual({ kind: "unknown", status: 200 });
+  });
+
+  it.each([
+    ["content", '{"content":[{"type":"text","text":"."}]}'],
+    ["stop_reason", '{"stop_reason":"max_tokens"}'],
+    ["usage", '{"usage":{"input_tokens":8,"output_tokens":1}}'],
+  ])("a 200 carrying %s is a working key", async (_field, body) => {
+    const { result } = await run([respond(200, body)]);
+    expect(result).toEqual({ kind: "ok", model: HAIKU });
+  });
+
+  it("does not fall through to the next model when a 200 was not Bedrock-shaped", async () => {
+    const { result, calls } = await run([respond(200, "<html>portal</html>")]);
+    expect(result.kind).toBe("unknown");
+    expect(calls).toHaveLength(1);
   });
 
   it("401 with UnrecognizedClientException is a bad credential", async () => {
@@ -167,7 +315,7 @@ describe("testConnection classification", () => {
   it("403 AccessDeniedException naming the model tries the next model", async () => {
     const { result, calls } = await run([
       respond(403, '{"message":"AccessDeniedException: you do not have access to the model"}'),
-      respond(200, "{}"),
+      respond(200, BEDROCK_BODY),
     ]);
     expect(result).toEqual({ kind: "ok-without-haiku", model: SONNET });
     expect(calls).toHaveLength(2);
@@ -177,9 +325,38 @@ describe("testConnection classification", () => {
   it("400 ValidationException mentioning the model tries the next model", async () => {
     const { result } = await run([
       respond(400, '{"message":"ValidationException: the provided model identifier is invalid"}'),
-      respond(200, "{}"),
+      respond(200, BEDROCK_BODY),
     ]);
     expect(result).toEqual({ kind: "ok-without-haiku", model: SONNET });
+  });
+
+  it("an IAM policy denial is a permissions problem, not a disabled model (F8)", async () => {
+    // The denial quotes the model ARN, so "the body mentions a model" is true of
+    // every one of them. The user's key is fine and every model is enabled; the
+    // policy attached to the key does not allow bedrock:InvokeModel.
+    const { result, calls } = await run([respond(403, IAM_DENIAL)]);
+    expect(result).toEqual({ kind: "insufficient-permissions", status: 403 });
+    // And it must not re-send the token for a retry that could never help.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("a genuine model-not-enabled body still routes the user to the console", async () => {
+    const { result } = await run([
+      respond(403, MODEL_NOT_ENABLED),
+      respond(403, MODEL_NOT_ENABLED),
+    ]);
+    expect(result).toEqual({ kind: "model-not-enabled", model: HAIKU });
+  });
+
+  it("a 400 ValidationException about a malformed request is unknown, not a model verdict", async () => {
+    const { result, calls } = await run([
+      respond(
+        400,
+        '{"message":"ValidationException: 1 validation error detected: value at \'maxTokens\' failed to satisfy constraint"}',
+      ),
+    ]);
+    expect(result).toEqual({ kind: "unknown", status: 400 });
+    expect(calls).toHaveLength(1);
   });
 
   it("403 quoting the model id back is model-not-enabled", async () => {
@@ -196,7 +373,7 @@ describe("testConnection classification", () => {
   });
 
   it("does not downgrade to ok-without-haiku when the first model succeeded", async () => {
-    const { result } = await run([respond(200, "{}")]);
+    const { result } = await run([respond(200, BEDROCK_BODY)]);
     expect(result).toEqual({ kind: "ok", model: HAIKU });
   });
 
@@ -240,7 +417,7 @@ describe("testConnection classification", () => {
   });
 
   it("an empty model list is a caller bug, reported as unknown", async () => {
-    const { result, calls } = await run([respond(200, "{}")], { models: [] });
+    const { result, calls } = await run([respond(200, BEDROCK_BODY)], { models: [] });
     expect(result).toEqual({ kind: "unknown", status: 0 });
     expect(calls).toHaveLength(0);
   });
@@ -330,7 +507,7 @@ describe("testConnection transport failures", () => {
 
 describe("testConnection region validation", () => {
   it("refuses a region that could not be part of a hostname", async () => {
-    const { result, calls } = await run([respond(200, "{}")], {
+    const { result, calls } = await run([respond(200, BEDROCK_BODY)], {
       region: "us-east-1/../evil.example.com",
     });
     expect(result).toEqual({ kind: "wrong-region", region: "us-east-1/../evil.example.com" });
@@ -338,13 +515,13 @@ describe("testConnection region validation", () => {
   });
 
   it("refuses an empty region without making a request", async () => {
-    const { result, calls } = await run([respond(200, "{}")], { region: "" });
+    const { result, calls } = await run([respond(200, BEDROCK_BODY)], { region: "" });
     expect(result).toEqual({ kind: "wrong-region", region: "" });
     expect(calls).toHaveLength(0);
   });
 
   it("accepts an unknown but well-shaped region", async () => {
-    const { result, calls } = await run([respond(200, "{}")], { region: "ap-southeast-7" });
+    const { result, calls } = await run([respond(200, BEDROCK_BODY)], { region: "ap-southeast-7" });
     expect(result).toEqual({ kind: "ok", model: HAIKU });
     expect(calls[0]?.url).toContain("bedrock-runtime.ap-southeast-7.amazonaws.com");
   });
@@ -357,11 +534,15 @@ describe("hard rule 4: nothing leaks into a result", () => {
   }
 
   const LEAKY_BODY = `{"message":"AccessDeniedException for token ${TOKEN}, account 123456789012, request 8f2a"}`;
+  const LEAKY_DENIAL = `{"message":"User arn:aws:iam::123456789012:user/mc is not authorized to perform: bedrock:InvokeModel with ${TOKEN}"}`;
+  const LEAKY_PORTAL = `<html>AccessDeniedException sign in as 123456789012 with ${TOKEN}</html>`;
 
   const scenarios: readonly (readonly [string, readonly unknown[]])[] = [
-    ["ok", [respond(200, `{"echo":"${TOKEN}"}`)]],
+    ["ok", [respond(200, `{"content":[{"type":"text","text":"${TOKEN}"}]}`)]],
     ["bad credential", [respond(401, LEAKY_BODY)]],
     ["model not enabled", [respond(403, LEAKY_BODY), respond(403, LEAKY_BODY)]],
+    ["insufficient permissions", [respond(403, LEAKY_DENIAL)]],
+    ["a 200 from an intercepting proxy", [respond(200, LEAKY_PORTAL)]],
     ["wrong region", [respond(404, LEAKY_BODY)]],
     ["proxy", [respond(407, LEAKY_BODY)]],
     ["unknown status", [respond(500, LEAKY_BODY)]],
