@@ -11,6 +11,14 @@ export interface ManifestNotice {
   expiresAt?: string;
 }
 
+/** FR-4.6 age thresholds, configurable without shipping a release. */
+export interface CredentialPolicy {
+  warnAfterDays: number;
+  failAfterDays: number;
+  /** Where the user goes to mint a key. */
+  consoleUrl: string;
+}
+
 export interface Manifest {
   schemaVersion: 1;
   /** Opaque; used for change detection and `config.stale`. */
@@ -24,6 +32,7 @@ export interface Manifest {
     enabledPlugins: Record<string, boolean | string[]>;
   };
   regions: string[];
+  credential: CredentialPolicy;
   notices: ManifestNotice[];
 }
 
