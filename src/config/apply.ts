@@ -79,6 +79,17 @@ export interface CommitResult {
 export interface CommitMeta {
   /** Manifest revision that produced `desired`, recorded in the snapshot. */
   manifestRevision?: string;
+  /**
+   * Back up even when this session already has one.
+   *
+   * FR-2.4's one-backup-per-session rule assumes every write in a session
+   * overwrites only values we ourselves wrote, so the session's first backup is
+   * the last copy of anything the user typed. The reset paths break that
+   * assumption: they exist precisely to overwrite a value the user chose, and a
+   * second one in the same window would otherwise be destroyed with no copy
+   * anywhere (hard rule 3's escape hatch has to leave the user a way back).
+   */
+  forceBackup?: boolean;
 }
 
 /** Read, load the snapshot, and merge — no I/O beyond reads, nothing written. */
@@ -225,7 +236,7 @@ export async function commit(
     return { written: false, reason: "stale", backup: undefined, changes, drift };
   }
 
-  const backup = await backupOnce(env, session, opts);
+  const backup = await backupOnce(env, session, opts, meta?.forceBackup === true);
   await writeSettingsAtomic(file, next, planned.style, opts);
 
   const snapshot: Snapshot = {
@@ -287,7 +298,10 @@ export async function restore(
   const opts = writeOptions(env);
   assertOutsideWorkspace(file, opts.workspaceFolders, opts.platform);
 
-  await backupOnce(env, session, opts);
+  // Always, never once-per-session: the restore confirmation tells the user
+  // their current settings are saved first, and that has to be true on the
+  // second restore of a window as well as the first.
+  await backupOnce(env, session, opts, true);
   await restoreBackup(backupPath, file, opts);
   await forgetOwnership(env);
 }
@@ -323,8 +337,9 @@ async function backupOnce(
   env: ConfigEnv,
   session: ApplySession,
   opts: WriteOptions,
+  force = false,
 ): Promise<BackupInfo | undefined> {
-  if (session.backedUp) {
+  if (session.backedUp && !force) {
     return undefined;
   }
   const dir = backupsDir(env.claudeDir);

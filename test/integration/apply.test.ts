@@ -263,6 +263,72 @@ describe("hand-written existing config", () => {
   });
 });
 
+/**
+ * The one-backup-per-session rule assumes every write in a session overwrites
+ * only values we ourselves wrote. The reset paths exist to overwrite a value
+ * the *user* chose, so they opt out of it: hard rule 3 lets the user hand a key
+ * back to us, but it has to leave them a way to undo that.
+ */
+describe("forceBackup", () => {
+  it("takes a second backup in a session that already spent its one", async () => {
+    const dir = backupsDir(claudeDir);
+    await seedSettings('{\n  "env": {\n    "AWS_REGION": "eu-west-1"\n  }\n}\n');
+
+    await applyFixture();
+    expect(await listBackups(dir)).toHaveLength(1);
+
+    // The user hand-edits, then asks for exactly that key to be reset.
+    await seedSettings('{\n  "env": {\n    "AWS_REGION": "ap-southeast-1"\n  }\n}\n');
+    const planned = ready(await resetKeyPlan(env, desiredFixture(), "env.AWS_REGION"));
+    const result = await commit(env, session, planned, { forceBackup: true });
+
+    expect(result.written).toBe(true);
+    expect(result.backup?.path).toMatch(/settings\..*\.json$/);
+    const backups = await listBackups(dir);
+    expect(backups).toHaveLength(2);
+    // The newest copy holds the value the reset just destroyed.
+    expect(await readText(backups[0]?.path)).toContain("ap-southeast-1");
+    expect(await envValue("AWS_REGION")).toBe("us-east-1");
+  });
+
+  it("still takes only one backup when it is not asked to force one", async () => {
+    const dir = backupsDir(claudeDir);
+    await seedSettings('{\n  "env": {\n    "AWS_REGION": "eu-west-1"\n  }\n}\n');
+
+    await applyFixture();
+    await seedSettings('{\n  "env": {\n    "AWS_REGION": "ap-southeast-1"\n  }\n}\n');
+    await commit(env, session, ready(await resetKeyPlan(env, desiredFixture(), "env.AWS_REGION")));
+
+    expect(await listBackups(dir)).toHaveLength(1);
+  });
+
+  it("does not force a backup on a noop plan", async () => {
+    await applyFixture();
+    const before = await listBackups(backupsDir(claudeDir));
+    const planned = ready(await plan(env, desiredFixture()));
+    expect(planned.noop).toBe(true);
+
+    const result = await commit(env, session, planned, { forceBackup: true });
+
+    expect(result).toMatchObject({ written: false, reason: "noop", backup: undefined });
+    expect(await listBackups(backupsDir(claudeDir))).toHaveLength(before.length);
+  });
+
+  it("does not force a backup on a stale plan", async () => {
+    await seedSettings('{\n  "env": {\n    "AWS_REGION": "eu-west-1"\n  }\n}\n');
+    await applyFixture();
+    const before = await listBackups(backupsDir(claudeDir));
+
+    const planned = ready(await resetKeyPlan(env, desiredFixture(), "env.AWS_REGION"));
+    await seedSettings('{\n  "env": {\n    "AWS_REGION": "somewhere-else"\n  }\n}\n');
+    const result = await commit(env, session, planned, { forceBackup: true });
+
+    expect(result).toMatchObject({ written: false, reason: "stale", backup: undefined });
+    expect(await listBackups(backupsDir(claudeDir))).toHaveLength(before.length);
+    expect(await envValue("AWS_REGION")).toBe("somewhere-else");
+  });
+});
+
 describe("malformed settings", () => {
   const MALFORMED = '{\n  "model": "opus",\n}\n';
 
@@ -443,6 +509,27 @@ describe("backup and restore", () => {
       "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
     ]);
     expect(planned.merge.changes).toEqual([]);
+  });
+
+  it("saves the current file first even in a session that already backed up", async () => {
+    // The restore confirmation promises "your current settings are saved
+    // first". In a session that has already applied something, the one
+    // session-scoped backup is spent, and without forcing one the promise is a
+    // lie exactly when it matters: the file being replaced is the user's.
+    await seedSettings('{\n  "model": "opus"\n}\n');
+    await applyFixture();
+    const dir = backupsDir(claudeDir);
+    const target = (await listBackups(dir))[0];
+    if (target === undefined) {
+      throw new Error("expected a backup");
+    }
+
+    await seedSettings('{\n  "model": "precious-hand-written"\n}\n');
+    await restore(env, session, target.path);
+
+    const after = await listBackups(dir);
+    expect(after).toHaveLength(2);
+    expect(await readText(after[0]?.path)).toContain("precious-hand-written");
   });
 });
 
