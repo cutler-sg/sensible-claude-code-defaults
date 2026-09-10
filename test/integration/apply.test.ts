@@ -89,7 +89,7 @@ function makeEnv(dir: string): ConfigEnv {
   return {
     claudeDir: dir,
     workspaceFolders: [workspace],
-    snapshotStore: new FileSnapshotStore(snapshotPath(dir)),
+    snapshotStore: new FileSnapshotStore(snapshotPath(dir), { workspaceFolders: [workspace] }),
     now: tick,
   };
 }
@@ -185,7 +185,9 @@ describe("fresh install", () => {
     const bare: ConfigEnv = {
       claudeDir,
       workspaceFolders: [workspace],
-      snapshotStore: new FileSnapshotStore(snapshotPath(claudeDir)),
+      snapshotStore: new FileSnapshotStore(snapshotPath(claudeDir), {
+        workspaceFolders: [workspace],
+      }),
     };
     const result = await commit(bare, createSession(), ready(await plan(bare, desiredFixture())));
 
