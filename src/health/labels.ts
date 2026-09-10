@@ -63,8 +63,23 @@ export const LABELS = {
     drifted: "Some settings have been changed since the recommended setup",
     skipped: "Nothing to check until Claude Code has been set up",
   },
+  /**
+   * One check, four stories, because to the reader they are one story: "are the
+   * recommendations I am being held to the current ones?". The FR-3.5 gate wins
+   * over staleness — the update is the thing that unblocks everything else —
+   * and "using saved defaults" is never an error (FR-3.2), because the user did
+   * not cause it and cannot fix it.
+   */
   "config.stale": {
-    skipped: "Checking for newer recommended settings arrives in a later update",
+    pass: "Your settings match the latest recommendations",
+    behind: "There are newer recommended settings to apply",
+    offline: "Using the recommendations saved on this computer",
+    bundled: "Using the recommendations that came with this extension",
+    needsUpdate: "An update to this extension is available with newer recommendations",
+  },
+  notice: {
+    /** A notice's text is the manifest's, not ours; this names the row's source. */
+    from: "Message from the people who look after these settings",
   },
   "cred.present": {
     pass: "Your Bedrock API key is saved in this computer's keychain",

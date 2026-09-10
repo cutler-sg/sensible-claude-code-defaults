@@ -47,6 +47,13 @@ describe("catalogue", () => {
     }
   });
 
+  it("has a real body for config.stale now that M4 has landed", async () => {
+    const check = ALL_CHECKS.find((candidate) => candidate.id === "config.stale");
+    expect(check).toBeDefined();
+    const result = await (check as NonNullable<typeof check>).run(makeCtx());
+    expect(result.level).toBe("pass");
+  });
+
   it("reports the group it was registered under", async () => {
     const ctx = makeCtx();
     for (const check of ALL_CHECKS) {
@@ -58,9 +65,8 @@ describe("catalogue", () => {
 
   it("skips every check whose milestone has not landed", async () => {
     const ctx = makeCtx();
-    // M4 owns `config.stale`; M5 owns the workspace leak scan. Everything else
-    // in the Credential group became real in M3.
-    const deferred: CheckId[] = ["config.stale", "cred.leak"];
+    // M5 owns the workspace leak scan; `config.stale` became real in M4.
+    const deferred: CheckId[] = ["cred.leak"];
     for (const id of deferred) {
       const check = ALL_CHECKS.find((candidate) => candidate.id === id);
       expect(check).toBeDefined();
