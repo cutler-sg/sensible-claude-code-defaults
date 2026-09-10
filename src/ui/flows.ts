@@ -138,14 +138,28 @@ export function validateInput(
     : { message, severity: vscode.InputBoxValidationSeverity.Warning };
 }
 
-/** FR-4.8's other half: forget it everywhere, in one command. */
+/**
+ * FR-4.8's other half: forget it everywhere, in one command.
+ *
+ * The file goes first (F1). The settings file is the copy Claude Code actually
+ * reads, and it is the one write that can fail — a lost race with
+ * `/setup-bedrock`, a file that will not parse. Emptying the keychain before
+ * knowing the file write landed produced the worst possible outcome: the token
+ * still in `settings.json`, no copy left to put back, and a toast saying it was
+ * removed. So the removal is only announced, and the other two copies only
+ * dropped, once the file no longer holds it.
+ */
 export async function clearToken(deps: FlowDeps): Promise<void> {
   const confirmed = await vscode.window.showWarningMessage(
     "Remove your Bedrock API key from this computer?",
     {
       modal: true,
+      // F14: the removal forces a backup, which is what makes it undoable — and
+      // that backup is a plaintext copy of the key still on this computer.
+      // Saying so is the difference between an undo the user knows about and a
+      // copy of their credential they do not.
       detail:
-        "Claude Code will stop working with Amazon Bedrock until you set a key again. The key itself is not cancelled — remove it in the Amazon console if you no longer want it to work anywhere.",
+        "Claude Code will stop working with Amazon Bedrock until you set a key again. A copy is kept in your Claude Code backups folder so this can be undone. The key itself is not cancelled — remove it in the Amazon console if you no longer want it to work anywhere.",
     },
     REMOVE,
   );
@@ -154,17 +168,51 @@ export async function clearToken(deps: FlowDeps): Promise<void> {
     return;
   }
 
+  if (!(await removeFromFile(deps))) return;
+
   await deps.credential.store.clear();
   deps.credential.terminal.clear();
-  deps.markWrite();
-  // Not `sync(undefined)`: that removes only a token we wrote, and a key left
-  // behind by `/setup-bedrock` would survive a removal the user just asked for.
-  await removeTokenFromSettings(deps.env, deps.session, {
-    manifestRevision: deps.manifest.revision,
-  });
-  deps.log.info("Removed the Bedrock API key from the keychain, terminals and settings.");
+  deps.log.info("Removed the Bedrock API key from the settings file, keychain and terminals.");
   await vscode.window.showInformationMessage("Removed your Bedrock API key.");
   await deps.runHealth();
+}
+
+/**
+ * Take the token out of the file, with `sync`'s one retry on a stale commit.
+ * Returns false when the file still holds it, in which case the caller must
+ * leave the keychain alone: it is the only remaining copy of a key the user may
+ * still need, and `cred.mirrored` will offer the removal again.
+ *
+ * Not `sync(undefined)`: that removes only a token we wrote, and a key left
+ * behind by `/setup-bedrock` would survive a removal the user just asked for.
+ */
+async function removeFromFile(deps: FlowDeps, attempt = 0): Promise<boolean> {
+  deps.markWrite();
+  let result: CommitResult;
+  try {
+    result = await removeTokenFromSettings(deps.env, deps.session, {
+      manifestRevision: deps.manifest.revision,
+    });
+  } catch (error) {
+    // A file that will not parse cannot be edited at all. This used to throw
+    // after the keychain had already been emptied, leaving no command able to
+    // give the key back.
+    deps.log.error(`Could not remove the key from the settings file: ${messageOf(error)}`);
+    await vscode.window.showErrorMessage(
+      "Your Claude Code settings file can't be read, so the key wasn't removed. Your saved key has been left alone.",
+    );
+    return false;
+  }
+
+  if (result.reason !== "stale") return true;
+
+  deps.log.warn("The settings file changed while removing the key; retrying once.");
+  if (attempt === 0) return removeFromFile(deps, attempt + 1);
+
+  await vscode.window.showWarningMessage(
+    "Your settings file kept changing, so the key wasn't removed. Your saved key has been left alone — try again in a moment.",
+  );
+  return false;
 }
 
 /**
@@ -396,4 +444,12 @@ async function sync(
 async function takeOwnership(deps: FlowDeps, value: string): Promise<void> {
   deps.markWrite();
   await adoptTokenFromSettings(deps.env, deps.session, value);
+}
+
+/**
+ * `Logger` redacts what it writes, so this only keeps a non-`Error` throw from
+ * being stringified into the channel as whatever it happens to be.
+ */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : "an unexpected failure";
 }

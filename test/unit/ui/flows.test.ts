@@ -89,6 +89,11 @@ function click(label: string): void {
   state.answer = (shown) => (shown.items.includes(label) ? label : undefined);
 }
 
+/** The `detail` of the modal the flow put in front of the user. */
+function modalDetail(): string {
+  return (state.warn[0]?.options as { detail?: string } | undefined)?.detail ?? "";
+}
+
 function pick(label: string): void {
   state.quickPickAnswer = (call) =>
     call.items.find((item) => (item as { label?: string }).label === label);
@@ -96,6 +101,36 @@ function pick(label: string): void {
 
 function respondWith(status: number, body = "{}"): void {
   credential.respond = () => new Response(body, { status });
+}
+
+/**
+ * A snapshot store that rewrites the settings file during `load`, `times`
+ * times. `plan` reads the file and *then* loads the snapshot, so this
+ * reproduces exactly the window Claude Code's own `/setup-bedrock` lands in
+ * between plan and commit — the race is staged rather than mocked.
+ */
+function racingStore(times: number): MemorySnapshotStore {
+  const store = new MemorySnapshotStore();
+  let left = times;
+  const load = store.load.bind(store);
+  store.load = async () => {
+    if (left > 0) {
+      left -= 1;
+      // The racing writer edits the file rather than replacing it, so what is
+      // already there — a token under removal, say — survives the race and the
+      // assertions can be about our own behaviour rather than the fake's.
+      const raw = await readFile(settingsPath(dir), "utf8").catch(() => "{}");
+      const settings = JSON.parse(raw) as Settings;
+      const current = (settings.env ?? {}) as JsonObject;
+      await writeFile(
+        settingsPath(dir),
+        `${JSON.stringify({ ...settings, env: { ...current, AWS_REGION: `r${left}` } })}\n`,
+        "utf8",
+      );
+    }
+    return load();
+  };
+  return store;
 }
 
 describe("setToken", () => {
@@ -238,9 +273,77 @@ describe("clearToken", () => {
     click("Remove key");
     await flows.clearToken(deps());
 
-    expect((state.warn[0]?.options as { detail?: string } | undefined)?.detail).toMatch(
-      /Amazon console/,
-    );
+    expect(modalDetail()).toMatch(/Amazon console/);
+  });
+
+  /**
+   * F14. The removal takes a forced backup, which is the right thing — it is
+   * the only undo for a value the user asked us to destroy — but it means a
+   * plaintext copy of the key stays on this computer. A modal that says the key
+   * is gone from the computer while a copy sits in `~/.claude/backups` is
+   * telling the user something untrue about where their credential is.
+   */
+  it("says a copy is kept in the backups so the removal can be undone", async () => {
+    click("Remove key");
+    await flows.clearToken(deps());
+
+    expect(modalDetail()).toMatch(/backup/i);
+    expect(modalDetail()).toMatch(/undo|undone/i);
+  });
+
+  /**
+   * F1. The keychain is emptied only once the file write has actually landed.
+   *
+   * The old order cleared the keychain and the terminals first and threw the
+   * `CommitResult` away, so a lost race left the token in `settings.json`, no
+   * copy anywhere we could offer back, and a toast telling the user it was
+   * removed — Claude Code carrying on with the key they just deleted.
+   */
+  describe("when the settings file will not accept the removal", () => {
+    it("leaves all three places alone when the write keeps going stale", async () => {
+      env = { ...env, snapshotStore: racingStore(5) };
+      click("Remove key");
+
+      await flows.clearToken(deps());
+
+      await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+      expect(credential.terminal.cleared).toBe(0);
+      expect(await fileToken()).toBe(TOKEN);
+    });
+
+    it("says the key was not removed rather than that it was", async () => {
+      env = { ...env, snapshotStore: racingStore(5) };
+      click("Remove key");
+
+      await flows.clearToken(deps());
+
+      expect(messages()).toContainEqual(expect.stringMatching(/wasn't removed/));
+      expect(messages()).not.toContainEqual(expect.stringMatching(/^Removed your Bedrock API key/));
+    });
+
+    it("keeps the saved key when the file cannot be parsed at all", async () => {
+      await writeFile(settingsPath(dir), "{,}", "utf8");
+      click("Remove key");
+
+      await flows.clearToken(deps());
+
+      // The malformed file used to throw *after* `store.clear()`, which left
+      // no command able to give the key back.
+      await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+      expect(credential.terminal.cleared).toBe(0);
+      expect(messages()).toContainEqual(expect.stringMatching(/can't be read/));
+    });
+  });
+
+  it("clears the file first, then the keychain and the terminals", async () => {
+    click("Remove key");
+
+    await flows.clearToken(deps());
+
+    expect(await fileToken()).toBeUndefined();
+    await expect(credential.store.get()).resolves.toBeUndefined();
+    expect(credential.terminal.cleared).toBe(1);
+    expect(messages()).toContainEqual(expect.stringMatching(/^Removed your Bedrock API key/));
   });
 });
 
@@ -485,25 +588,6 @@ describe("testConnection", () => {
  * exactly the window the real writer lands in.
  */
 describe("a settings file that changes under the write", () => {
-  /** Rewrites the settings file during `load`, `times` times. */
-  function racingStore(times: number): MemorySnapshotStore {
-    const store = new MemorySnapshotStore();
-    let left = times;
-    const load = store.load.bind(store);
-    store.load = async () => {
-      if (left > 0) {
-        left -= 1;
-        await writeFile(
-          settingsPath(dir),
-          `${JSON.stringify({ env: { AWS_REGION: `r${left}` } })}\n`,
-          "utf8",
-        );
-      }
-      return load();
-    };
-    return store;
-  }
-
   it("re-plans once and succeeds", async () => {
     await seed({ env: {} });
     env = { ...env, snapshotStore: racingStore(1) };
