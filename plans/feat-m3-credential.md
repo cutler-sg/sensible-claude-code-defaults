@@ -4,8 +4,24 @@ Source of truth: `docs/PRD.md` FR-4 (all), FR-5.6 `cred.*` rows, FR-6 token comm
 Depends on M1 (`apply`/`merge` for write-through) and M2 (health runner + tree; `cred.*` placeholders
 become real). Manifest (M4) supplies `cred.age` thresholds — until then read them from the bundled copy.
 Branch: `feat/m3-credential`.
-Status: **complete (2026-09-11).** All tasks below done except the manual walkthrough,
-which is noted as outstanding.
+Status: **complete and reviewed (2026-09-11).** 957 tests, all gates green, draft PR #4. All
+tasks below done except the manual walkthrough, which is noted as outstanding.
+
+Adversarial review found 14 issues, every one confirmed by reproduction rather than inspection.
+Five could cost a user their key or lie about it: `clearToken` emptied the keychain before knowing
+the file write had landed, so a stale commit left the token on disk with the keychain gone and the
+user told it was removed; `reapplyToken` was a one-click fix that could never fix and reported
+success, looping forever; `setToken`/`rotateToken` claimed the mirror succeeded when drift had
+correctly blocked it; `cred.valid` kept vouching for a key that had since been rotated or cleared;
+and an unreadable keychain secret was deleted at activation with no consent, condemned by shape
+rules documented as deliberately permissive. Two more mattered for support load: a plain IAM
+policy denial was reported as "the Claude models aren't turned on", sending the user to the wrong
+console page, and a captive-portal 200 made the only proof-of-function turn green.
+
+The redaction test was itself the most instructive finding. It asserted the whole token did not
+appear in rendered output, so a toast showing the last four characters passed. It now searches for
+contiguous fragments, and the fix was verified by inserting that exact mutation and watching it
+fail. A test that cannot fail for the reason it exists is worse than no test.
 
 ## Verified facts that shape M3 (2026-09-10, AWS + Claude Code docs)
 
