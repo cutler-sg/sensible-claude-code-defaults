@@ -30,6 +30,13 @@ describe("activation", () => {
       "sensibleDefaults.repairPermissions",
       "sensibleDefaults.resetKey",
       "sensibleDefaults.runFix",
+      "sensibleDefaults.setToken",
+      "sensibleDefaults.rotateToken",
+      "sensibleDefaults.clearToken",
+      "sensibleDefaults.testConnection",
+      "sensibleDefaults.adoptToken",
+      "sensibleDefaults.reapplyToken",
+      "sensibleDefaults.resolveTokenConflict",
     ]) {
       assert.ok(commands.has(id), `${id} was not registered`);
     }
