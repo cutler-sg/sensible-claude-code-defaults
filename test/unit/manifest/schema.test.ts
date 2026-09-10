@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import type { SchemaProblem } from "../../../src/manifest/schema.js";
-import { selectNotices, validateManifest } from "../../../src/manifest/schema.js";
+import {
+  isEnforceableExtensionFloor,
+  selectNotices,
+  validateManifest,
+} from "../../../src/manifest/schema.js";
 import type { Manifest, ManifestNotice } from "../../../src/manifest/types.js";
 
 type Json = Record<string, unknown>;
@@ -1470,5 +1474,66 @@ describe("selectNotices", () => {
 
   it("returns nothing for an empty list", () => {
     expect(selectNotices([], NOW)).toEqual([]);
+  });
+});
+
+/**
+ * F12. `minExtensionVersion: "999.999.999"` validates — and it must, because
+ * any version could be legitimate and the schema cannot tell a real future
+ * release from a fabricated one. What it can tell is that an absurd one is not
+ * worth honouring: the FR-3.5 gate would pin every install to the bundled copy
+ * forever while `config.stale` promised an extension update that does not
+ * exist, and no later manifest could undo it because the gate rejects them too.
+ *
+ * The gate lives in `resolve.ts`, so this is the predicate that file consumes.
+ */
+describe("isEnforceableExtensionFloor", () => {
+  it.each([
+    ["the running version itself", "0.1.0"],
+    ["the next patch", "0.1.1"],
+    ["the next minor", "0.2.0"],
+    ["one major ahead", "1.0.0"],
+    ["two majors ahead", "2.0.0"],
+    ["two majors ahead with a minor", "2.9.9"],
+    ["an older version", "0.0.1"],
+  ])("honours a floor at %s", (_name, required) => {
+    expect(isEnforceableExtensionFloor(required, "0.1.0")).toBe(true);
+  });
+
+  it.each([
+    ["three majors ahead", "3.0.0"],
+    ["the reviewer's pin", "999.999.999"],
+    ["an absurd major", "1000000.0.0"],
+  ])("ignores a floor at %s", (_name, required) => {
+    expect(isEnforceableExtensionFloor(required, "0.1.0")).toBe(false);
+  });
+
+  it("moves the ceiling with the running version rather than fixing it", () => {
+    expect(isEnforceableExtensionFloor("3.0.0", "1.0.0")).toBe(true);
+    expect(isEnforceableExtensionFloor("4.0.0", "1.0.0")).toBe(false);
+    expect(isEnforceableExtensionFloor("999.999.999", "997.0.0")).toBe(true);
+  });
+
+  it.each([
+    ["a bare major", "2", "0.1.0", true],
+    ["a bare major past the ceiling", "9", "0.1.0", false],
+    ["a pre-release suffix", "2.0.0-beta.3", "0.1.0", true],
+    ["a running pre-release", "3.0.0", "1.0.0-rc.1", true],
+  ])("reads %s the way the version shape writes it", (_name, required, running, enforceable) => {
+    expect(isEnforceableExtensionFloor(required, running)).toBe(enforceable);
+  });
+
+  /**
+   * Unparseable input is honoured, not ignored. The predicate exists to defuse
+   * an absurd demand, and "I cannot read this" is not evidence of one — the
+   * running version comes from `package.json` and a version this cannot parse
+   * would otherwise silently disable FR-3.5 altogether.
+   */
+  it.each([
+    ["an unreadable requirement", "latest", "0.1.0"],
+    ["an unreadable running version", "3.0.0", "not-a-version"],
+    ["both unreadable", "latest", "whatever"],
+  ])("honours the floor given %s", (_name, required, running) => {
+    expect(isEnforceableExtensionFloor(required, running)).toBe(true);
   });
 });

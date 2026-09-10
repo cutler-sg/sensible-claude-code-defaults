@@ -519,6 +519,53 @@ function hasDotSegment(value: string): boolean {
   return value.split("/").some((part) => DOT_SEGMENTS.has(part));
 }
 
+/**
+ * How far ahead of the running extension a `minExtensionVersion` floor may be
+ * and still be worth honouring (F12).
+ *
+ * Relative to the running version rather than a fixed ceiling, so it never
+ * needs re-tuning as this extension's own major moves. Two majors is more
+ * headroom than any real release announces — a manifest is published from the
+ * same repository as the extension it gates, so a floor is normally the version
+ * about to ship — and orders of magnitude short of what an off-switch reaches
+ * for.
+ */
+const MAX_FLOOR_MAJORS_AHEAD = 2;
+
+/**
+ * Whether an FR-3.5 `minExtensionVersion` gate should be honoured (F12).
+ *
+ * `"999.999.999"` validates, and has to: any version could be legitimate and
+ * the schema cannot tell a real future release from a fabricated one. But an
+ * absurd one is not a compatibility signal — it pins every install to the
+ * bundled copy *permanently*, because the gate is evaluated before a manifest
+ * is used so no later manifest can lift it, while `config.stale` promises an
+ * extension update that does not exist and never will.
+ *
+ * Exported for `resolve.ts`, which owns the gate. It answers only "is this a
+ * demand a plausible release could satisfy"; whether to skip the manifest,
+ * report the version, or log the refusal stays there.
+ *
+ * An unreadable version on either side is honoured, not ignored: this exists to
+ * defuse an absurd demand, and "I cannot parse this" is not evidence of one.
+ */
+export function isEnforceableExtensionFloor(required: string, running: string): boolean {
+  const wanted = majorOf(required);
+  const have = majorOf(running);
+  if (wanted === undefined || have === undefined) return true;
+  return wanted <= have + MAX_FLOOR_MAJORS_AHEAD;
+}
+
+/**
+ * `parseInt` stops at the first non-digit, which is exactly the major segment
+ * for every shape `VERSION_SHAPE` admits — `2`, `2.0.0`, `2.0.0-beta.3` — and
+ * `NaN` for anything that does not start with one.
+ */
+function majorOf(version: string): number | undefined {
+  const major = Number.parseInt(version, 10);
+  return Number.isNaN(major) ? undefined : major;
+}
+
 function isPlainObject(value: unknown): value is Record<string, JsonValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
