@@ -104,7 +104,33 @@ describe("check remediations", () => {
   });
 });
 
+describe("contributed configuration", () => {
+  it("declares the manifest URL the extension actually falls back to", async () => {
+    // Two literals for one channel: VS Code hands `getConfiguration().get` the
+    // contributed default, and the code's own fallback is only reached in a
+    // host that has not loaded this `package.json`. They must name the same
+    // endpoint, or the fallback quietly points somewhere else.
+    const { DEFAULT_MANIFEST_URL } = await import("../../../src/ui/manifestHolder.js");
+    expect(
+      manifest.contributes.configuration.properties["sensibleDefaults.manifestUrl"].default,
+    ).toBe(DEFAULT_MANIFEST_URL);
+  });
+
+  it("fetches the manifest over https and nowhere else (§13 privacy)", () => {
+    const url =
+      manifest.contributes.configuration.properties["sensibleDefaults.manifestUrl"].default;
+    expect(new URL(url).protocol).toBe("https:");
+  });
+});
+
 describe("contributed commands", () => {
+  it("offers the manual update check under its FR-3.3 title", () => {
+    const command = manifest.contributes.commands.find(
+      (entry) => entry.command === "sensibleDefaults.checkForUpdates",
+    );
+    expect(command?.title).toBe("Check for Updated Recommendations");
+  });
+
   it("files every command under the Sensible Defaults category (FR-6)", () => {
     for (const command of manifest.contributes.commands) {
       expect(command.category).toBe("Sensible Defaults");

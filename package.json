@@ -72,6 +72,11 @@
         "icon": "$(wand)"
       },
       {
+        "command": "sensibleDefaults.checkForUpdates",
+        "title": "Check for Updated Recommendations",
+        "category": "Sensible Defaults"
+      },
+      {
         "command": "sensibleDefaults.openSettings",
         "title": "Open settings.json",
         "category": "Sensible Defaults"
