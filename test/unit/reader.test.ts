@@ -50,37 +50,46 @@ describe("readSettings — ok", () => {
     expect(result.kind === "ok" && result.style).toEqual({
       indent: "  ",
       trailingNewline: true,
+      eol: "\n",
     });
   });
 
   it("detects four-space indent", async () => {
     await write('{\n    "a": 1\n}\n');
-    expect(await style()).toEqual({ indent: "    ", trailingNewline: true });
+    expect(await style()).toEqual({ indent: "    ", trailingNewline: true, eol: "\n" });
   });
 
   it("detects tab indent", async () => {
     await write('{\n\t"a": 1\n}\n');
-    expect(await style()).toEqual({ indent: "\t", trailingNewline: true });
+    expect(await style()).toEqual({ indent: "\t", trailingNewline: true, eol: "\n" });
   });
 
   it("falls back to the default indent for a single-line {}", async () => {
     await write("{}\n");
-    expect(await style()).toEqual({ indent: DEFAULT_STYLE.indent, trailingNewline: true });
+    expect(await style()).toEqual({
+      indent: DEFAULT_STYLE.indent,
+      trailingNewline: true,
+      eol: "\n",
+    });
   });
 
   it("falls back to the default indent for a single-line object with keys", async () => {
     await write('{"a": 1}');
-    expect(await style()).toEqual({ indent: DEFAULT_STYLE.indent, trailingNewline: false });
+    expect(await style()).toEqual({
+      indent: DEFAULT_STYLE.indent,
+      trailingNewline: false,
+      eol: "\n",
+    });
   });
 
   it("records a missing trailing newline", async () => {
     await write('{\n  "a": 1\n}');
-    expect(await style()).toEqual({ indent: "  ", trailingNewline: false });
+    expect(await style()).toEqual({ indent: "  ", trailingNewline: false, eol: "\n" });
   });
 
   it("takes the indent from the first indented key, not a deeper one", async () => {
     await write('{\n  "env": {\n      "A": "1"\n  }\n}\n');
-    expect(await style()).toEqual({ indent: "  ", trailingNewline: true });
+    expect(await style()).toEqual({ indent: "  ", trailingNewline: true, eol: "\n" });
   });
 
   it("strips a UTF-8 BOM before parsing but keeps it in raw", async () => {
@@ -189,4 +198,58 @@ describe("serialize", () => {
       '{\n    "a": 1\n}\n',
     );
   });
+});
+
+describe("line endings (F11)", () => {
+  it("detects CRLF from the first occurrence in the file", async () => {
+    await write('{\r\n  "a": 1\r\n}\r\n');
+    expect(await styleOf()).toEqual({ indent: "  ", trailingNewline: true, eol: "\r\n" });
+  });
+
+  it("detects LF for a file with no carriage returns", async () => {
+    await write('{\n  "a": 1\n}\n');
+    expect(await styleOf()).toEqual({ indent: "  ", trailingNewline: true, eol: "\n" });
+  });
+
+  it("round-trips a CRLF file byte-for-byte", async () => {
+    const raw = '{\r\n  "env": {\r\n    "AWS_REGION": "us-east-1"\r\n  }\r\n}\r\n';
+    await write(raw);
+    const result = await readSettings(file);
+    if (result.kind !== "ok") {
+      throw new Error("expected ok");
+    }
+    expect(serialize(result.data, result.style)).toBe(raw);
+  });
+
+  it("keeps an LF file on LF", () => {
+    expect(serialize({ a: 1 }, { indent: "  ", trailingNewline: true, eol: "\n" })).toBe(
+      '{\n  "a": 1\n}\n',
+    );
+  });
+
+  it("uses the detected eol for the trailing newline too", () => {
+    expect(serialize({ a: 1 }, { indent: "  ", trailingNewline: true, eol: "\r\n" })).toBe(
+      '{\r\n  "a": 1\r\n}\r\n',
+    );
+  });
+
+  it("omits the trailing eol when the file had none", () => {
+    expect(serialize({ a: 1 }, { indent: "  ", trailingNewline: false, eol: "\r\n" })).toBe(
+      '{\r\n  "a": 1\r\n}',
+    );
+  });
+
+  it("does not corrupt a string value containing an escaped newline", () => {
+    const out = serialize({ a: "x\ny" }, { indent: "  ", trailingNewline: true, eol: "\r\n" });
+    expect(out).toBe('{\r\n  "a": "x\\ny"\r\n}\r\n');
+    expect(JSON.parse(out)).toEqual({ a: "x\ny" });
+  });
+
+  async function styleOf() {
+    const result = await readSettings(file);
+    if (result.kind !== "ok") {
+      throw new Error(`expected ok, got ${result.kind}`);
+    }
+    return result.style;
+  }
 });

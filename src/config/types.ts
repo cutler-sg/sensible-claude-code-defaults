@@ -42,9 +42,14 @@ export interface FileStyle {
   indent: string;
   /** Whether the file ended with a newline. Default true. */
   trailingNewline: boolean;
+  /**
+   * Line ending the file uses. Optional so existing style literals stay valid;
+   * everything that omits it is treated as `"\n"`.
+   */
+  eol?: "\n" | "\r\n";
 }
 
-export const DEFAULT_STYLE: FileStyle = { indent: "  ", trailingNewline: true };
+export const DEFAULT_STYLE: FileStyle = { indent: "  ", trailingNewline: true, eol: "\n" };
 
 export type ReadResult =
   | { kind: "absent" }

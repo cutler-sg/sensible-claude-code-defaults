@@ -34,6 +34,9 @@ export async function readSettings(file: string): Promise<ReadResult> {
     // Strict JSON on purpose. Claude Code's own loader is strict, so comments
     // and trailing commas are already broken for the user; accepting them here
     // would let us rewrite a file into a shape Claude Code silently ignores.
+    // Duplicate top-level keys are last-one-wins here and in Claude Code's own
+    // `JSON.parse`, so the shadowed copy is already dead to the user; a write
+    // collapses it, which matches what Claude Code was reading all along (F16).
     parsed = JSON.parse(text);
   } catch (error) {
     // JSON.parse only ever throws SyntaxError, so the message is always there.
@@ -62,8 +65,13 @@ export async function readSettings(file: string): Promise<ReadResult> {
 
 /** Render `data` back out in the style the file was read in. */
 export function serialize(data: Settings, style: FileStyle): string {
-  const text = JSON.stringify(data, null, style.indent);
-  return style.trailingNewline ? `${text}\n` : text;
+  const eol = style.eol ?? "\n";
+  // `JSON.stringify` always emits LF and escapes any newline inside a string
+  // value as `\\n`, so every literal LF in `text` is structural and safe to
+  // rewrite. A CRLF file that came back LF would show up as a whole-file diff
+  // in the user's dotfiles repo (F11).
+  const text = JSON.stringify(data, null, style.indent).replaceAll("\n", eol);
+  return style.trailingNewline ? `${text}${eol}` : text;
 }
 
 /**
@@ -77,6 +85,9 @@ function detectStyle(text: string): FileStyle {
   return {
     indent: match?.[1] ?? DEFAULT_STYLE.indent,
     trailingNewline: text.endsWith("\n"),
+    // First CRLF wins: a file mixing both was already inconsistent, and the
+    // majority ending is not worth a second pass over the text.
+    eol: text.includes("\r\n") ? "\r\n" : "\n",
   };
 }
 
