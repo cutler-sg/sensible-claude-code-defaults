@@ -1,0 +1,364 @@
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * ESM module namespaces are frozen, so `vi.spyOn(fs, 'rename')` cannot work.
+ * Wrap the real module once and let each test arm a single failure or count
+ * calls through this handle instead.
+ */
+const hooks = vi.hoisted(() => ({ renameFailure: null as Error | null, chmodCalls: 0 }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    default: actual,
+    rename: (...args: Parameters<typeof actual.rename>) => {
+      const failure = hooks.renameFailure;
+      if (failure) {
+        hooks.renameFailure = null;
+        return Promise.reject(failure);
+      }
+      return actual.rename(...args);
+    },
+    chmod: (...args: Parameters<typeof actual.chmod>) => {
+      hooks.chmodCalls += 1;
+      return actual.chmod(...args);
+    },
+  };
+});
+
+import { readSettings } from "../../src/config/reader.js";
+import { ConfigError, DEFAULT_STYLE, type Settings } from "../../src/config/types.js";
+import {
+  backupSettings,
+  ensureMode0600,
+  listBackups,
+  pruneBackups,
+  restoreBackup,
+  writeRawAtomic,
+  writeSettingsAtomic,
+} from "../../src/config/writer.js";
+
+let dir: string;
+let file: string;
+let backups: string;
+
+const OPTS = { workspaceFolders: [] as readonly string[] };
+const SETTINGS: Settings = { env: { AWS_REGION: "us-east-1" }, model: "opus" };
+
+beforeEach(async () => {
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), "scd-writer-"));
+  file = path.join(dir, "settings.json");
+  backups = path.join(dir, "sensible-defaults", "backups");
+});
+
+afterEach(async () => {
+  hooks.renameFailure = null;
+  hooks.chmodCalls = 0;
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+async function mode(target: string): Promise<number> {
+  return (await fs.stat(target)).mode & 0o777;
+}
+
+async function tempFiles(target = dir): Promise<string[]> {
+  return (await fs.readdir(target)).filter((name) => name.endsWith(".tmp"));
+}
+
+describe("writeSettingsAtomic (FR-2.3)", () => {
+  it("writes JSON in the given style", async () => {
+    await writeSettingsAtomic(file, SETTINGS, { indent: "\t", trailingNewline: true }, OPTS);
+    expect(await fs.readFile(file, "utf8")).toBe(
+      '{\n\t"env": {\n\t\t"AWS_REGION": "us-east-1"\n\t},\n\t"model": "opus"\n}\n',
+    );
+  });
+
+  it("round-trips through the reader", async () => {
+    await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
+    const result = await readSettings(file);
+    expect(result.kind === "ok" && result.data).toEqual(SETTINGS);
+  });
+
+  it("creates the parent directory on a fresh install", async () => {
+    const nested = path.join(dir, ".claude", "settings.json");
+    await writeSettingsAtomic(nested, SETTINGS, DEFAULT_STYLE, OPTS);
+    expect((await readSettings(nested)).kind).toBe("ok");
+  });
+
+  it("leaves the file at mode 0600 (§10.4)", async () => {
+    await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
+    expect(await mode(file)).toBe(0o600);
+  });
+
+  it("tightens a pre-existing 0664 file to 0600", async () => {
+    await fs.writeFile(file, "{}\n", { mode: 0o664 });
+    expect(await mode(file)).toBe(0o664);
+    await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
+    expect(await mode(file)).toBe(0o600);
+  });
+
+  it("leaves no temp files behind", async () => {
+    await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
+    expect(await tempFiles()).toEqual([]);
+  });
+
+  it("overwrites an existing file rather than appending", async () => {
+    await writeSettingsAtomic(file, { a: 1 }, DEFAULT_STYLE, OPTS);
+    await writeSettingsAtomic(file, { b: 2 }, DEFAULT_STYLE, OPTS);
+    expect(await fs.readFile(file, "utf8")).toBe('{\n  "b": 2\n}\n');
+  });
+
+  it("follows a symlink and replaces the link target, not the link", async () => {
+    const realDir = path.join(dir, "dotfiles");
+    await fs.mkdir(realDir);
+    const real = path.join(realDir, "claude-settings.json");
+    await fs.writeFile(real, '{"old": true}\n', { mode: 0o600 });
+    await fs.symlink(real, file);
+
+    await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
+
+    expect((await fs.lstat(file)).isSymbolicLink()).toBe(true);
+    const viaLink = await readSettings(file);
+    expect(viaLink.kind === "ok" && viaLink.data).toEqual(SETTINGS);
+    const direct = await readSettings(real);
+    expect(direct.kind === "ok" && direct.data).toEqual(SETTINGS);
+    // The temp file must land beside the *target*, and be cleaned up there.
+    expect(await tempFiles(realDir)).toEqual([]);
+  });
+
+  it("refuses to write inside a workspace folder (§10.4 assertion #2)", async () => {
+    const workspace = path.join(dir, "proj");
+    await fs.mkdir(path.join(workspace, ".claude"), { recursive: true });
+    const target = path.join(workspace, ".claude", "settings.local.json");
+    await expect(
+      writeSettingsAtomic(target, SETTINGS, DEFAULT_STYLE, { workspaceFolders: [workspace] }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+    await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps the original intact and removes the temp when rename fails", async () => {
+    const original = '{\n  "keep": "me"\n}\n';
+    await fs.writeFile(file, original, { mode: 0o600 });
+    hooks.renameFailure = new Error("EXDEV: simulated");
+
+    await expect(writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS)).rejects.toBeInstanceOf(
+      ConfigError,
+    );
+
+    expect(await fs.readFile(file, "utf8")).toBe(original);
+    expect(await tempFiles()).toEqual([]);
+  });
+
+  it("reports the failure as ATOMIC_WRITE_FAILED with the cause attached", async () => {
+    const cause = new Error("ENOSPC: simulated");
+    hooks.renameFailure = cause;
+    try {
+      await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      expect((error as ConfigError).code).toBe("ATOMIC_WRITE_FAILED");
+      expect((error as ConfigError).cause).toBe(cause);
+    }
+  });
+
+  it("skips chmod on win32 but still writes (plan Q-K)", async () => {
+    hooks.chmodCalls = 0;
+    await writeRawAtomic(file, "{}\n", { workspaceFolders: [], platform: "win32" });
+    expect(hooks.chmodCalls).toBe(0);
+    expect(await fs.readFile(file, "utf8")).toBe("{}\n");
+  });
+});
+
+describe("ensureMode0600 (FR-2.8)", () => {
+  it("reports no repair when the file is already 0600", async () => {
+    await fs.writeFile(file, "{}\n", { mode: 0o600 });
+    expect(await ensureMode0600(file, "linux")).toEqual({ repaired: false, before: 0o600 });
+  });
+
+  it("repairs a world-readable file and reports the previous mode", async () => {
+    await fs.writeFile(file, "{}\n", { mode: 0o644 });
+    expect(await ensureMode0600(file, "linux")).toEqual({ repaired: true, before: 0o644 });
+    expect(await mode(file)).toBe(0o600);
+  });
+
+  it("is a no-op on win32 (plan Q-K defers ACL work to M6)", async () => {
+    await fs.writeFile(file, "{}\n", { mode: 0o644 });
+    expect(await ensureMode0600(file, "win32")).toEqual({ repaired: false, before: 0 });
+    expect(await mode(file)).toBe(0o644);
+  });
+
+  it("propagates ENOENT for a missing file", async () => {
+    await expect(ensureMode0600(file, "linux")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("backups (FR-2.4, plan Q-H)", () => {
+  const at = (iso: string) => new Date(iso);
+
+  it("returns undefined when there is nothing to back up", async () => {
+    expect(await backupSettings(file, backups)).toBeUndefined();
+    await expect(fs.stat(backups)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("copies the file verbatim at mode 0600 with a colon-free name", async () => {
+    const raw = '{\n  "env": {}\n}\n';
+    await fs.writeFile(file, raw, { mode: 0o600 });
+
+    const info = await backupSettings(file, backups, at("2026-09-10T12:34:56.000Z"));
+    expect(info).toBeDefined();
+    if (!info) {
+      return;
+    }
+    expect(path.basename(info.path)).toBe("settings.2026-09-10T12-34-56.000Z.json");
+    expect(path.basename(info.path)).not.toContain(":");
+    expect(await fs.readFile(info.path, "utf8")).toBe(raw);
+    expect(await mode(info.path)).toBe(0o600);
+  });
+
+  it("backs up a malformed file byte-for-byte", async () => {
+    const raw = '{ "a": 1, }\n// broken\n';
+    await fs.writeFile(file, raw);
+    const info = await backupSettings(file, backups);
+    expect(info && (await fs.readFile(info.path, "utf8"))).toBe(raw);
+  });
+
+  it("refuses to back up into a workspace folder when the workspace is known", async () => {
+    await fs.writeFile(file, "{}\n");
+    const workspace = path.join(dir, "proj");
+    await expect(
+      backupSettings(file, path.join(workspace, "backups"), new Date(), {
+        workspaceFolders: [workspace],
+      }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+  });
+
+  it("propagates a non-ENOENT read error from the source file", async () => {
+    const asDir = path.join(dir, "adir");
+    await fs.mkdir(asDir);
+    await expect(backupSettings(asDir, backups)).rejects.toMatchObject({ code: "EISDIR" });
+  });
+
+  it("propagates a non-ENOENT error when listing", async () => {
+    await fs.mkdir(path.dirname(backups), { recursive: true });
+    await fs.writeFile(backups, "not a directory");
+    await expect(listBackups(backups)).rejects.toMatchObject({ code: "ENOTDIR" });
+  });
+
+  it("propagates a non-ENOENT error when reading a backup", async () => {
+    const asDir = path.join(dir, "backup-dir");
+    await fs.mkdir(asDir);
+    await expect(restoreBackup(asDir, file, OPTS)).rejects.toMatchObject({ code: "EISDIR" });
+  });
+
+  it("dates an unparseable backup name to the epoch rather than NaN", async () => {
+    await fs.mkdir(backups, { recursive: true });
+    await fs.writeFile(path.join(backups, "settings.handwritten.json"), "{}");
+    const [listed] = await listBackups(backups);
+    expect(listed?.createdAt.getTime()).toBe(0);
+  });
+
+  it("lists nothing when the backup directory does not exist", async () => {
+    expect(await listBackups(backups)).toEqual([]);
+  });
+
+  it("lists backups newest first and ignores unrelated files", async () => {
+    await seed([
+      "2026-09-01T00-00-00.000Z",
+      "2026-09-03T00-00-00.000Z",
+      "2026-09-02T00-00-00.000Z",
+    ]);
+    await fs.writeFile(path.join(backups, "README.md"), "not a backup");
+
+    const listed = await listBackups(backups);
+    expect(listed.map((b) => path.basename(b.path))).toEqual([
+      "settings.2026-09-03T00-00-00.000Z.json",
+      "settings.2026-09-02T00-00-00.000Z.json",
+      "settings.2026-09-01T00-00-00.000Z.json",
+    ]);
+    expect(listed[0]?.createdAt.toISOString()).toBe("2026-09-03T00:00:00.000Z");
+  });
+
+  it("keeps exactly the 10 newest of 13", async () => {
+    const stamps = Array.from(
+      { length: 13 },
+      (_, i) => `2026-09-${String(i + 1).padStart(2, "0")}T00-00-00.000Z`,
+    );
+    await seed(stamps);
+
+    const deleted = await pruneBackups(backups);
+    expect(deleted).toHaveLength(3);
+
+    const remaining = await listBackups(backups);
+    expect(remaining).toHaveLength(10);
+    expect(path.basename(remaining[0]?.path ?? "")).toBe("settings.2026-09-13T00-00-00.000Z.json");
+    expect(path.basename(remaining[9]?.path ?? "")).toBe("settings.2026-09-04T00-00-00.000Z.json");
+  });
+
+  it("honours a custom retention count", async () => {
+    await seed([
+      "2026-09-01T00-00-00.000Z",
+      "2026-09-02T00-00-00.000Z",
+      "2026-09-03T00-00-00.000Z",
+    ]);
+    await pruneBackups(backups, 1);
+    expect(await listBackups(backups)).toHaveLength(1);
+  });
+
+  it("prunes nothing when under the retention count", async () => {
+    await seed(["2026-09-01T00-00-00.000Z"]);
+    expect(await pruneBackups(backups)).toEqual([]);
+  });
+
+  it("prunes an absent directory without error", async () => {
+    expect(await pruneBackups(backups)).toEqual([]);
+  });
+
+  it("restores a backup over the live file", async () => {
+    const original = '{\n  "env": {\n    "AWS_REGION": "eu-central-1"\n  }\n}\n';
+    await fs.writeFile(file, original, { mode: 0o600 });
+    const info = await backupSettings(file, backups);
+    if (!info) {
+      throw new Error("expected a backup");
+    }
+
+    await writeSettingsAtomic(file, { env: { AWS_REGION: "us-east-1" } }, DEFAULT_STYLE, OPTS);
+    await restoreBackup(info.path, file, OPTS);
+
+    expect(await fs.readFile(file, "utf8")).toBe(original);
+    expect(await mode(file)).toBe(0o600);
+  });
+
+  it("throws BACKUP_NOT_FOUND for a missing backup", async () => {
+    await expect(
+      restoreBackup(path.join(backups, "settings.nope.json"), file, OPTS),
+    ).rejects.toMatchObject({ code: "BACKUP_NOT_FOUND" });
+  });
+
+  it("refuses to restore into a workspace folder", async () => {
+    await fs.writeFile(file, "{}\n");
+    const info = await backupSettings(file, backups);
+    const workspace = path.join(dir, "proj");
+    await fs.mkdir(workspace, { recursive: true });
+    await expect(
+      restoreBackup(info?.path ?? "", path.join(workspace, "settings.json"), {
+        workspaceFolders: [workspace],
+      }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+  });
+
+  async function seed(stamps: readonly string[]): Promise<void> {
+    await fs.mkdir(backups, { recursive: true });
+    await Promise.all(
+      stamps.map((stamp) =>
+        fs.writeFile(path.join(backups, `settings.${stamp}.json`), `{"at":"${stamp}"}`, {
+          mode: 0o600,
+        }),
+      ),
+    );
+  }
+});
