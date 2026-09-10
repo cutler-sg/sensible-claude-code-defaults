@@ -498,7 +498,77 @@ describe("cred.leak", () => {
     const result = credLeakCheck.run(withScan({ kind: "partial", hits: [HIT], reason: "timeout" }));
 
     expect(result.level).toBe("error");
+  });
+
+  /**
+   * F7. A partial scan with hits rendered identically to a complete one: the
+   * plain "found" label, a finite-looking list of files, and "Remove the key
+   * from the file yourself". The user fixes the named file, re-runs, times out
+   * again before reaching the remaining copies, and gets the same confident
+   * list back.
+   *
+   * The module header's promise is that a partial scan never reports a clean
+   * bill of health. That held for the empty case only — an incomplete list of
+   * places your key is, presented as the list, is the same false reassurance in
+   * a different costume. So the row says the scan did not finish whenever it
+   * did not finish, hits or not.
+   */
+  it("says the scan did not finish even when it found something", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [HIT], reason: "timeout" }));
+
+    expect(result.label).toBe(LABELS["cred.leak"].foundPartial);
+    expect(result.label).not.toBe(LABELS["cred.leak"].found);
+    expect(result.detail).toContain("not all of your files were checked");
+  });
+
+  it("says the same for a tracked hit found before the scan ran out", () => {
+    const result = credLeakCheck.run(
+      withScan({ kind: "partial", hits: [{ ...HIT, tracked: true }], reason: "timeout" }),
+    );
+
+    expect(result.level).toBe("error");
+    expect(result.label).toBe(LABELS["cred.leak"].foundTrackedPartial);
+    // The rotation advice is the stronger claim and must survive.
+    expect(result.detail).toContain("history");
+    expect(result.detail).toContain("not all of your files were checked");
+  });
+
+  it("says the same when the file cap stopped the scan, not the clock", () => {
+    const result = credLeakCheck.run(
+      withScan({ kind: "partial", hits: [HIT], reason: "file-cap" }),
+    );
+
+    expect(result.label).toBe(LABELS["cred.leak"].foundPartial);
+    expect(result.detail).toContain("not all of your files were checked");
+  });
+
+  /**
+   * The other half of the same rule: a scan that *did* finish must not be
+   * hedged. "There may be more" on an exhaustive result trains the user to
+   * ignore it on the one where it is true.
+   */
+  it("does not hedge a scan that finished", () => {
+    const result = credLeakCheck.run(withScan({ kind: "hits", hits: [HIT] }));
+
     expect(result.label).toBe(LABELS["cred.leak"].found);
+    expect(result.detail).not.toContain("not all of your files were checked");
+  });
+
+  /** Whatever it says about finishing, it never says the extension edited anything. */
+  it("still says plainly that nothing was changed, on a partial result too", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [HIT], reason: "timeout" }));
+
+    expect(result.detail).toContain("Nothing here has been changed for you");
+  });
+
+  it("names the path and never the value on a partial result either", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [HIT], reason: "timeout" }));
+
+    expect(result.detail).toContain(HIT.file);
+    expectNoTokenLeak(
+      [result.label, result.detail ?? "", JSON.stringify(result.fix)],
+      [FIXTURE_TOKEN],
+    );
   });
 
   /**

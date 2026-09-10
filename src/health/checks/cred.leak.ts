@@ -18,8 +18,11 @@
  * are safe is worse off than one who was never told. When we know the file is
  * tracked, the check says rotation is the remedy.
  *
- * A `partial` scan is an info row, never a pass: the scan not finishing is not
- * evidence of anything.
+ * A `partial` scan is never presented as a finished one. With no hits it is an
+ * info row rather than a pass — the scan not finishing is not evidence of
+ * anything. With hits it is still an error, but the row and the tooltip both
+ * say the list is not the whole list (F7): an incomplete set of the places a
+ * key is, presented as the set, is the same false reassurance as a false clean.
  */
 
 import type { LeakHit, ScanOutcome } from "../../credential/leakScan.js";
@@ -53,13 +56,14 @@ export const credLeakCheck = {
       case "clean":
         return result("pass", LABELS["cred.leak"].pass, NO_FIX);
       case "hits":
-        return found(scan.hits, "error");
+        return found(scan.hits, "error", true);
       case "partial":
         // Hits found before the budget ran out are still real, and still the
-        // more important thing to say. Only an empty partial reduces to "we
-        // did not finish".
+        // more important thing to say — but they are not the whole story, and
+        // the row says so (F7). An empty partial reduces to "we did not
+        // finish", which is all there is to say.
         return scan.hits.length > 0
-          ? found(scan.hits, "error")
+          ? found(scan.hits, "error", false)
           : result("info", LABELS["cred.leak"].partial, NO_FIX, PARTIAL_DETAIL);
       default:
         // A `ScanOutcome` variant this check has not been taught about. It
@@ -97,28 +101,49 @@ function skipped(reason: Extract<ScanOutcome, { kind: "skipped" }>["reason"]): C
  * `tracked` on *any* hit escalates the wording for all of them: the advice
  * "replacing the key is the only way to be safe" is true for the whole
  * situation once one copy has reached history.
+ *
+ * `complete` is whether the scan got through everything. It only ever weakens
+ * the claim — the finding and its level are the same either way — but an
+ * incomplete list presented as a complete one is what lets a user fix the one
+ * file named and believe they are done (F7).
  */
-function found(hits: readonly LeakHit[], level: Level): CheckResult {
+function found(hits: readonly LeakHit[], level: Level, complete: boolean): CheckResult {
   const tracked = hits.some((hit) => hit.tracked === true);
-  const label = tracked ? LABELS["cred.leak"].foundTracked : LABELS["cred.leak"].found;
+  const label = LABEL_FOR[tracked ? "tracked" : "untracked"][complete ? "complete" : "partial"];
   const first = hits[0];
   // `hits` is non-empty at every call site, but the type does not say so and
   // `noUncheckedIndexedAccess` is on — a missing first hit reduces to the fix
   // that is right regardless.
   const fix = first === undefined ? ROTATE : openAt(first);
-  return result(level, label, fix, detail(hits, tracked));
+  return result(level, label, fix, detail(hits, tracked, complete));
 }
+
+const LABEL_FOR = {
+  untracked: {
+    complete: LABELS["cred.leak"].found,
+    partial: LABELS["cred.leak"].foundPartial,
+  },
+  tracked: {
+    complete: LABELS["cred.leak"].foundTracked,
+    partial: LABELS["cred.leak"].foundTrackedPartial,
+  },
+} as const;
 
 /**
  * The paths, and what to do about them. Paths only — the value is what is being
  * protected, and a tooltip is as public as a label.
  */
-function detail(hits: readonly LeakHit[], tracked: boolean): string {
+function detail(hits: readonly LeakHit[], tracked: boolean, complete: boolean): string {
   const files = hits.map((hit) => hit.file).join("\n");
   const advice = tracked
     ? "This file is saved in version control, so the key is almost certainly in its history too. Removing it now does not take it out of past versions — replace the key in the Amazon console instead. Nothing here has been changed for you."
     : "Remove the key from the file yourself, then replace it in the Amazon console to be sure. Nothing here has been changed for you.";
-  return `${files}\n\n${advice}`;
+  // Last, because it qualifies everything above it: these are the files we
+  // found, not the files there are.
+  const caveat = complete
+    ? ""
+    : "\n\nThe check stopped early, so not all of your files were checked — there may be more copies than the ones listed here. Run it again to check the rest.";
+  return `${files}\n\n${advice}${caveat}`;
 }
 
 function result(

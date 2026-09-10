@@ -144,6 +144,19 @@ export const LABELS = {
     foundTracked:
       "Your Bedrock API key is inside a project file that's saved in version control — replacing the key is the only way to be safe",
     /**
+     * F7. The same finding, from a scan that did not get through everything.
+     *
+     * Without the hedge, an incomplete list of the places the key is reads as
+     * the list: the user removes it from the one file named, runs the check
+     * again, times out again before the remaining copies, and is told the same
+     * confident thing twice. "There may be more" is the whole difference
+     * between a user who keeps looking and one who stops.
+     */
+    foundPartial:
+      "Your Bedrock API key is written inside one of your project files — and we didn't finish checking the rest",
+    foundTrackedPartial:
+      "Your Bedrock API key is inside a project file that's saved in version control — replacing the key is the only way to be safe, and we didn't finish checking the rest",
+    /**
      * Never a pass. "We looked at some of your files and found nothing" and
      * "your key is not in your project" are different claims.
      */
