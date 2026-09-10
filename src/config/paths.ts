@@ -119,7 +119,14 @@ function rootsFor(folder: string, p: path.PlatformPath): string[] {
   // safety — fall back to the literal path and let the comparison stand.
   let real: string;
   try {
-    real = p.resolve(realpathSync(given));
+    // `.native` and not the JS implementation. Node's own `realpathSync`
+    // resolves symlinks but leaves an 8.3 short name as it found it, while the
+    // async `realpath` the write path uses asks Windows and gets the long name
+    // back. Two spellings of one directory never compare equal, so on Windows
+    // the guard was handed `C:\Users\RUNNER~1\...` for the workspace and
+    // `C:\Users\runneradmin\...` for the target and found no overlap — a
+    // write into the workspace, allowed. `.native` asks the OS on both sides.
+    real = p.resolve(realpathSync.native(given));
   } catch {
     return [given];
   }

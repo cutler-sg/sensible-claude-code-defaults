@@ -442,6 +442,32 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     expect(await fs.readdir(real)).toEqual([]);
   });
 
+  // Windows only, because 8.3 short names are a Windows filesystem feature and
+  // there is no way to manufacture one elsewhere. It earns its place: on the CI
+  // runner `os.tmpdir()` is `C:\Users\RUNNER~1\...`, the write path's async
+  // `realpath` expands that to `C:\Users\runneradmin\...`, and the guard's
+  // sync resolution used to leave it short. Two spellings of one directory, no
+  // overlap found, and the write landed inside the workspace.
+  it.runIf(process.platform === "win32")(
+    "refuses through an 8.3 short name that expands to the workspace",
+    async () => {
+      const workspace = path.join(dir, "proj");
+      const real = path.join(workspace, ".claude");
+      await fs.mkdir(real, { recursive: true });
+      const home = path.join(dir, "home");
+      await fs.mkdir(home);
+      const link = path.join(home, ".claude");
+      await fs.symlink(real, link, "dir");
+
+      await expect(
+        writeRawAtomic(path.join(link, "settings.json"), '{"pwned":true}\n', {
+          workspaceFolders: [workspace],
+        }),
+      ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+      expect(await fs.readdir(real)).toEqual([]);
+    },
+  );
+
   it("refuses when the workspace root itself is reached through a symlink", async () => {
     // The symlink is on the *workspace* side, not ours. VS Code reports the
     // path the user opened, which on macOS is routinely `/var/...` for a
