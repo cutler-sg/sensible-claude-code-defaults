@@ -17,6 +17,7 @@ import {
   type NotifiedStore,
   notifiedKey,
 } from "../../../src/ui/healthRunner.js";
+import type { ResolvedManifest } from "../../../src/ui/manifestHolder.js";
 import { APPLY_ACTION, DETAILS_ACTION } from "../../../src/ui/notify.js";
 import { messages, reset, state } from "./commandsHost.js";
 import { FakeTerminalEnv } from "./credentialDeps.js";
@@ -36,6 +37,12 @@ function memento(): NotifiedStore {
 }
 
 const TOKEN = "ABSKQmVkcm9ja0FQSUtleUV4YW1wbGVWYWx1ZQ";
+
+/** The bundled floor, presented as the resolver would hand it over. */
+const BUNDLED: ResolvedManifest = {
+  manifest: BUNDLED_MANIFEST,
+  status: { revision: BUNDLED_MANIFEST.revision, source: "bundled" },
+};
 
 const INSTALLED: ClaudeCodeDetection = {
   extension: { installed: true, version: "2.1.267" },
@@ -57,7 +64,7 @@ const log = {
 function runner(overrides: Partial<HealthRunnerDeps> = {}): () => Promise<void> {
   return createHealthRunner({
     env,
-    manifest: BUNDLED_MANIFEST,
+    manifest: () => BUNDLED,
     platform: process.platform,
     detect: async () => INSTALLED,
     log: log as never,
@@ -84,6 +91,10 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
+
+function staleOf(report: HealthReport | undefined) {
+  return report?.results.find((result) => result.id === "config.stale");
+}
 
 async function seed(settings: unknown, mode = 0o600): Promise<void> {
   await writeFile(settingsPath(dir), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
@@ -314,6 +325,71 @@ describe("re-deriving the terminal collection from the keychain", () => {
     expect(reports).toHaveLength(1);
     expect(terminal.applied).toEqual([]);
     expect(terminal.cleared).toBe(0);
+  });
+});
+
+/**
+ * The trap M4 was wired around. The runner used to take a `Manifest` value, so
+ * a window that fetched newer recommendations after activation went on checking
+ * against the bundled ones forever — the panel would keep saying the defaults
+ * were current while holding a copy from the VSIX.
+ */
+describe("reading the resolved manifest afresh on every run", () => {
+  it("checks against the manifest in force now, not the one held at wiring time", async () => {
+    await seed({ env: { CLAUDE_CODE_USE_BEDROCK: "1", AWS_REGION: "us-east-1" } });
+    let held: ResolvedManifest = BUNDLED;
+    const run = runner({ manifest: () => held });
+
+    await run();
+    expect(staleOf(reports[0])).toMatchObject({
+      level: "info",
+      label: "Using the recommendations that came with this extension",
+    });
+
+    held = {
+      manifest: BUNDLED_MANIFEST,
+      status: {
+        revision: BUNDLED_MANIFEST.revision,
+        source: "fetched",
+        fetchedAt: "2026-09-11T12:00:00.000Z",
+      },
+    };
+    await run();
+
+    expect(staleOf(reports[1])?.level).toBe("pass");
+  });
+
+  it("keys the FR-5.5 toast on the revision in force now", async () => {
+    const later: ResolvedManifest = {
+      manifest: { ...BUNDLED_MANIFEST, revision: "remote-2" },
+      status: { revision: "remote-2", source: "fetched", fetchedAt: "2026-09-11T12:00:00.000Z" },
+    };
+
+    await runner({ manifest: () => later })();
+
+    expect(notified.get<string[]>(notifiedKey("remote-2"), [])).toEqual(["first-run"]);
+    expect(notified.get<string[]>(notifiedKey(BUNDLED_MANIFEST.revision), [])).toEqual([]);
+  });
+
+  it("renders the manifest's notices as info rows in the panel", async () => {
+    const withNotice: ResolvedManifest = {
+      manifest: {
+        ...BUNDLED_MANIFEST,
+        notices: [{ level: "warning", message: "Bedrock maintenance on the 3rd." }],
+      },
+      status: BUNDLED.status,
+    };
+
+    await runner({ manifest: () => withNotice })();
+
+    const notice = reports[0]?.results.find((result) => result.id === "notice.0");
+    // Q-AA: a declared `warning` still renders as info, and carries no command.
+    expect(notice).toMatchObject({
+      level: "info",
+      group: "Configuration",
+      label: "Bedrock maintenance on the 3rd.",
+      fix: { kind: "none" },
+    });
   });
 });
 

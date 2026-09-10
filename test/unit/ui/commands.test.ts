@@ -33,11 +33,28 @@ const log = {
   error: (message: string) => logged.push(`error ${message}`),
 };
 
+/**
+ * The manifest the registered commands see. A `let` rather than a parameter
+ * because the point of `CommandDeps.manifest` being a function is that the host
+ * can swap it *after* registration, and a test that cannot swap it proves
+ * nothing about that.
+ */
+let currentManifest: Manifest;
+let forcedRefreshes: number;
+/** What `refreshManifest` reports back: did the held manifest change? */
+let refreshChanged: boolean;
+
 function register(manifest: Manifest = BUNDLED_MANIFEST): void {
+  currentManifest = manifest;
   disposable = registerCommands({
     env,
     session,
-    manifest,
+    manifest: () => currentManifest,
+    refreshManifest: async (options) => {
+      expect(options).toEqual({ force: true });
+      forcedRefreshes += 1;
+      return refreshChanged;
+    },
     settingsFile: settingsPath(dir),
     backupsDir: backupsDir(dir),
     log: log as never,
@@ -61,6 +78,8 @@ beforeEach(async () => {
   session = { backedUp: false };
   logged = [];
   healthRuns = 0;
+  forcedRefreshes = 0;
+  refreshChanged = false;
   reset();
   register();
 });
@@ -614,6 +633,105 @@ describe("runFix", () => {
   });
 });
 
+describe("checkForUpdates (FR-3.3)", () => {
+  it("bypasses the throttle and re-runs the checks", async () => {
+    refreshChanged = true;
+
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(forcedRefreshes).toBe(1);
+    expect(healthRuns).toBe(1);
+    expect(messages()).toEqual(["Updated to the latest recommended settings."]);
+  });
+
+  it("says so, rather than nothing, when there was no update", async () => {
+    // A command that appears to do nothing is indistinguishable from a broken
+    // one, and this one is only ever reached by a deliberate press.
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(messages()).toEqual(["You already have the latest recommended settings."]);
+    expect(healthRuns).toBe(1);
+  });
+
+  /**
+   * FR-3.2: a failed fetch is never user-visible. The holder swallows it and
+   * reports "nothing changed", so from here an unreachable network and an
+   * unchanged manifest are the same sentence — which is the point.
+   */
+  it("reports no failure when the fetch could not happen at all", async () => {
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(state.error).toEqual([]);
+    expect(state.warn).toEqual([]);
+  });
+
+  it("still re-runs the checks in a host with no resolver wired", async () => {
+    disposable.dispose();
+    reset();
+    disposable = registerCommands({
+      env,
+      session,
+      manifest: () => BUNDLED_MANIFEST,
+      settingsFile: settingsPath(dir),
+      backupsDir: backupsDir(dir),
+      log: log as never,
+      runHealth: async () => {
+        healthRuns += 1;
+      },
+      markWrite: () => {},
+      credential: fakeCredentialDeps(),
+    });
+
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(healthRuns).toBe(1);
+  });
+});
+
+/**
+ * The trap M4 was wired around: the manifest used to be captured at
+ * registration, so a window that fetched newer recommendations went on
+ * offering — and writing — the ones that shipped in the VSIX.
+ */
+describe("reading the manifest afresh on every invocation", () => {
+  it("offers the regions of the manifest in force now, not at registration", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    currentManifest = { ...BUNDLED_MANIFEST, regions: ["eu-west-1", "eu-west-2"] };
+
+    await run("sensibleDefaults.selectRegion");
+
+    expect(quickPickLabels()).toEqual(["eu-west-1", "eu-west-2"]);
+  });
+
+  it("applies the values of the manifest in force now", async () => {
+    // No region in the file: an existing one is the user's, and hard rule 3
+    // would rightly preserve it as drift whatever the manifest says.
+    await seed({ env: { CLAUDE_CODE_USE_BEDROCK: "1" } });
+    currentManifest = {
+      ...BUNDLED_MANIFEST,
+      defaults: {
+        ...BUNDLED_MANIFEST.defaults,
+        env: { ...BUNDLED_MANIFEST.defaults.env, AWS_REGION: "ap-southeast-1" },
+      },
+    };
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect(await readEnv("AWS_REGION")).toBe("ap-southeast-1");
+  });
+
+  it("stamps the snapshot with the revision in force now", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    currentManifest = { ...BUNDLED_MANIFEST, revision: "remote-2" };
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect((await env.snapshotStore.load()).manifestRevision).toBe("remote-2");
+  });
+});
+
 describe("the command wrapper", () => {
   it("turns a thrown failure into a message rather than an unhandled rejection", async () => {
     disposable.dispose();
@@ -621,7 +739,7 @@ describe("the command wrapper", () => {
     disposable = registerCommands({
       env,
       session,
-      manifest: BUNDLED_MANIFEST,
+      manifest: () => BUNDLED_MANIFEST,
       settingsFile: settingsPath(dir),
       backupsDir: backupsDir(dir),
       log: log as never,
@@ -644,7 +762,7 @@ describe("the command wrapper", () => {
     disposable = registerCommands({
       env,
       session,
-      manifest: BUNDLED_MANIFEST,
+      manifest: () => BUNDLED_MANIFEST,
       settingsFile: settingsPath(dir),
       backupsDir: backupsDir(dir),
       log: log as never,

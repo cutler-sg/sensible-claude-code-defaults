@@ -44,7 +44,15 @@ import type { Node } from "./treeProvider.js";
 export interface CommandDeps {
   env: ConfigEnv;
   session: ApplySession;
-  manifest: Manifest;
+  /**
+   * The manifest in force, read afresh on every invocation — a function for the
+   * same reason the health runner takes one. The host re-resolves it on the
+   * hourly boundary and on "Check for Updated Recommendations", and a value
+   * captured at registration would leave `selectRegion` offering the regions
+   * that shipped in the VSIX, and `applyDefaults` writing them, for the life of
+   * the window.
+   */
+  manifest: () => Manifest;
   settingsFile: string;
   backupsDir: string;
   log: Logger;
@@ -54,6 +62,12 @@ export interface CommandDeps {
   markWrite: () => void;
   /** The keychain, the terminal collection, and where a test result goes. */
   credential: CredentialFlowDeps;
+  /**
+   * FR-3.3's manual refresh: re-resolve the manifest ignoring the hourly
+   * throttle. Optional so a host that has not wired the resolver still gets a
+   * working command surface; the command then simply re-runs the checks.
+   */
+  refreshManifest?: (options: { force: true }) => Promise<boolean>;
   now?: () => Date;
 }
 
@@ -76,6 +90,7 @@ const MAX_STALE_RETRIES = 1;
  */
 const HANDLERS = {
   "sensibleDefaults.runHealthCheck": (deps) => deps.runHealth(),
+  "sensibleDefaults.checkForUpdates": (deps) => checkForUpdates(deps),
   "sensibleDefaults.applyDefaults": (deps) => applyDefaults(deps, 0),
   "sensibleDefaults.openSettings": (deps) => openSettings(deps),
   "sensibleDefaults.restoreBackup": (deps) => restoreBackupCommand(deps),
@@ -117,7 +132,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
 
 /** FR-6.1: preview, then write. A stale plan is recomputed, never forced. */
 async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> {
-  const desired = desiredFromManifest(deps.manifest);
+  const desired = desiredFromManifest(deps.manifest());
   const planned = await plan(deps.env, desired);
 
   if (planned.kind === "blocked") {
@@ -171,6 +186,26 @@ async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> 
     );
   }
   await deps.runHealth();
+}
+
+/**
+ * FR-3.3's manual refresh. The one path that bypasses the hourly throttle.
+ *
+ * It always re-runs the checks, even when nothing changed: the user pressed a
+ * button, and a command that appears to do nothing is indistinguishable from a
+ * broken one. It never reports a failed fetch (FR-3.2) — a network that is not
+ * there produces "using the recommendations saved on this computer" in the
+ * panel and a line in the log, which is the honest answer and the only one this
+ * audience can act on.
+ */
+async function checkForUpdates(deps: CommandDeps): Promise<void> {
+  const changed = (await deps.refreshManifest?.({ force: true })) ?? false;
+  await deps.runHealth();
+  await vscode.window.showInformationMessage(
+    changed
+      ? "Updated to the latest recommended settings."
+      : "You already have the latest recommended settings.",
+  );
 }
 
 async function openSettings(deps: CommandDeps): Promise<void> {
@@ -239,7 +274,7 @@ async function resetKey(deps: CommandDeps, arg: unknown, attempt: number): Promi
     deps.log.warn("resetKey called without a drifted key; ignoring.");
     return;
   }
-  const desired = desiredFromManifest(deps.manifest);
+  const desired = desiredFromManifest(deps.manifest());
   if (!(key in desired)) {
     // A managed key the manifest says nothing about: the reset would plan no
     // change at all, and clicking a button that does nothing reads as a bug.
@@ -255,7 +290,7 @@ async function resetKey(deps: CommandDeps, arg: unknown, attempt: number): Promi
 }
 
 async function selectRegion(deps: CommandDeps): Promise<void> {
-  const regions = deps.manifest.regions;
+  const regions = deps.manifest().regions;
   if (regions.length === 0) {
     // An empty QuickPick renders as a blank list with no explanation. It only
     // happens with a manifest that carries no regions, which M4's remote fetch
@@ -383,7 +418,7 @@ async function commitPlan(
   // the call, so a window opened afterwards is already too late for the event.
   deps.markWrite();
   const result = await commit(deps.env, deps.session, planned, {
-    manifestRevision: deps.manifest.revision,
+    manifestRevision: deps.manifest().revision,
     ...meta,
   });
   if (result.written) {

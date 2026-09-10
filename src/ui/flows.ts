@@ -60,7 +60,8 @@ export interface CredentialFlowDeps {
 export interface FlowDeps {
   env: ConfigEnv;
   session: ApplySession;
-  manifest: Manifest;
+  /** The manifest in force, read per invocation. See `CommandDeps.manifest`. */
+  manifest: () => Manifest;
   log: Logger;
   runHealth: () => Promise<void>;
   markWrite: () => void;
@@ -100,7 +101,7 @@ async function enterToken(
   const entered = await vscode.window.showInputBox({
     title: labels.title,
     placeHolder: labels.placeHolder,
-    prompt: promptText(deps.manifest),
+    prompt: promptText(deps.manifest()),
     // FR-4.2: masked, and proof against a click on another window losing a
     // value the user has already pasted out of a console page.
     password: true,
@@ -202,7 +203,7 @@ async function removeFromFile(deps: FlowDeps, attempt = 0): Promise<boolean> {
   let result: CommitResult;
   try {
     result = await removeTokenFromSettings(deps.env, deps.session, {
-      manifestRevision: deps.manifest.revision,
+      manifestRevision: deps.manifest().revision,
     });
   } catch (error) {
     // A file that will not parse cannot be edited at all. This used to throw
@@ -352,7 +353,7 @@ export async function testConnection(deps: FlowDeps): Promise<void> {
       callBedrock({
         token: stored.token,
         region: configuredRegion,
-        models: modelsToTry(deps.manifest),
+        models: modelsToTry(deps.manifest()),
         ...(deps.credential.fetch === undefined ? {} : { fetch: deps.credential.fetch }),
       }),
   );
@@ -385,7 +386,7 @@ async function region(deps: FlowDeps): Promise<string> {
   const value = read?.kind === "ok" ? getPath(read.data, "env.AWS_REGION") : undefined;
   return typeof value === "string" && value !== ""
     ? value
-    : (deps.manifest.defaults.env.AWS_REGION ?? "");
+    : (deps.manifest().defaults.env.AWS_REGION ?? "");
 }
 
 /**
@@ -510,7 +511,7 @@ async function sync(
 ): Promise<CommitResult | undefined> {
   deps.markWrite();
   const result = await syncTokenToSettings(deps.env, deps.session, token, {
-    manifestRevision: deps.manifest.revision,
+    manifestRevision: deps.manifest().revision,
   });
   if (result.reason !== "stale") return result;
 
