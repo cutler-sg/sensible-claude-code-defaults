@@ -23,6 +23,7 @@ export class ThemeIcon {
 }
 
 export class TreeItem {
+  id: string | undefined;
   iconPath: unknown;
   tooltip: string | undefined;
   contextValue: string | undefined;

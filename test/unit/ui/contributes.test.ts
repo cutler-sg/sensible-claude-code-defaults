@@ -113,4 +113,21 @@ describe("contributed commands", () => {
     expect(welcome?.when).toBe("sensibleDefaults.hasReport == false");
     expect(welcome?.contents).toContain("Checking your Claude Code configuration");
   });
+
+  it("offers the apply button when Claude Code is installed but unconfigured (FR-5.5)", () => {
+    const setup = manifest.contributes.viewsWelcome.find((entry) =>
+      entry.when.includes("sensibleDefaults.needsSetup"),
+    );
+    expect(setup?.view).toBe("sensibleDefaults.health");
+    expect(setup?.when).toBe("view == sensibleDefaults.health && sensibleDefaults.needsSetup");
+    expect(setup?.contents).toContain("(command:sensibleDefaults.applyDefaults)");
+  });
+
+  it("links its welcome buttons to declared commands", () => {
+    for (const entry of manifest.contributes.viewsWelcome) {
+      for (const [, id] of entry.contents.matchAll(/\(command:([^)\s]+)\)/g)) {
+        expect(contributed).toContain(id);
+      }
+    }
+  });
 });
