@@ -23,6 +23,7 @@ import {
   restore,
 } from "../config/index.js";
 import type { Desired, ManagedKey, PlanResult } from "../config/types.js";
+import { keyDisplayName } from "../health/labels.js";
 import { desiredFromManifest, type Manifest } from "../manifest/types.js";
 import type { Logger } from "../util/log.js";
 import { redact } from "../util/redact.js";
@@ -46,6 +47,11 @@ export interface CommandDeps {
 const OPEN_FILE = "Open file";
 const RESTORE_BACKUP = "Restore backup";
 const CONTINUE = "Continue";
+const REPLACE = "Replace";
+const CANCEL = "Cancel";
+
+/** One retry, everywhere. See `commitSingle`. */
+const MAX_STALE_RETRIES = 1;
 
 export function registerCommands(deps: CommandDeps): vscode.Disposable {
   const register = (id: string, handler: (...args: never[]) => Promise<void>): vscode.Disposable =>
@@ -65,7 +71,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
     register("sensibleDefaults.applyDefaults", () => applyDefaults(deps, 0)),
     register("sensibleDefaults.openSettings", () => openSettings(deps)),
     register("sensibleDefaults.restoreBackup", () => restoreBackupCommand(deps)),
-    register("sensibleDefaults.resetKey", (node: unknown) => resetKey(deps, node)),
+    register("sensibleDefaults.resetKey", (node: unknown) => resetKey(deps, node, 0)),
     register("sensibleDefaults.selectRegion", () => selectRegion(deps)),
     register("sensibleDefaults.repairPermissions", () => repairPermissionsCommand(deps)),
     register("sensibleDefaults.runFix", (node: unknown) => runFix(deps, node)),
@@ -95,9 +101,11 @@ async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> 
   // picking one is treated as "I was reading, not deciding" — i.e. cancel.
   const picked = await vscode.window.showQuickPick(
     [
+      // Cancel is first so the highlighted item on open is the harmless one: a
+      // stray Enter on a dialog the user has not read yet must never write.
+      { label: CANCEL, description: "" },
       { label: confirmLabel, description: "Writes the changes listed below" },
       ...changes.map((change) => ({ label: describeChange(change), description: "" })),
-      { label: "Cancel", description: "" },
     ],
     {
       canPickMany: false,
@@ -183,20 +191,45 @@ async function restoreBackupCommand(deps: CommandDeps): Promise<void> {
 /**
  * The only path that transfers ownership of a key back to us (M1 plan note), so
  * it is always an explicit per-key decision — never a side effect of an apply.
+ *
+ * "Explicit" has to mean confirmed as well as per-key: this is the inline
+ * button next to a drift row, one mis-click away at all times, and the value it
+ * replaces is by definition one the user chose (hard rule 3).
  */
-async function resetKey(deps: CommandDeps, arg: unknown): Promise<void> {
+async function resetKey(deps: CommandDeps, arg: unknown, attempt: number): Promise<void> {
   const key = managedKeyFrom(arg);
   if (key === undefined) {
     deps.log.warn("resetKey called without a drifted key; ignoring.");
     return;
   }
   const desired = desiredFromManifest(deps.manifest);
+  if (!(key in desired)) {
+    // A managed key the manifest says nothing about: the reset would plan no
+    // change at all, and clicking a button that does nothing reads as a bug.
+    await vscode.window.showInformationMessage(
+      `There's no recommended value for ${keyDisplayName(key)} yet.`,
+    );
+    return;
+  }
   const planned = await resetKeyPlan(deps.env, desired, key);
-  await commitSingle(deps, planned, 0, () => resetKey(deps, key));
+  await commitSingle(deps, planned, attempt, (next) => resetKey(deps, key, next), {
+    alreadyThere: `Your ${keyDisplayName(key)} already matches the recommended value.`,
+  });
 }
 
 async function selectRegion(deps: CommandDeps): Promise<void> {
-  const region = await vscode.window.showQuickPick(deps.manifest.regions, {
+  const regions = deps.manifest.regions;
+  if (regions.length === 0) {
+    // An empty QuickPick renders as a blank list with no explanation. It only
+    // happens with a manifest that carries no regions, which M4's remote fetch
+    // makes reachable in the field.
+    deps.log.warn("selectRegion: the manifest lists no regions.");
+    await vscode.window.showInformationMessage(
+      "There are no Amazon regions to choose from in the current recommendations.",
+    );
+    return;
+  }
+  const region = await vscode.window.showQuickPick(regions, {
     canPickMany: false,
     title: "Change AWS Region",
     placeHolder: "Pick the AWS region closest to you",
@@ -212,7 +245,9 @@ async function applyRegion(deps: CommandDeps, region: string, attempt: number): 
   // would report the hand-picked value as drift forever.
   const desired: Desired = { "env.AWS_REGION": region };
   const planned = await resetKeyPlan(deps.env, desired, "env.AWS_REGION");
-  await commitSingle(deps, planned, attempt, () => applyRegion(deps, region, attempt + 1));
+  await commitSingle(deps, planned, attempt, (next) => applyRegion(deps, region, next), {
+    alreadyThere: `Your ${keyDisplayName("env.AWS_REGION")} is already ${region}.`,
+  });
 }
 
 async function repairPermissionsCommand(deps: CommandDeps): Promise<void> {
@@ -246,31 +281,73 @@ async function runFix(deps: CommandDeps, node: unknown): Promise<void> {
   await vscode.commands.executeCommand(fix.command, ...(fix.args ?? []));
 }
 
+/**
+ * Confirm, then write, for the single-key paths that take a value away from the
+ * user. `attempt` is threaded through the retry rather than restarted, so every
+ * path is bounded at `MAX_STALE_RETRIES` even when the file is being rewritten
+ * continuously by something else.
+ */
 async function commitSingle(
   deps: CommandDeps,
   planned: PlanResult,
   attempt: number,
-  retry: () => Promise<void>,
+  retry: (attempt: number) => Promise<void>,
+  say: { alreadyThere: string },
 ): Promise<void> {
   if (planned.kind === "blocked") {
     await reportBlocked(deps, planned.error);
     return;
   }
-  const result = await commitPlan(deps, planned);
+  if (planned.noop) {
+    await vscode.window.showInformationMessage(say.alreadyThere);
+    return;
+  }
+  if (!(await confirmReplace(planned))) {
+    deps.log.info("Reset cancelled by the user.");
+    return;
+  }
+
+  // `forceBackup`: this write overwrites a value the *user* set, so the
+  // session's one backup — which may already be spent on a routine apply — is
+  // not enough to make it undoable (FR-2.4, hard rule 3).
+  const result = await commitPlan(deps, planned, { forceBackup: true });
   if (result.reason === "stale") {
     await warnStale();
-    if (attempt === 0) await retry();
+    if (attempt < MAX_STALE_RETRIES) await retry(attempt + 1);
     return;
   }
   await deps.runHealth();
 }
 
-async function commitPlan(deps: CommandDeps, planned: ReadyPlan): Promise<CommitResult> {
+/**
+ * The modal in front of every ownership transfer. Modal rather than a toast
+ * because a notification can be missed entirely, and this one is the user's
+ * only chance to keep a value they chose on purpose.
+ */
+async function confirmReplace(planned: ReadyPlan): Promise<boolean> {
+  const changes = redactChanges(planned.merge.changes);
+  const first = changes[0];
+  const name = first === undefined ? "these settings" : keyDisplayName(first.key);
+  const detail = changes.map(describeChange).join("\n");
+  const choice = await vscode.window.showWarningMessage(
+    `Replace your ${name} with the recommended value?`,
+    { modal: true, detail: `${detail}\n\nYour current settings are saved first.` },
+    REPLACE,
+  );
+  return choice === REPLACE;
+}
+
+async function commitPlan(
+  deps: CommandDeps,
+  planned: ReadyPlan,
+  meta?: { forceBackup: true },
+): Promise<CommitResult> {
   // Suppression opens *before* the write, not after: the rename lands during
   // the call, so a window opened afterwards is already too late for the event.
   deps.markWrite();
   const result = await commit(deps.env, deps.session, planned, {
     manifestRevision: deps.manifest.revision,
+    ...meta,
   });
   if (result.written) {
     deps.log.info(`Wrote ${result.changes.length} change(s) to settings.json.`);
