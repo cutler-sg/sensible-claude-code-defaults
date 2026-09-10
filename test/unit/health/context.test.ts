@@ -264,6 +264,52 @@ describe("buildContext credential", () => {
     expect(ctx.credential.presence.source).toBe("keychain");
   });
 
+  it("does not call a trailing newline a different key (F10)", async () => {
+    // `/setup-bedrock` writes the value into JSON; a paste can leave a newline
+    // on either side. Surrounding whitespace is not a second key, and a
+    // conflict warning the user cannot clear is worse than no warning.
+    const ctx = await build({
+      credential: credentialDeps({
+        store: new MemoryTokenStore({ token: TOKEN, setAt: SET_AT }),
+        readFromSettings: async () => `${TOKEN}\n`,
+      }),
+    });
+    expect(ctx.credential.presence).toEqual({ source: "both", mismatch: false, setAt: SET_AT });
+  });
+
+  it("does not call surrounding whitespace a different key either", async () => {
+    const ctx = await build({
+      credential: credentialDeps({
+        store: new MemoryTokenStore({ token: `  ${TOKEN}\t`, setAt: SET_AT }),
+        readFromSettings: async () => TOKEN,
+      }),
+    });
+    expect(ctx.credential.presence.mismatch).toBe(false);
+  });
+
+  it("still flags a genuinely different key", async () => {
+    const ctx = await build({
+      credential: credentialDeps({
+        store: new MemoryTokenStore({ token: TOKEN, setAt: SET_AT }),
+        readFromSettings: async () => `${OTHER}\n`,
+      }),
+    });
+    expect(ctx.credential.presence.mismatch).toBe(true);
+  });
+
+  it("treats a whitespace-only file value as a present but empty one", async () => {
+    // Normalising must not turn "   " into "no key in the file": the file does
+    // hold a value, it is just not a usable one, and `cred.mirrored` says so.
+    const ctx = await build({
+      credential: credentialDeps({
+        store: new MemoryTokenStore({ token: TOKEN, setAt: SET_AT }),
+        readFromSettings: async () => "   ",
+      }),
+    });
+    expect(ctx.credential.presence.source).toBe("both");
+    expect(ctx.credential.presence.mismatch).toBe(true);
+  });
+
   it("passes the last test result and the clock through untouched", async () => {
     const lastTest = {
       at: "2026-09-10T11:00:00.000Z",

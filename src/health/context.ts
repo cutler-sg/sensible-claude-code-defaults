@@ -10,6 +10,7 @@
 
 import { plan, repairPermissions, settingsPath } from "../config/index.js";
 import type { ConfigEnv, Drift, PlanResult } from "../config/types.js";
+import { normalizeToken } from "../credential/shape.js";
 import type { ConnectionResult, TokenPresence, TokenStore } from "../credential/types.js";
 import type { Manifest } from "../manifest/types.js";
 import { desiredFromManifest } from "../manifest/types.js";
@@ -130,6 +131,17 @@ async function buildCredential(
   };
 }
 
+/**
+ * Presence is about which places hold a value; the mismatch is about whether
+ * they hold the *same* value.
+ *
+ * The comparison normalises first. The entry flow stores what `normalizeToken`
+ * returns, but `/setup-bedrock` and a hand-edited file do not, so a stray
+ * newline on one side would otherwise read as a permanently different key and
+ * raise a conflict warning the user has no way to clear (F10). Normalising
+ * never changes *presence*: a whitespace-only file value is still a value the
+ * file holds, and `cred.mirrored` is the check that says it is the wrong one.
+ */
 function presenceOf(
   keychain: string | undefined,
   file: string | undefined,
@@ -145,7 +157,10 @@ function presenceOf(
         : "both";
   return {
     source,
-    mismatch: keychain !== undefined && file !== undefined && keychain !== file,
+    mismatch:
+      keychain !== undefined &&
+      file !== undefined &&
+      normalizeToken(keychain) !== normalizeToken(file),
     ...(setAt === undefined ? {} : { setAt }),
   };
 }
