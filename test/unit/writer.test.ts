@@ -277,11 +277,33 @@ describe("backups (FR-2.4, plan Q-H)", () => {
     await expect(restoreBackup(asDir, file, OPTS)).rejects.toMatchObject({ code: "EISDIR" });
   });
 
-  it("dates an unparseable backup name to the epoch rather than NaN", async () => {
+  it("ignores a file whose name is not a parseable timestamp (F7)", async () => {
     await fs.mkdir(backups, { recursive: true });
     await fs.writeFile(path.join(backups, "settings.handwritten.json"), "{}");
-    const [listed] = await listBackups(backups);
-    expect(listed?.createdAt.getTime()).toBe(0);
+    await fs.writeFile(path.join(backups, "settings.2026-13-45T99-99-99.000Z.json"), "{}");
+    expect(await listBackups(backups)).toEqual([]);
+  });
+
+  it("never prunes a junk file, and never lets one evict a real backup (F7)", async () => {
+    const stamps = Array.from(
+      { length: 11 },
+      (_, i) => `2026-09-${String(i + 1).padStart(2, "0")}T00-00-00.000Z`,
+    );
+    await seed(stamps);
+    // Sorts after every real name lexically, so the old filename sort put it
+    // first and gave it the newest slot.
+    await fs.writeFile(path.join(backups, "settings.handwritten.json"), "JUNK");
+
+    const deleted = await pruneBackups(backups, 10);
+
+    expect(deleted.map((p) => path.basename(p))).toEqual([
+      "settings.2026-09-01T00-00-00.000Z.json",
+    ]);
+    const remaining = await listBackups(backups);
+    expect(remaining).toHaveLength(10);
+    expect(path.basename(remaining[0]?.path ?? "")).toBe("settings.2026-09-11T00-00-00.000Z.json");
+    // Untouched, but not ours to count or delete either.
+    expect(await fs.readFile(path.join(backups, "settings.handwritten.json"), "utf8")).toBe("JUNK");
   });
 
   it("lists nothing when the backup directory does not exist", async () => {

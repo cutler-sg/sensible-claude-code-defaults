@@ -23,6 +23,13 @@ const BACKUP_PREFIX = "settings.";
 const BACKUP_SUFFIX = ".json";
 const DEFAULT_BACKUP_RETENTION = 10;
 
+/**
+ * `settings.<ISO timestamp with colons as dashes>.json`, and nothing else. A
+ * hand-dropped `settings.handwritten.json` is not a backup: counting it would
+ * give it a retention slot and let it evict a real one (F7).
+ */
+const BACKUP_NAME = /^settings\.(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z)\.json$/;
+
 export interface WriteOptions {
   /** Absolute workspace folder paths; a write resolving into any of them is refused. */
   workspaceFolders: readonly string[];
@@ -146,14 +153,12 @@ export async function listBackups(backupsDir: string): Promise<BackupInfo[]> {
     throw error;
   }
 
-  return (
-    entries
-      .filter(isBackupName)
-      // The filename is an ISO timestamp at fixed width, so lexical order is
-      // chronological order — no stat() call per file.
-      .sort((a, b) => b.localeCompare(a))
-      .map((name) => ({ path: path.join(backupsDir, name), createdAt: parseBackupName(name) }))
-  );
+  return entries
+    .flatMap((name) => {
+      const createdAt = parseBackupName(name);
+      return createdAt ? [{ path: path.join(backupsDir, name), createdAt }] : [];
+    })
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
 /** FR-2.4: retain the `keep` most recent backups, delete the rest. */
@@ -286,17 +291,15 @@ function backupName(now: Date): string {
   return `${BACKUP_PREFIX}${now.toISOString().replaceAll(":", "-")}${BACKUP_SUFFIX}`;
 }
 
-function isBackupName(name: string): boolean {
-  return name.startsWith(BACKUP_PREFIX) && name.endsWith(BACKUP_SUFFIX);
-}
-
-function parseBackupName(name: string): Date {
+/** The `createdAt` a backup name encodes, or `undefined` if it is not one. */
+function parseBackupName(name: string): Date | undefined {
+  const match = BACKUP_NAME.exec(name);
+  if (!match) {
+    return undefined;
+  }
   // Colons were replaced with dashes to keep the name portable to Windows, and
   // only the time half was affected — put them back before parsing.
-  const stamp = name.slice(BACKUP_PREFIX.length, -BACKUP_SUFFIX.length);
-  const iso = stamp.replace(/T(\d{2})-(\d{2})-(\d{2})/, "T$1:$2:$3");
+  const iso = (match[1] as string).replace(/T(\d{2})-(\d{2})-(\d{2})/, "T$1:$2:$3");
   const parsed = new Date(iso);
-  // A hand-dropped file can match the naming pattern without being a timestamp;
-  // dating it to the epoch sorts it last rather than poisoning the list.
-  return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed;
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
