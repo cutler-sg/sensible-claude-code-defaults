@@ -42,6 +42,42 @@ A short checklist, to be added to the PR body rather than ticked by an agent:
 - [ ] Remote-SSH: same-side resolution.
 - [ ] Linux with libsecret absent: the degraded message is accurate and actionable.
 
+## What the matrix actually found
+
+Two real defects in the workspace guard, both live on `main` before this
+milestone, neither reachable from a Linux desktop. Recorded here because the
+point of Part A was to execute the assumptions rather than reason about them,
+and this is what execution returned.
+
+- **Symlinked workspace root (found by the macOS leg, reproduces on Linux).**
+  Every call site resolved the write *target* through `realpath` and re-checked
+  it, but compared it against workspace roots exactly as VS Code reported them.
+  macOS hands out `/var/...` for directories that really live at
+  `/private/var/...`, so a target inside the workspace compared clean against
+  the root's unresolved form and the write was allowed. Fixed by resolving both
+  sides in `assertOutsideWorkspace`. Nothing macOS-specific about it: the same
+  hole reproduces on Linux with a symlinked workspace directory, which is how it
+  was confirmed before the fix landed.
+
+- **8.3 short names (found by the Windows leg).** Node has two realpath
+  implementations that disagree: the async `fs.realpath` used by the write path
+  asks Windows and gets the long name, while `realpathSync` resolves symlinks
+  but leaves a short name untouched. The guard therefore compared
+  `C:\Users\runneradmin\...` against `C:\Users\RUNNER~1\...`, found no
+  overlap, and permitted a write into the workspace — confirmed by a probe that
+  showed the file landing there. Fixed with `realpathSync.native`. Short names
+  are enabled by default on the system volume of most Windows installs, which is
+  exactly where `%USERPROFILE%` and `~/.claude` live.
+
+Both now have regression tests that fail when the fix is reverted. The Windows
+one is `runIf(win32)`, because an 8.3 name cannot be manufactured elsewhere.
+
+Beyond those, the matrix surfaced a run of test-portability faults that were
+hiding platform behaviour rather than testing it — untyped symlinks (a file link
+to a directory resolves to nothing on Windows, so the guard tests passed there
+for want of a working link), POSIX path literals, a `chmod`-based EACCES setup
+that is a no-op on Windows, and hardcoded `/` separators.
+
 ## Decisions taken
 
 - **Q-AF** Shell out to `icacls` rather than adding a native ACL module. Native modules must match VS Code's Electron ABI (the stack rule forbids them), and a spawn of a built-in Windows tool has no ABI.
