@@ -2,10 +2,12 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "vitest";
+import { assertOutsideWorkspace } from "../../src/config/paths.js";
+import { writeRawAtomic } from "../../src/config/writer.js";
 
-// TEMPORARY diagnostic, removed once the Windows symlink semantics are known.
-describe.runIf(process.platform === "win32")("windows path diagnostics", () => {
-  it("prints what resolution actually does", async () => {
+// TEMPORARY diagnostic, removed once the Windows guard behaviour is known.
+describe.runIf(process.platform === "win32")("windows guard diagnostics", () => {
+  it("prints what the guard sees", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scd-diag-"));
     const workspace = path.join(dir, "proj");
     const real = path.join(workspace, ".claude");
@@ -13,24 +15,39 @@ describe.runIf(process.platform === "win32")("windows path diagnostics", () => {
     const home = path.join(dir, "home");
     await fs.mkdir(home);
     const link = path.join(home, ".claude");
-    let symlinkError = "none";
-    try {
-      await fs.symlink(real, link, "dir");
-    } catch (e) {
-      symlinkError = String((e as Error).message);
-    }
+    await fs.symlink(real, link, "dir");
     const target = path.join(link, "settings.json");
-    const out: Record<string, string> = {
-      tmpdir: os.tmpdir(),
-      dir,
-      workspace,
-      symlinkError,
-      workspaceRealpath: await fs.realpath(workspace).catch((e) => `ERR ${e.code}`),
-      linkRealpath: await fs.realpath(link).catch((e) => `ERR ${e.code}`),
-      targetRealpath: await fs.realpath(target).catch((e) => `ERR ${e.code}`),
-      parentRealpath: await fs.realpath(path.dirname(target)).catch((e) => `ERR ${e.code}`),
-      lstatIsSymlink: String((await fs.lstat(link)).isSymbolicLink()),
+
+    const resolvedParent = await fs.realpath(path.dirname(target));
+    const resolvedTarget = path.join(resolvedParent, path.basename(target));
+
+    const probe = (label: string, t: string, folders: string[]) => {
+      try {
+        assertOutsideWorkspace(t, folders);
+        return `${label}=ALLOWED`;
+      } catch (e) {
+        return `${label}=REFUSED(${(e as { code?: string }).code})`;
+      }
     };
-    console.log(`WINDIAG ${JSON.stringify(out)}`);
+
+    let writeOutcome = "resolved";
+    try {
+      await writeRawAtomic(target, "{}\n", { workspaceFolders: [workspace] });
+    } catch (e) {
+      writeOutcome = `threw ${(e as { code?: string }).code}`;
+    }
+
+    console.log(
+      `WINDIAG2 ${JSON.stringify({
+        workspace,
+        target,
+        resolvedTarget,
+        workspaceRealpath: await fs.realpath(workspace),
+        literal: probe("literal", target, [workspace]),
+        resolved: probe("resolved", resolvedTarget, [workspace]),
+        writeOutcome,
+        landedInWorkspace: await fs.readdir(real),
+      })}`,
+    );
   });
 });
