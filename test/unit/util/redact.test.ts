@@ -302,3 +302,58 @@ describe("redactValue over object keys", () => {
     expect(redactValue({ model: "sonnet", n: 1 }, LEAVES)).toEqual({ model: "sonnet", n: 1 });
   });
 });
+
+/**
+ * The registry matches exact substrings, so before this any re-encoding of the
+ * token walked straight past it — and `encodeURIComponent(token)` in a log line
+ * or a URL is trivially reversible by any reader of a public issue. The module
+ * header presents the registry as the half that carries the guarantee, so this
+ * has to be true rather than assumed.
+ */
+describe("re-encoded forms of a registered secret", () => {
+  /** Contains `+` and `/`, so its URL-encoded form actually differs. */
+  const WITH_SPECIALS = "Zq7X+k2M/v9T=b4Rn6Wc8Jd3Fp5Hs1Ly0Gu";
+
+  it("scrubs the URL-encoded form", () => {
+    register(WITH_SPECIALS);
+
+    const encoded = encodeURIComponent(WITH_SPECIALS);
+
+    expect(encoded).not.toBe(WITH_SPECIALS);
+    expect(redact(`GET /x?key=${encoded}`)).toBe(`GET /x?key=${REDACTED}`);
+  });
+
+  it("scrubs the base64 form", () => {
+    register(UNRECOGNISED);
+
+    const encoded = Buffer.from(UNRECOGNISED, "utf8").toString("base64");
+
+    expect(redact(`body: ${encoded}`)).toBe(`body: ${REDACTED}`);
+  });
+
+  it("still scrubs the raw value", () => {
+    register(WITH_SPECIALS);
+
+    expect(redact(`token=${WITH_SPECIALS}`)).toBe(`token=${REDACTED}`);
+  });
+
+  /**
+   * The derived forms are scrubbing aliases, not registrations in their own
+   * right: counting them would make `registeredCount` report a number that has
+   * nothing to do with how many secrets are known.
+   */
+  it("counts the secret once, however many forms it has", () => {
+    register(WITH_SPECIALS);
+
+    expect(registeredCount()).toBe(1);
+  });
+
+  it("forgets the derived forms too", () => {
+    register(UNRECOGNISED);
+    forgetAll();
+
+    const encoded = Buffer.from(UNRECOGNISED, "utf8").toString("base64");
+
+    expect(redact(encoded)).toBe(encoded);
+  });
+});

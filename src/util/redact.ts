@@ -6,9 +6,12 @@
  * the Bedrock API key format, so a pattern set can only ever recognise the
  * shapes we happen to know. What we always know is the exact value we are
  * holding — so the credential store registers it here on every change, and that
- * exact-value match is what actually carries the guarantee. The patterns are a
- * second net for values we never held: a key pasted into a settings file we are
- * quoting back, an `Authorization` header in a stack trace.
+ * exact-value match is what actually carries the guarantee — which is why a
+ * registered value is scrubbed in its re-encoded forms too, so that
+ * `encodeURIComponent(token)` in a log line does not walk past the one rule
+ * that is supposed to be absolute. The patterns are a second net for values we
+ * never held: a key pasted into a settings file we are quoting back, an
+ * `Authorization` header in a stack trace.
  *
  * Memory-only, cleared on deactivate. A persisted list of known secrets would be
  * a worse artefact than the leak it prevents.
@@ -23,7 +26,31 @@ export const REDACTED = "«redacted»";
  */
 const MIN_REGISTERED_LENGTH = 8;
 
+/**
+ * The distinct secrets we have been told about. Kept apart from `scrubbing`
+ * because a count of "how many secrets are known" is a different question from
+ * "how many strings do we replace", and conflating them would make
+ * `registeredCount` report a number driven by the encoding table.
+ */
 const registry = new Set<string>();
+
+/** Every string `redact` replaces: each registered secret and its encodings. */
+const scrubbing = new Set<string>();
+
+/**
+ * The re-encodings a secret survives on its way into a log line or a URL.
+ *
+ * Exact-substring matching means any of these walks past the registry
+ * untouched, and `encodeURIComponent(token)` in a public issue is reversible by
+ * anyone reading it — so a value that was registered has to be scrubbed in the
+ * forms it is actually likely to appear in, not only the one we were handed.
+ * Deliberately just these two: they are the encodings this codebase and the
+ * HTTP layer beneath it actually produce. Anything more speculative belongs in
+ * the pattern net, where a false positive costs a reader nothing.
+ */
+function formsOf(secret: string): string[] {
+  return [secret, encodeURIComponent(secret), Buffer.from(secret, "utf8").toString("base64")];
+}
 
 /**
  * Patterns for secrets we never held. Deliberately narrow: a pattern that is too
@@ -55,14 +82,16 @@ export function register(secret: string | undefined): void {
   const trimmed = secret.trim();
   if (trimmed.length < MIN_REGISTERED_LENGTH) return;
   registry.add(trimmed);
+  for (const form of formsOf(trimmed)) scrubbing.add(form);
 }
 
 /** Drop every registered value. Called on deactivate. */
 export function forgetAll(): void {
   registry.clear();
+  scrubbing.clear();
 }
 
-/** How many values are registered. For tests and diagnostics counts only. */
+/** How many distinct secrets are registered. For tests and diagnostics only. */
 export function registeredCount(): number {
   return registry.size;
 }
@@ -71,8 +100,9 @@ export function redact(message: string): string {
   let out = message;
 
   // Longest first: a shorter secret that is a substring of a longer one must not
-  // cut it in half and leave the remainder readable.
-  for (const secret of [...registry].sort((a, b) => b.length - a.length)) {
+  // cut it in half and leave the remainder readable. Encoded forms are longer
+  // than the value they encode, so they are tried before it either way.
+  for (const secret of [...scrubbing].sort((a, b) => b.length - a.length)) {
     if (out.includes(secret)) out = out.replaceAll(secret, REDACTED);
   }
 
