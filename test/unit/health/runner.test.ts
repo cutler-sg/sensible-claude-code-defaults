@@ -128,6 +128,23 @@ describe("runAll", () => {
     expect(crashed?.fix).toEqual({ kind: "none" });
   });
 
+  it("describes a non-Error thrown out of notice synthesis", async () => {
+    const ctx = makeCtx({
+      manifest: {
+        ...BUNDLED_MANIFEST,
+        get notices(): never {
+          throw "just a string";
+        },
+      } as unknown as Manifest,
+    });
+
+    const result = await runAll([stub("config.exists", "pass")], ctx, AT);
+
+    expect(result.results.find((entry) => entry.label === LABELS.crashed)?.detail).toBe(
+      "just a string",
+    );
+  });
+
   it("runs the real catalogue on a healthy context with no errors", async () => {
     const result = await runAll(ALL_CHECKS, makeCtx(), AT);
     expect(result.counts.error).toBe(0);

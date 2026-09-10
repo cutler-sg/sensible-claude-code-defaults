@@ -182,6 +182,10 @@ describe("formatValue", () => {
     expect(formatValue({})).toBe("(none)");
     expect(formatValue(undefined)).toBe("(not set)");
     expect(formatValue(true)).toBe("true");
+    // An empty string is `""` rather than nothing at all, so a value that is
+    // present but blank cannot be misread as unset.
+    expect(formatValue("")).toBe('""');
+    expect(formatValue(null)).toBe("null");
   });
 });
 
