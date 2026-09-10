@@ -15,16 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import {
-  EMPTY_SNAPSHOT,
-  type JsonValue,
-  MANAGED_KEYS,
-  type ManagedKey,
-  type Snapshot,
-  type SnapshotStore,
-} from "./types.js";
-
-const MANAGED_KEY_SET: ReadonlySet<string> = new Set<string>(MANAGED_KEYS);
+import { EMPTY_SNAPSHOT, type JsonValue, type Snapshot, type SnapshotStore } from "./types.js";
 
 /** A fresh empty snapshot. Never hand out `EMPTY_SNAPSHOT` itself. */
 function emptySnapshot(): Snapshot {
@@ -39,12 +30,53 @@ function isEnoent(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+/** Anything `JSON.stringify` can write and `JSON.parse` can read back. */
+function isJsonValue(value: unknown, seen: Set<object> = new Set()): value is JsonValue {
+  if (value === null) {
+    return true;
+  }
+  const type = typeof value;
+  if (type === "string" || type === "boolean") {
+    return true;
+  }
+  if (type === "number") {
+    // NaN and ±Infinity stringify to `null`, so they are not round-trippable.
+    return Number.isFinite(value);
+  }
+  if (type !== "object") {
+    return false;
+  }
+  // A cycle would make `structuredClone` succeed and `JSON.stringify` throw,
+  // which is the worst possible split (F17).
+  const object = value as object;
+  if (seen.has(object)) {
+    return false;
+  }
+  seen.add(object);
+  try {
+    if (Array.isArray(object)) {
+      return object.every((element) => isJsonValue(element, seen));
+    }
+    if (Object.getPrototypeOf(object) !== Object.prototype) {
+      return false;
+    }
+    return Object.values(object).every((element) => isJsonValue(element, seen));
+  } finally {
+    seen.delete(object);
+  }
+}
+
 /**
  * Validate an untrusted value into a snapshot, or `undefined` if it is not one.
  *
- * Keys no longer in `MANAGED_KEYS` are dropped rather than rejected: a future
- * version may stop managing a key, and an old snapshot must still load. Values
- * are deep-cloned so the caller cannot reach back into the source object.
+ * Keys no longer in `MANAGED_KEYS` are kept, not dropped: a future version may
+ * stop managing a key, and forgetting on load then writing back on save turns
+ * "we still own this" into "nobody wrote this" — the record of a value we
+ * placed in the user's file, gone (F13). Unmanaged entries are inert, since
+ * `merge` only consults keys present in `desired`.
+ *
+ * A value that is not JSON invalidates the whole snapshot rather than being
+ * cast through: the file store quarantines it, the memento store starts empty.
  */
 function parseSnapshot(candidate: unknown): Snapshot | undefined {
   if (!isPlainObject(candidate)) {
@@ -56,13 +88,13 @@ function parseSnapshot(candidate: unknown): Snapshot | undefined {
   if (!isPlainObject(candidate.values)) {
     return undefined;
   }
-
-  const values: Snapshot["values"] = {};
-  for (const [key, value] of Object.entries(candidate.values)) {
-    if (MANAGED_KEY_SET.has(key)) {
-      values[key as ManagedKey] = structuredClone(value) as JsonValue;
-    }
+  if (!isJsonValue(candidate.values)) {
+    return undefined;
   }
+
+  // The cast is the passthrough: entries whose key is not a `ManagedKey` do not
+  // fit `Snapshot["values"]`, and carrying them is the point.
+  const values = structuredClone(candidate.values) as Snapshot["values"];
 
   const snapshot: Snapshot = { schemaVersion: 1, values };
   if (typeof candidate.manifestRevision === "string") {

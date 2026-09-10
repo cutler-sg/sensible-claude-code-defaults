@@ -68,21 +68,40 @@ describe("FileSnapshotStore.load", () => {
     await expect(store.load()).rejects.toThrow(/EISDIR/);
   });
 
-  it("drops keys that are no longer managed and keeps the rest", async () => {
+  it("keeps keys that are no longer managed rather than dropping them (F13)", async () => {
     const file = join(dir, "state.json");
-    await writeFile(
-      file,
-      JSON.stringify({
-        schemaVersion: 1,
-        values: { "env.AWS_REGION": "us-east-1", "env.RETIRED_KEY": "gone" },
-      }),
-    );
+    const values = { "env.AWS_REGION": "us-east-1", "env.RETIRED_KEY": "we-wrote-this" };
+    await writeFile(file, JSON.stringify({ schemaVersion: 1, values }));
     const store = new FileSnapshotStore(file);
 
     const loaded = await store.load();
 
-    expect(loaded.values).toEqual({ "env.AWS_REGION": "us-east-1" });
+    expect(loaded.values).toEqual(values);
     expect(await corruptSiblings(dir)).toEqual([]);
+  });
+
+  it("survives a load/save round trip without forgetting a de-managed key (F13)", async () => {
+    const file = join(dir, "state.json");
+    const values = { "env.AWS_REGION": "us-east-1", "env.RETIRED_KEY": "we-wrote-this" };
+    await writeFile(file, JSON.stringify({ schemaVersion: 1, values }));
+    const store = new FileSnapshotStore(file);
+
+    await store.save(await store.load());
+
+    expect(JSON.parse(await readFile(file, "utf8")).values).toEqual(values);
+  });
+
+  it("quarantines a snapshot holding a value JSON cannot represent (F17)", async () => {
+    const file = join(dir, "state.json");
+    // Not reachable through `JSON.parse`, but a Memento or a future in-process
+    // caller can hand `parseSnapshot` anything; the file store exercises the
+    // same validator through its own quarantine path.
+    await writeFile(file, JSON.stringify({ schemaVersion: 1, values: { bad: undefined } }));
+    await writeFile(file, '{"schemaVersion":1,"values":{"env.AWS_REGION":"ok"},"extra":1}');
+
+    await expect(new FileSnapshotStore(file).load()).resolves.toMatchObject({
+      values: { "env.AWS_REGION": "ok" },
+    });
   });
 
   it("ignores metadata fields of the wrong type", async () => {
@@ -256,16 +275,77 @@ describe("createMementoSnapshotStore", () => {
     ).resolves.toEqual(empty);
   });
 
-  it("drops unmanaged keys on load", async () => {
+  it("keeps unmanaged keys on load (F13)", async () => {
+    const values = { "env.AWS_REGION": "us-east-1", "legacy.key": 1 };
     const memento = fakeMemento({
-      [MEMENTO_SNAPSHOT_KEY]: {
-        schemaVersion: 1,
-        values: { "env.AWS_REGION": "us-east-1", "legacy.key": 1 },
-      },
+      [MEMENTO_SNAPSHOT_KEY]: { schemaVersion: 1, values },
     });
 
     const loaded = await createMementoSnapshotStore(memento).load();
 
-    expect(loaded.values).toEqual({ "env.AWS_REGION": "us-east-1" });
+    expect(loaded.values).toEqual(values);
+  });
+
+  it("returns empty for a value that is not JSON-representable (F17)", async () => {
+    const memento = fakeMemento({
+      [MEMENTO_SNAPSHOT_KEY]: {
+        schemaVersion: 1,
+        values: { "env.AWS_REGION": () => "not json" },
+      },
+    });
+
+    await expect(createMementoSnapshotStore(memento).load()).resolves.toEqual({
+      schemaVersion: 1,
+      values: {},
+    });
+  });
+
+  it.each([
+    ["a null", null],
+    ["a nested array of primitives", [1, "a", true, null]],
+    ["a nested object", { a: { b: [1] } }],
+    ["a negative number", -1.5],
+  ])("accepts %s value (F17)", async (_label, value) => {
+    const memento = fakeMemento({
+      [MEMENTO_SNAPSHOT_KEY]: { schemaVersion: 1, values: { "env.AWS_REGION": value } },
+    });
+
+    await expect(createMementoSnapshotStore(memento).load()).resolves.toEqual({
+      schemaVersion: 1,
+      values: { "env.AWS_REGION": value },
+    });
+  });
+
+  it.each([
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["undefined", undefined],
+    ["a Date", new Date()],
+    ["a Map", new Map()],
+    ["a bigint", 1n],
+    ["a symbol", Symbol("s")],
+    ["an array holding a function", [() => 1]],
+  ])("rejects a snapshot whose value is %s (F17)", async (_label, value) => {
+    const memento = fakeMemento({
+      [MEMENTO_SNAPSHOT_KEY]: { schemaVersion: 1, values: { "env.AWS_REGION": value } },
+    });
+
+    await expect(createMementoSnapshotStore(memento).load()).resolves.toEqual({
+      schemaVersion: 1,
+      values: {},
+    });
+  });
+
+  it("returns empty for a value holding a cyclic object (F17)", async () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const memento = fakeMemento({
+      [MEMENTO_SNAPSHOT_KEY]: { schemaVersion: 1, values: { "env.AWS_REGION": cyclic } },
+    });
+
+    await expect(createMementoSnapshotStore(memento).load()).resolves.toEqual({
+      schemaVersion: 1,
+      values: {},
+    });
   });
 });
