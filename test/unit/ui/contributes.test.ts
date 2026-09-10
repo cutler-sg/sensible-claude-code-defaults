@@ -116,6 +116,34 @@ describe("contributed configuration", () => {
     ).toBe(DEFAULT_MANIFEST_URL);
   });
 
+  /**
+   * F13. The manifest URL is the update channel's address, and a `window`-scoped
+   * setting is settable from a repository's own `.vscode/settings.json` — so
+   * cloning a repository would be enough to point this window's defaults at a
+   * server of the repository author's choosing, walking around every
+   * transport-layer defence in `fetch.ts` at the configuration layer.
+   *
+   * `application` scope is the fix: the setting exists only in user settings,
+   * and a workspace cannot express it at all.
+   */
+  it("keeps the update channel's address out of workspace settings (F13)", () => {
+    expect(
+      manifest.contributes.configuration.properties["sensibleDefaults.manifestUrl"].scope,
+    ).toBe("application");
+  });
+
+  /**
+   * Belt to that braces, and the part that survives a future scope change: an
+   * untrusted workspace's value for this setting is ignored outright. The
+   * extension declares `untrustedWorkspaces.supported`, so without this it runs
+   * with full capability in a folder it has not vouched for.
+   */
+  it("restricts the manifest URL in an untrusted workspace (F13)", () => {
+    expect(manifest.capabilities.untrustedWorkspaces.restrictedConfigurations).toContain(
+      "sensibleDefaults.manifestUrl",
+    );
+  });
+
   it("fetches the manifest over https and nowhere else (§13 privacy)", () => {
     const url =
       manifest.contributes.configuration.properties["sensibleDefaults.manifestUrl"].default;
