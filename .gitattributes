@@ -1,0 +1,14 @@
+# Check every text file out with LF on every platform.
+#
+# Without this, a Windows runner checks the tree out with CRLF and `biome check`
+# fails the whole leg on line endings alone — before it has run a single test
+# that says anything about Windows. The formatter's `lineEnding` is `lf`, so the
+# working tree has to agree with it everywhere, not just on the boxes where the
+# default already does.
+* text=auto eol=lf
+
+# Binaries must never be touched by the text filter.
+*.png binary
+*.jpg binary
+*.ico binary
+*.vsix binary
