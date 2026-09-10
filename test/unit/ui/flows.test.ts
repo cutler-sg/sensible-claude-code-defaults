@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApplySession, ConfigEnv, JsonObject, Settings } from "../../../src/config/index.js";
 import { createSession, MemorySnapshotStore, settingsPath } from "../../../src/config/index.js";
+import type { ConnectionResult } from "../../../src/credential/types.js";
 import { TOKEN_ENV_VAR } from "../../../src/credential/types.js";
+import * as validate from "../../../src/credential/validate.js";
 import { TOKEN_SETTINGS_KEY } from "../../../src/credential/writeThrough.js";
 import { LABELS } from "../../../src/health/labels.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
@@ -828,6 +830,31 @@ describe("testConnection", () => {
     // `announce`'s switch returns `Promise<void>`, so a variant it has not been
     // taught about falls through silently rather than failing to compile.
     expect(state.error[0]?.message).toBe(LABELS["cred.valid"].insufficientPermissions);
+  });
+
+  /**
+   * The fallback exists because `announce`'s switch returns `Promise<void>`,
+   * so a `ConnectionResult` variant nobody taught it about compiles cleanly and
+   * shows the user nothing at all after a test they ran on purpose. It is
+   * unreachable through the real classifier by construction, so the only
+   * honest way to exercise it is to hand the flow a variant from the future.
+   */
+  it("still says something when the classifier returns a variant it doesn't know", async () => {
+    const fromTheFuture = { kind: "quota-exceeded", status: 429 } as unknown as ConnectionResult;
+    const base = deps();
+    const stubbed: FlowDeps = {
+      ...base,
+      credential: {
+        ...base.credential,
+        fetch: () => Promise.reject(new Error("the classifier is stubbed out")),
+      },
+    };
+    vi.spyOn(validate, "testConnection").mockResolvedValueOnce(fromTheFuture);
+
+    await flows.testConnection(stubbed);
+
+    expect(state.error[0]?.message).toBe(LABELS["cred.valid"].unrecognised);
+    expect(credential.recorded[0]).toBe(fromTheFuture);
   });
 
   it("says so when there is no key to test", async () => {
