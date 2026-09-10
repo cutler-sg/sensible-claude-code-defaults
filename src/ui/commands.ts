@@ -130,9 +130,23 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
   return vscode.Disposable.from(...COMMAND_IDS.map(register));
 }
 
-/** FR-6.1: preview, then write. A stale plan is recomputed, never forced. */
+/**
+ * FR-6.1: preview, then write. A stale plan is recomputed, never forced.
+ *
+ * The manifest is captured once, at the top, and threaded through (F7). It used
+ * to be read twice — for `desiredFromManifest` here, and again for the revision
+ * stamp after the QuickPick resolved — and a QuickPick is modal to the user,
+ * not to the event loop, so an hourly refresh lands between the two reads
+ * happily. The file then held one revision's values while the snapshot recorded
+ * another's, and `config.stale` compared the snapshot against the manifest in
+ * force, found them equal, and reported the user up to date permanently.
+ *
+ * A retry re-reads deliberately: it recomputes the plan the user must accept
+ * again, so it recomputes what that plan is against too.
+ */
 async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> {
-  const desired = desiredFromManifest(deps.manifest());
+  const manifest = deps.manifest();
+  const desired = desiredFromManifest(manifest);
   const planned = await plan(deps.env, desired);
 
   if (planned.kind === "blocked") {
@@ -171,7 +185,7 @@ async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> 
     return;
   }
 
-  const result = await commitPlan(deps, planned);
+  const result = await commitPlan(deps, planned, { manifest });
   if (result.reason === "stale") {
     await warnStale();
     // One retry: the preview the user accepted described a document that no
@@ -274,7 +288,8 @@ async function resetKey(deps: CommandDeps, arg: unknown, attempt: number): Promi
     deps.log.warn("resetKey called without a drifted key; ignoring.");
     return;
   }
-  const desired = desiredFromManifest(deps.manifest());
+  const manifest = deps.manifest();
+  const desired = desiredFromManifest(manifest);
   if (!(key in desired)) {
     // A managed key the manifest says nothing about: the reset would plan no
     // change at all, and clicking a button that does nothing reads as a bug.
@@ -286,6 +301,7 @@ async function resetKey(deps: CommandDeps, arg: unknown, attempt: number): Promi
   const planned = await resetKeyPlan(deps.env, desired, key);
   await commitSingle(deps, planned, attempt, (next) => resetKey(deps, key, next), {
     alreadyThere: `Your ${keyDisplayName(key)} already matches the recommended value.`,
+    manifest,
   });
 }
 
@@ -315,10 +331,12 @@ async function applyRegion(deps: CommandDeps, region: string, attempt: number): 
   // A region the user just chose is theirs by definition, so it goes through
   // the ownership-transferring reset path rather than a plain apply, which
   // would report the hand-picked value as drift forever.
+  const manifest = deps.manifest();
   const desired: Desired = { "env.AWS_REGION": region };
   const planned = await resetKeyPlan(deps.env, desired, "env.AWS_REGION");
   await commitSingle(deps, planned, attempt, (next) => applyRegion(deps, region, next), {
     alreadyThere: `Your ${keyDisplayName("env.AWS_REGION")} is already ${region}.`,
+    manifest,
   });
 }
 
@@ -364,7 +382,7 @@ async function commitSingle(
   planned: PlanResult,
   attempt: number,
   retry: (attempt: number) => Promise<void>,
-  say: { alreadyThere: string },
+  say: { alreadyThere: string; manifest: Manifest },
 ): Promise<void> {
   if (planned.kind === "blocked") {
     await reportBlocked(deps, planned.error);
@@ -382,7 +400,7 @@ async function commitSingle(
   // `forceBackup`: this write overwrites a value the *user* set, so the
   // session's one backup — which may already be spent on a routine apply — is
   // not enough to make it undoable (FR-2.4, hard rule 3).
-  const result = await commitPlan(deps, planned, { forceBackup: true });
+  const result = await commitPlan(deps, planned, { forceBackup: true, manifest: say.manifest });
   if (result.reason === "stale") {
     await warnStale();
     if (attempt < MAX_STALE_RETRIES) await retry(attempt + 1);
@@ -409,17 +427,23 @@ async function confirmReplace(planned: ReadyPlan): Promise<boolean> {
   return choice === REPLACE;
 }
 
+/**
+ * `meta.manifest` is the one the plan was built from, passed in rather than
+ * re-read (F7): the stamp has to name the revision whose values are being
+ * written, and the user's decision took long enough for a refresh to land.
+ */
 async function commitPlan(
   deps: CommandDeps,
   planned: ReadyPlan,
-  meta?: { forceBackup: true },
+  meta: { manifest: Manifest; forceBackup?: true },
 ): Promise<CommitResult> {
+  const { manifest, ...rest } = meta;
   // Suppression opens *before* the write, not after: the rename lands during
   // the call, so a window opened afterwards is already too late for the event.
   deps.markWrite();
   const result = await commit(deps.env, deps.session, planned, {
-    manifestRevision: deps.manifest().revision,
-    ...meta,
+    manifestRevision: manifest.revision,
+    ...rest,
   });
   if (result.written) {
     deps.log.info(`Wrote ${result.changes.length} change(s) to settings.json.`);

@@ -721,6 +721,74 @@ describe("reading the manifest afresh on every invocation", () => {
     expect(await readEnv("AWS_REGION")).toBe("ap-southeast-1");
   });
 
+  /**
+   * F7. `desiredFromManifest(deps.manifest())` was read at the top and
+   * `deps.manifest().revision` read again after the QuickPick resolved. The
+   * QuickPick is modal to the *user*, not to the event loop, so an hourly
+   * refresh lands between the two reads perfectly happily — and the file then
+   * holds one revision's values while the snapshot records another's.
+   *
+   * The consequence is permanent and silent: `config.stale` compares the
+   * snapshot's revision against the manifest in force, sees them equal, and
+   * reports the user as up to date forever, while the values on disk are the
+   * ones from before the refresh.
+   */
+  it("stamps the revision whose values it wrote, not the one that arrived mid-preview (F7)", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    currentManifest = {
+      ...BUNDLED_MANIFEST,
+      revision: "remote-1",
+      defaults: {
+        ...BUNDLED_MANIFEST.defaults,
+        env: { ...BUNDLED_MANIFEST.defaults.env, ANTHROPIC_DEFAULT_OPUS_MODEL: "opus-from-1" },
+      },
+    };
+    // A refresh lands while the preview is on screen.
+    state.quickPickAnswer = (call) => {
+      currentManifest = {
+        ...BUNDLED_MANIFEST,
+        revision: "remote-2",
+        defaults: {
+          ...BUNDLED_MANIFEST.defaults,
+          env: { ...BUNDLED_MANIFEST.defaults.env, ANTHROPIC_DEFAULT_OPUS_MODEL: "opus-from-2" },
+        },
+      };
+      return call.items.find((item) => labelOf(item).startsWith("Apply all"));
+    };
+
+    await run("sensibleDefaults.applyDefaults");
+
+    // The values written are revision 1's — they are what the user was shown
+    // and accepted — so the stamp must be revision 1's too.
+    expect(await readEnv("ANTHROPIC_DEFAULT_OPUS_MODEL")).toBe("opus-from-1");
+    expect((await env.snapshotStore.load()).manifestRevision).toBe("remote-1");
+  });
+
+  it("shows the user the changes it then writes, whatever arrives mid-preview (F7)", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    currentManifest = {
+      ...BUNDLED_MANIFEST,
+      revision: "remote-1",
+      defaults: {
+        ...BUNDLED_MANIFEST.defaults,
+        permissions: { deny: ["Read(./.env)"] },
+      },
+    };
+    state.quickPickAnswer = (call) => {
+      currentManifest = {
+        ...BUNDLED_MANIFEST,
+        revision: "remote-2",
+        defaults: { ...BUNDLED_MANIFEST.defaults, permissions: { deny: [] } },
+      };
+      return call.items.find((item) => labelOf(item).startsWith("Apply all"));
+    };
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toEqual(["Read(./.env)"]);
+  });
+
   it("stamps the snapshot with the revision in force now", async () => {
     await seed({ env: { AWS_REGION: "eu-west-1" } });
     currentManifest = { ...BUNDLED_MANIFEST, revision: "remote-2" };
