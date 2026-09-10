@@ -50,7 +50,46 @@
       {
         "command": "sensibleDefaults.runHealthCheck",
         "title": "Check Configuration",
+        "category": "Sensible Defaults",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sensibleDefaults.applyDefaults",
+        "title": "Apply Recommended Configuration",
+        "category": "Sensible Defaults",
+        "icon": "$(wand)"
+      },
+      {
+        "command": "sensibleDefaults.openSettings",
+        "title": "Open settings.json",
         "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.restoreBackup",
+        "title": "Restore Previous Configuration",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.selectRegion",
+        "title": "Change AWS Region",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.repairPermissions",
+        "title": "Repair File Permissions",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.resetKey",
+        "title": "Reset to Recommended",
+        "category": "Sensible Defaults",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "sensibleDefaults.runFix",
+        "title": "Fix This",
+        "category": "Sensible Defaults",
+        "icon": "$(wrench)"
       }
     ],
     "configuration": {
@@ -72,7 +111,50 @@
           "description": "Run configuration health checks when the window finishes starting up."
         }
       }
-    }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "sensibleDefaults.runHealthCheck",
+          "when": "view == sensibleDefaults.health",
+          "group": "navigation"
+        },
+        {
+          "command": "sensibleDefaults.applyDefaults",
+          "when": "view == sensibleDefaults.health",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sensibleDefaults.runFix",
+          "when": "view == sensibleDefaults.health && viewItem == check:command",
+          "group": "inline"
+        },
+        {
+          "command": "sensibleDefaults.resetKey",
+          "when": "view == sensibleDefaults.health && viewItem == drift",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "sensibleDefaults.runFix",
+          "when": "false"
+        },
+        {
+          "command": "sensibleDefaults.resetKey",
+          "when": "false"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sensibleDefaults.health",
+        "contents": "Checking your Claude Code configuration…",
+        "when": "sensibleDefaults.hasReport == false"
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.js",
@@ -82,15 +164,20 @@
     "lint:fix": "biome check . --write",
     "test": "vitest run",
     "package": "node esbuild.js --production && vsce package --no-dependencies",
-    "vscode:prepublish": "node esbuild.js --production"
+    "vscode:prepublish": "node esbuild.js --production",
+    "test:integration": "node esbuild.js && esbuild test/integration-vscode/*.spec.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:mocha --outdir=out/test/integration-vscode && vscode-test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.14",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^22.19.0",
     "@types/vscode": "~1.98.0",
     "@vitest/coverage-v8": "^3.2.4",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.0",
     "esbuild": "^0.25.12",
+    "mocha": "^12.0.0",
     "ovsx": "^0.10.7",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
