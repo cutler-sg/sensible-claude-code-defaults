@@ -1,0 +1,186 @@
+/**
+ * Persistence for the last-applied snapshot (plan Q-D).
+ *
+ * The snapshot is the extension's Terraform state: it records exactly what we
+ * last wrote to `settings.json`, so the merge engine can tell "we wrote this"
+ * from "the user (or Claude Code) wrote this". Losing it is recoverable — every
+ * managed key then reads as unowned and is preserved — but corrupting it
+ * silently is not, so a file we cannot read is renamed aside rather than
+ * deleted.
+ *
+ * Invariant: nothing here imports `vscode`. The Memento-backed store is
+ * structurally typed so it stays on this side of the line.
+ */
+
+import { randomUUID } from "node:crypto";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { dirname } from "node:path";
+import {
+  EMPTY_SNAPSHOT,
+  type JsonValue,
+  MANAGED_KEYS,
+  type ManagedKey,
+  type Snapshot,
+  type SnapshotStore,
+} from "./types.js";
+
+const MANAGED_KEY_SET: ReadonlySet<string> = new Set<string>(MANAGED_KEYS);
+
+/** A fresh empty snapshot. Never hand out `EMPTY_SNAPSHOT` itself. */
+function emptySnapshot(): Snapshot {
+  return structuredClone(EMPTY_SNAPSHOT);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEnoent(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+/**
+ * Validate an untrusted value into a snapshot, or `undefined` if it is not one.
+ *
+ * Keys no longer in `MANAGED_KEYS` are dropped rather than rejected: a future
+ * version may stop managing a key, and an old snapshot must still load. Values
+ * are deep-cloned so the caller cannot reach back into the source object.
+ */
+function parseSnapshot(candidate: unknown): Snapshot | undefined {
+  if (!isPlainObject(candidate)) {
+    return undefined;
+  }
+  if (candidate.schemaVersion !== 1) {
+    return undefined;
+  }
+  if (!isPlainObject(candidate.values)) {
+    return undefined;
+  }
+
+  const values: Snapshot["values"] = {};
+  for (const [key, value] of Object.entries(candidate.values)) {
+    if (MANAGED_KEY_SET.has(key)) {
+      values[key as ManagedKey] = structuredClone(value) as JsonValue;
+    }
+  }
+
+  const snapshot: Snapshot = { schemaVersion: 1, values };
+  if (typeof candidate.manifestRevision === "string") {
+    snapshot.manifestRevision = candidate.manifestRevision;
+  }
+  if (typeof candidate.appliedAt === "string") {
+    snapshot.appliedAt = candidate.appliedAt;
+  }
+  return snapshot;
+}
+
+/**
+ * Snapshot on disk, next to the `settings.json` it describes.
+ *
+ * Mode `0600` throughout: the snapshot records the value we wrote to
+ * `env.AWS_BEARER_TOKEN_BEDROCK`, so it is as sensitive as the settings file.
+ */
+export class FileSnapshotStore implements SnapshotStore {
+  constructor(private readonly file: string) {}
+
+  async load(): Promise<Snapshot> {
+    let raw: string;
+    try {
+      raw = await readFile(this.file, "utf8");
+    } catch (error) {
+      if (isEnoent(error)) {
+        return emptySnapshot();
+      }
+      throw error;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
+    }
+
+    const snapshot = parseSnapshot(parsed);
+    if (snapshot !== undefined) {
+      return snapshot;
+    }
+
+    await this.quarantine();
+    return emptySnapshot();
+  }
+
+  async save(snapshot: Snapshot): Promise<void> {
+    await mkdir(dirname(this.file), { recursive: true });
+    const body = `${JSON.stringify(snapshot, null, 2)}\n`;
+    const temp = `${this.file}.${randomUUID()}.tmp`;
+    try {
+      const handle = await open(temp, "wx", 0o600);
+      try {
+        await handle.writeFile(body, "utf8");
+        await handle.chmod(0o600);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await rename(temp, this.file);
+    } catch (error) {
+      await rm(temp, { force: true });
+      throw error;
+    }
+  }
+
+  /** Move an unreadable snapshot aside so a support request can still see it. */
+  private async quarantine(): Promise<void> {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    try {
+      await rename(this.file, `${this.file}.corrupt-${stamp}`);
+    } catch {
+      // The snapshot is advisory; failing to set it aside must not fail a load.
+    }
+  }
+}
+
+/** In-memory store for testing modules that take a `SnapshotStore`. */
+export class MemorySnapshotStore implements SnapshotStore {
+  private snapshot: Snapshot;
+
+  constructor(initial: Snapshot = EMPTY_SNAPSHOT) {
+    this.snapshot = structuredClone(initial);
+  }
+
+  async load(): Promise<Snapshot> {
+    return structuredClone(this.snapshot);
+  }
+
+  async save(snapshot: Snapshot): Promise<void> {
+    this.snapshot = structuredClone(snapshot);
+  }
+}
+
+/** The slice of `vscode.Memento` we need, declared structurally. */
+export interface SnapshotMemento {
+  get<T>(key: string): T | undefined;
+  update(key: string, value: unknown): PromiseLike<void>;
+}
+
+export const MEMENTO_SNAPSHOT_KEY = "sensibleDefaults.snapshot";
+
+/**
+ * Snapshot in the editor's `globalState`. Kept as the alternative if plan Q-D
+ * is overruled; note that it is per-editor-install, so two editors on one
+ * machine each see the other's applies as drift.
+ */
+export function createMementoSnapshotStore(
+  memento: SnapshotMemento,
+  key: string = MEMENTO_SNAPSHOT_KEY,
+): SnapshotStore {
+  return {
+    async load(): Promise<Snapshot> {
+      return parseSnapshot(memento.get<unknown>(key)) ?? emptySnapshot();
+    },
+    async save(snapshot: Snapshot): Promise<void> {
+      await memento.update(key, structuredClone(snapshot));
+    },
+  };
+}
