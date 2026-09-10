@@ -364,3 +364,103 @@ describe("backups (FR-2.4, plan Q-H)", () => {
     );
   }
 });
+
+describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
+  it("refuses when the claude dir is a symlink into a workspace", async () => {
+    const workspace = path.join(dir, "proj");
+    const real = path.join(workspace, ".claude");
+    await fs.mkdir(real, { recursive: true });
+    const home = path.join(dir, "home");
+    await fs.mkdir(home);
+    const link = path.join(home, ".claude");
+    await fs.symlink(real, link);
+
+    await expect(
+      writeRawAtomic(path.join(link, "settings.json"), '{"pwned":true}\n', {
+        workspaceFolders: [workspace],
+      }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+    expect(await fs.readdir(real)).toEqual([]);
+  });
+
+  it("refuses when settings.json itself is a symlink into a workspace", async () => {
+    const workspace = path.join(dir, "proj");
+    await fs.mkdir(workspace, { recursive: true });
+    const target = path.join(workspace, "settings.json");
+    await fs.writeFile(target, "{}\n");
+    await fs.symlink(target, file);
+
+    await expect(
+      writeRawAtomic(file, '{"pwned":true}\n', { workspaceFolders: [workspace] }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+    expect(await fs.readFile(target, "utf8")).toBe("{}\n");
+    expect(await tempFiles(workspace)).toEqual([]);
+  });
+
+  it("refuses to back up through a symlinked backups dir", async () => {
+    await fs.writeFile(file, "{}\n");
+    const workspace = path.join(dir, "proj");
+    await fs.mkdir(workspace, { recursive: true });
+    const link = path.join(dir, "linked-backups");
+    await fs.symlink(workspace, link);
+
+    await expect(
+      backupSettings(file, link, new Date(), { workspaceFolders: [workspace] }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+    expect(await fs.readdir(workspace)).toEqual([]);
+  });
+
+  it("refuses to back up a source file that resolves into a workspace", async () => {
+    const workspace = path.join(dir, "proj");
+    await fs.mkdir(workspace, { recursive: true });
+    const target = path.join(workspace, "settings.json");
+    await fs.writeFile(target, "{}\n");
+    await fs.symlink(target, file);
+
+    await expect(
+      backupSettings(file, backups, new Date(), { workspaceFolders: [workspace] }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+  });
+
+  it("refuses to restore into a workspace reached through a symlink", async () => {
+    await fs.writeFile(file, '{"orig":true}\n');
+    const info = await backupSettings(file, backups);
+    const workspace = path.join(dir, "proj");
+    await fs.mkdir(workspace, { recursive: true });
+    const victim = path.join(workspace, "settings.json");
+    await fs.writeFile(victim, "{}\n");
+    const link = path.join(dir, "linked-settings.json");
+    await fs.symlink(victim, link);
+
+    await expect(
+      restoreBackup(info?.path ?? "", link, { workspaceFolders: [workspace] }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+    expect(await fs.readFile(victim, "utf8")).toBe("{}\n");
+  });
+
+  it("refuses to read a backup that resolves into a workspace", async () => {
+    const workspace = path.join(dir, "proj");
+    await fs.mkdir(workspace, { recursive: true });
+    const planted = path.join(workspace, "settings.2026-09-10T00-00-00.000Z.json");
+    await fs.writeFile(planted, '{"planted":true}\n');
+    const link = path.join(dir, "linked-backup.json");
+    await fs.symlink(planted, link);
+
+    await expect(
+      restoreBackup(link, file, { workspaceFolders: [workspace] }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+  });
+
+  it("still allows a symlink that points outside every workspace folder", async () => {
+    const workspace = path.join(dir, "proj");
+    await fs.mkdir(workspace, { recursive: true });
+    const real = path.join(dir, "dotfiles", "settings.json");
+    await fs.mkdir(path.dirname(real), { recursive: true });
+    await fs.writeFile(real, "{}\n");
+    await fs.symlink(real, file);
+
+    await writeRawAtomic(file, '{"ok":true}\n', { workspaceFolders: [workspace] });
+
+    expect(await fs.readFile(real, "utf8")).toBe('{"ok":true}\n');
+  });
+});

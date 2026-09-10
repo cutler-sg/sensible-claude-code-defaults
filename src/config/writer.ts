@@ -4,6 +4,11 @@
  * FR-2.3: never write in place. A truncated `settings.json` does not degrade
  * Claude Code, it breaks it for a user who cannot recover by hand — so a write
  * is temp file → fsync → rename, and the temp is removed on any failure.
+ *
+ * FR-2.6: every path is checked *after* symlink resolution. A guard applied to
+ * the path the caller handed us proves nothing: `~/.claude` is a symlink into
+ * the user's dotfiles repo often enough that "the path we were given" and "the
+ * file we are about to replace" are routinely two different places.
  */
 
 import * as fs from "node:fs/promises";
@@ -46,12 +51,18 @@ export async function writeRawAtomic(
   opts: WriteOptions,
 ): Promise<void> {
   const platform = opts.platform ?? process.platform;
+  // Cheap first pass on the literal path, so an obviously-inside-a-workspace
+  // target is refused without touching the filesystem at all.
   assertOutsideWorkspace(file, opts.workspaceFolders, platform);
 
   // Follow a symlink: dotfiles repos commonly link `~/.claude/settings.json`
   // at a checked-in file, and renaming over the link would replace the link
   // with a regular file and silently detach the user's dotfiles.
   const target = await resolveTarget(file);
+  // …which is exactly why the guard has to run again here: the link may point
+  // into a workspace folder (F1).
+  assertOutsideWorkspace(target, opts.workspaceFolders, platform);
+
   const dir = path.dirname(target);
   await fs.mkdir(dir, { recursive: true });
 
@@ -110,12 +121,15 @@ export async function backupSettings(
   opts?: WriteOptions,
 ): Promise<BackupInfo | undefined> {
   // A backup is a copy of the *user's* file into our own state dir; neither end
-  // may sit inside a workspace folder (FR-2.6). Callers that know the workspace
-  // pass it; the guard is a no-op when they cannot.
+  // may sit inside a workspace folder (FR-2.6), before or after following any
+  // symlink on the way. Callers that know the workspace pass it; the guard is a
+  // no-op when they cannot.
   if (opts) {
     const platform = opts.platform ?? process.platform;
     assertOutsideWorkspace(file, opts.workspaceFolders, platform);
     assertOutsideWorkspace(backupsDir, opts.workspaceFolders, platform);
+    assertOutsideWorkspace(await resolveTarget(file), opts.workspaceFolders, platform);
+    assertOutsideWorkspace(await resolveTarget(backupsDir), opts.workspaceFolders, platform);
   }
 
   let text: string;
@@ -173,6 +187,12 @@ export async function restoreBackup(
   file: string,
   opts: WriteOptions,
 ): Promise<void> {
+  const platform = opts.platform ?? process.platform;
+  // The backup we are told to read is a path from the UI; resolve it before
+  // trusting it, the same as any destination (F1).
+  assertOutsideWorkspace(backup, opts.workspaceFolders, platform);
+  assertOutsideWorkspace(await resolveTarget(backup), opts.workspaceFolders, platform);
+
   let text: string;
   try {
     text = await fs.readFile(backup, "utf8");
