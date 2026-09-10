@@ -119,6 +119,18 @@ describe("manifest notices as panel rows", () => {
   });
 
   /**
+   * `runner.ts` reserves `notice.-1` for the row that says notice synthesis
+   * itself failed (F5). No message may be able to claim it, or the publisher of
+   * a manifest could aim a crafted notice at that row's identity.
+   */
+  it("never mints the id the runner reserves for its own failure row", () => {
+    for (const message of ["", "-1", "notice.-1", "x".repeat(200), "\u{1f600}"]) {
+      expect(noticeId(message)).not.toBe("notice.-1");
+      expect(noticeId(message)).toMatch(/^notice\.\d+$/);
+    }
+  });
+
+  /**
    * Two identical messages cannot be two rows: they would share an id, and VS
    * Code renders one tree node per id — the second would vanish or, worse,
    * fight the first for its state. Identical text is one message anyway.

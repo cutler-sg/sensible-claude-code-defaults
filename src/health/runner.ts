@@ -9,7 +9,7 @@
 
 import { LABELS } from "./labels.js";
 import { noticeResults } from "./notices.js";
-import type { Check, CheckContext, CheckResult, HealthReport } from "./types.js";
+import type { Check, CheckContext, CheckResult, HealthReport, NoticeId } from "./types.js";
 import { countLevels } from "./types.js";
 
 export async function runAll(
@@ -26,9 +26,46 @@ export async function runAll(
   // and there are between zero and two per run. The tree groups by `group`, so
   // they land at the end of Configuration — next to `config.stale`, which is
   // the other row about what the recommendations currently say.
-  results.push(...noticeResults(ctx.manifest, at));
+  results.push(...notices(ctx, at));
   return { at: at.toISOString(), results, counts: countLevels(results) };
 }
+
+/**
+ * Synthesis, contained the same way a check body is (F5).
+ *
+ * `noticeResults` reads remote data through a validator that guarantees its
+ * shape — but the manifest reaching this point has not necessarily been through
+ * that validator: `manifestHolder` starts on `BUNDLED_MANIFEST`, which is a
+ * cast, and `resolve.ts`'s bundled floor deliberately hands back its manifest
+ * even when validation fails, because there is nothing below it. So the runner
+ * is reachable with a manifest nobody vouched for, and a throw here would come
+ * out of `runAll` as a rejection — a permanent error toast over an empty panel,
+ * which is the outage FR-3.4 exists to prevent.
+ */
+function notices(ctx: CheckContext, at: Date): CheckResult[] {
+  try {
+    return noticeResults(ctx.manifest, at);
+  } catch (error) {
+    return [
+      {
+        id: NOTICES_FAILED_ID,
+        group: "Configuration",
+        level: "error",
+        label: LABELS.crashed,
+        detail: error instanceof Error ? error.message : String(error),
+        fix: { kind: "none" },
+      },
+    ];
+  }
+}
+
+/**
+ * The one notice id no message can produce. `noticeId` returns an unsigned
+ * 32-bit digest, so a negative index is outside its range for every possible
+ * message — including one crafted by whoever publishes the manifest, which
+ * `notice.0` would not have been.
+ */
+const NOTICES_FAILED_ID = "notice.-1" satisfies NoticeId as NoticeId;
 
 /**
  * A check that throws becomes an error-level result rather than an empty panel.
