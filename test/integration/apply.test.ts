@@ -690,6 +690,25 @@ describe("resetting an element-owned key", () => {
     expect(planned.merge.drift.map((entry) => entry.key)).toEqual(["permissions.deny"]);
   });
 
+  it("claims nothing when none of the recommended rules are present yet", async () => {
+    await seedSettings(`${JSON.stringify({ permissions: { deny: [USER_DENY] } }, null, 2)}\n`);
+
+    const planned = ready(await resetKeyPlan(env, desiredFixture(), "permissions.deny"));
+    await commit(env, session, planned);
+
+    // Nothing to adopt, so the reset degenerates into the ordinary add of both
+    // recommended rules alongside the user's.
+    expect(getPath(await readJson(), "permissions.deny")).toEqual([
+      USER_DENY,
+      "Bash(rm -rf:*)",
+      "Read(./.env)",
+    ]);
+    expect((await readSnapshotFile()).values["permissions.deny"]).toEqual([
+      "Bash(rm -rf:*)",
+      "Read(./.env)",
+    ]);
+  });
+
   it("claims nothing when the manifest does not mention the key", async () => {
     await seedSettings(`${JSON.stringify({ enabledPlugins: { "user@theirs": true } }, null, 2)}\n`);
 
