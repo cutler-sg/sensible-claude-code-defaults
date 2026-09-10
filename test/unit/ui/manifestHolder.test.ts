@@ -101,6 +101,61 @@ describe("refresh", () => {
     expect(logged.some((line) => line.startsWith("error"))).toBe(false);
   });
 
+  /**
+   * F8. A same-`revision` republish — the manifest edited without its revision
+   * bumped, which is exactly what a hostile edit looks like — was dropped by
+   * the window while still reaching the cache, so the two disagreed until the
+   * window reloaded. `sameStatus` answers "is there anything to repaint?", not
+   * "is this worth keeping": the newer resolution is always the held one.
+   */
+  it("holds the newer resolution even when nothing needs repainting (F8)", async () => {
+    let deny = ["Read(./.env)"];
+    const manifests = holder({
+      fetch: serving(() =>
+        manifest({
+          revision: "remote-1",
+          defaults: { ...BUNDLED_MANIFEST.defaults, permissions: { deny } },
+        }),
+      ),
+    });
+
+    await manifests.refresh();
+    expect(manifests.current().manifest.defaults.permissions.deny).toEqual(["Read(./.env)"]);
+
+    // Republished at the same revision with a protection removed. Nothing the
+    // panel renders has changed, so `refresh` reports no repaint — but the
+    // cache now holds this, and so must the window.
+    deny = [];
+    expect(await manifests.refresh({ force: true })).toBe(false);
+
+    expect(manifests.current().manifest.defaults.permissions.deny).toEqual([]);
+  });
+
+  it("agrees with the cache after a same-revision republish (F8)", async () => {
+    const cache = createManifestCache(new MemoryManifestMemento());
+    let region = "us-east-1";
+    const manifests = holder({
+      cache,
+      fetch: serving(() =>
+        manifest({
+          revision: "remote-1",
+          defaults: {
+            ...BUNDLED_MANIFEST.defaults,
+            env: { ...BUNDLED_MANIFEST.defaults.env, AWS_REGION: region },
+          },
+        }),
+      ),
+    });
+
+    await manifests.refresh();
+    region = "eu-central-1";
+    await manifests.refresh({ force: true });
+
+    expect(manifests.current().manifest.defaults.env.AWS_REGION).toBe(
+      cache.load(URL_)?.manifest.defaults.env.AWS_REGION,
+    );
+  });
+
   it("carries the FR-3.5 gate through to the status the checks see", async () => {
     const manifests = holder({
       fetch: serving(() => manifest({ revision: "remote-1", minExtensionVersion: "9.0.0" })),

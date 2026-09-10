@@ -118,10 +118,15 @@ export function createManifestHolder(deps: ManifestHolderDeps): ManifestHolder {
 
     report(deps.log, resolution);
 
+    // Held first, reported second (F8). The status comparison answers "is
+    // there anything to repaint?" — it is not a decision about what is in
+    // force. A same-`revision` republish is invisible to `sameStatus` but has
+    // already reached the cache, so dropping it here left the window and the
+    // cache disagreeing about the defaults until the window reloaded.
     const next = toResolved(resolution);
-    if (sameStatus(held.status, next.status)) return false;
+    const repaint = !sameStatus(held.status, next.status);
     held = next;
-    return true;
+    return repaint;
   };
 
   return {
@@ -166,7 +171,8 @@ function toResolved(resolution: Resolution): ResolvedManifest {
 }
 
 /**
- * Whether anything the panel would render has changed.
+ * Whether anything the panel would render has changed. A repaint decision only
+ * (F8): the newer resolution is held either way.
  *
  * `fetchedAt` is compared by day, not by instant, because the day is all that
  * is ever rendered (`config.stale`'s "Last updated <date>"). Comparing the
