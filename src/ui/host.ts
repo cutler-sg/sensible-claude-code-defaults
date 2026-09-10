@@ -14,6 +14,9 @@ import {
   snapshotPath,
 } from "../config/index.js";
 import type { ConfigEnv } from "../config/types.js";
+import { TerminalTokenEnv } from "../credential/env.js";
+import { SecretTokenStore } from "../credential/store.js";
+import type { TokenStore } from "../credential/types.js";
 import { detectClaudeCode } from "../health/context.js";
 import type { ClaudeCodeDetection } from "../health/types.js";
 
@@ -24,9 +27,13 @@ export interface Host {
   claudeDir: string;
   settingsFile: string;
   detect: () => Promise<ClaudeCodeDetection>;
+  /** FR-4.1: the OS keychain, behind the `vscode`-free `TokenStore` contract. */
+  store: TokenStore;
+  /** FR-4.3: the integrated-terminal collection, with `persistent` off. */
+  terminal: TerminalTokenEnv;
 }
 
-export function createHost(): Host {
+export function createHost(context: vscode.ExtensionContext): Host {
   const claudeDir = resolveClaudeDir();
   const workspaceFolders = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
   const platform = process.platform;
@@ -45,6 +52,11 @@ export function createHost(): Host {
     env,
     claudeDir,
     settingsFile: settingsPath(claudeDir),
+    store: new SecretTokenStore(context.secrets),
+    // Constructing this asserts `persistent === false` (§10.4 #4). It throws
+    // if the collection refuses, which is deliberate: a collection VS Code
+    // caches to disk must not receive the token at all.
+    terminal: new TerminalTokenEnv(context.environmentVariableCollection),
     detect: () =>
       detectClaudeCode({
         getExtensionVersion: () => {

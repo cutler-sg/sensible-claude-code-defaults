@@ -15,6 +15,7 @@ import {
 import {
   adoptTokenFromSettings,
   readTokenFromSettings,
+  removeTokenFromSettings,
   syncTokenToSettings,
   TOKEN_SETTINGS_KEY,
 } from "../../../src/credential/writeThrough.js";
@@ -299,5 +300,60 @@ describe("adoptTokenFromSettings (plan Q-S)", () => {
 
     expect(error).toBeInstanceOf(ConfigError);
     expect(String(error)).not.toContain(WIZARD_TOKEN);
+  });
+});
+
+/**
+ * The one path that overwrites a token we did not write. It exists because
+ * "Remove Bedrock API Key" has to mean removed: a plain sync would leave a key
+ * `/setup-bedrock` wrote sitting in the file for Claude Code to keep using.
+ */
+describe("removeTokenFromSettings", () => {
+  it("removes a token we wrote", async () => {
+    await syncTokenToSettings(env, session, TOKEN);
+
+    await removeTokenFromSettings(env, session);
+
+    expect(envBlock(await readFileSettings())).not.toHaveProperty(TOKEN_SETTINGS_KEY.slice(4));
+  });
+
+  it("removes a token the CLI wizard wrote, which a plain sync would keep", async () => {
+    await seed({ env: { AWS_BEARER_TOKEN_BEDROCK: WIZARD_TOKEN } });
+
+    // The ordinary removal path preserves it: unowned value, hands off.
+    await syncTokenToSettings(env, session, undefined);
+    expect(envBlock(await readFileSettings()).AWS_BEARER_TOKEN_BEDROCK).toBe(WIZARD_TOKEN);
+
+    await removeTokenFromSettings(env, session);
+
+    expect(envBlock(await readFileSettings())).not.toHaveProperty("AWS_BEARER_TOKEN_BEDROCK");
+  });
+
+  it("leaves the Bedrock routing flag alone — that is not a credential", async () => {
+    await seed({
+      env: { AWS_BEARER_TOKEN_BEDROCK: WIZARD_TOKEN, CLAUDE_CODE_USE_BEDROCK: "1" },
+    });
+
+    await removeTokenFromSettings(env, session);
+
+    expect(envBlock(await readFileSettings()).CLAUDE_CODE_USE_BEDROCK).toBe("1");
+  });
+
+  it("backs the file up first, so a removal is recoverable", async () => {
+    await seed({ env: { AWS_BEARER_TOKEN_BEDROCK: WIZARD_TOKEN } });
+
+    const result = await removeTokenFromSettings(env, session);
+
+    expect(result.written).toBe(true);
+    expect(result.backup).toBeDefined();
+  });
+
+  it("is a no-op when there is nothing to remove", async () => {
+    await seed({ env: { AWS_REGION: "us-east-1" } });
+
+    const result = await removeTokenFromSettings(env, session);
+
+    expect(result.written).toBe(false);
+    expect(result.reason).toBe("noop");
   });
 });

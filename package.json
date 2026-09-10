@@ -82,6 +82,41 @@
         "category": "Sensible Defaults"
       },
       {
+        "command": "sensibleDefaults.setToken",
+        "title": "Set Bedrock API Key",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.rotateToken",
+        "title": "Update Bedrock API Key",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.clearToken",
+        "title": "Remove Bedrock API Key",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.testConnection",
+        "title": "Test Bedrock Connection",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.adoptToken",
+        "title": "Use the key from my settings file",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.reapplyToken",
+        "title": "Copy the key into my settings file",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.resolveTokenConflict",
+        "title": "Resolve API key conflict",
+        "category": "Sensible Defaults"
+      },
+      {
         "command": "sensibleDefaults.selectRegion",
         "title": "Change AWS Region",
         "category": "Sensible Defaults"

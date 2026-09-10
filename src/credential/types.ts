@@ -22,6 +22,15 @@ export interface TokenStore {
 }
 
 /**
+ * The terminal collection as its callers use it. `TerminalTokenEnv` is the real
+ * implementation; the interface exists so a flow can be tested without one.
+ */
+export interface TokenEnv {
+  apply(token: string): void;
+  clear(): void;
+}
+
+/**
  * VS Code's SecretStorage, structurally. Keeps `src/credential/` free of the
  * `vscode` import while still being the real thing at runtime.
  */

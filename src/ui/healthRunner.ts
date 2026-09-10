@@ -14,6 +14,7 @@
 import * as vscode from "vscode";
 import type { ConfigEnv } from "../config/types.js";
 import { ALL_CHECKS } from "../health/catalogue.js";
+import type { CredentialDeps } from "../health/context.js";
 import { buildContext } from "../health/context.js";
 import { runAll, transition } from "../health/runner.js";
 import type { Check, ClaudeCodeDetection, HealthReport } from "../health/types.js";
@@ -43,6 +44,13 @@ export interface HealthRunnerDeps {
   notified: NotifiedStore;
   /** Called when the silent permission repair touched the file (F14). */
   onSelfWrite?: () => void;
+  /**
+   * The credential sources, read afresh on every run. A function rather than a
+   * value because `lastTest` changes between runs: the host holds it in memory
+   * and a stale copy captured at wiring time would leave `cred.valid` reporting
+   * "not tested yet" immediately after a test.
+   */
+  credential?: () => CredentialDeps;
   /** Injected only so a test can run a small catalogue. */
   checks?: readonly Check[];
 }
@@ -75,6 +83,7 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
       platform: deps.platform,
       detect: deps.detect,
       ...(deps.onSelfWrite ? { onSelfWrite: deps.onSelfWrite } : {}),
+      ...(deps.credential ? { credential: deps.credential() } : {}),
     });
     const report = await runAll(checks, ctx);
     deps.present(report);

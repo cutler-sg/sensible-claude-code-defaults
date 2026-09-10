@@ -1,7 +1,10 @@
 import * as vscode from "vscode";
 import { backupsDir, createSession } from "./config/index.js";
+import type { ConnectionResult } from "./credential/types.js";
+import { readTokenFromSettings } from "./credential/writeThrough.js";
 import { BUNDLED_MANIFEST } from "./manifest/bundled.js";
 import { registerCommands } from "./ui/commands.js";
+import type { CredentialFlowDeps } from "./ui/flows.js";
 import { createHealthRunner } from "./ui/healthRunner.js";
 import { createHost } from "./ui/host.js";
 import { HealthTreeProvider } from "./ui/treeProvider.js";
@@ -16,7 +19,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const log = new Logger(channel);
   log.info(`Sensible Claude Code Defaults ${context.extension.packageJSON.version} activated.`);
 
-  const host = createHost();
+  const host = createHost(context);
   const manifest = BUNDLED_MANIFEST;
   const provider = new HealthTreeProvider();
   const view = vscode.window.createTreeView("sensibleDefaults.health", {
@@ -29,6 +32,20 @@ export function activate(context: vscode.ExtensionContext): void {
     suppressUntil = Date.now() + SUPPRESS_MS;
   };
 
+  /**
+   * The last test call, per window (plan Q-T). In memory on purpose: it says
+   * what AWS answered a moment ago, and a result restored from disk after a
+   * restart would vouch for a key that may since have been revoked.
+   */
+  let lastTest: { at: string; result: ConnectionResult } | undefined;
+  const credential: CredentialFlowDeps = {
+    store: host.store,
+    terminal: host.terminal,
+    recordTest: (result) => {
+      lastTest = { at: new Date().toISOString(), result };
+    },
+  };
+
   const runHealth = createHealthRunner({
     env: host.env,
     manifest,
@@ -36,6 +53,11 @@ export function activate(context: vscode.ExtensionContext): void {
     detect: host.detect,
     log,
     notified: context.globalState,
+    credential: () => ({
+      store: host.store,
+      readFromSettings: () => readTokenFromSettings(host.env),
+      ...(lastTest === undefined ? {} : { lastTest }),
+    }),
     onSelfWrite: markWrite,
     present: (report) => {
       provider.setReport(report);
@@ -64,6 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // watcher was waiting on the parent directory and may have missed it.
       watcher.rearm();
     },
+    credential,
   });
 
   context.subscriptions.push(channel, view, commands, watcher);
@@ -73,12 +96,39 @@ export function activate(context: vscode.ExtensionContext): void {
   // not to touch their configuration on startup at all, and "Check
   // Configuration" from the palette still works.
   setImmediate(() => {
+    // FR-4.3 / plan Q-W: push a stored key into the terminal collection so new
+    // terminals inherit it, and touch nothing on disk. Writing the settings
+    // file on activation would be a silent change to a user's configuration
+    // made before they have seen the panel, and a file whose key we removed by
+    // hand is a `cred.mirrored` error with a one-click fix instead.
+    void pushTokenToTerminals(host, log);
     if (!vscode.workspace.getConfiguration().get("sensibleDefaults.checkOnStartup", true)) {
       log.info("Startup health check skipped: sensibleDefaults.checkOnStartup is off.");
       return;
     }
     void runHealth();
   });
+}
+
+/**
+ * A keychain that throws — Linux without libsecret — must not take activation
+ * with it: `cred.present` reports that condition with a message the user can
+ * act on, and it can only do so if the extension is running.
+ */
+async function pushTokenToTerminals(
+  host: ReturnType<typeof createHost>,
+  log: Logger,
+): Promise<void> {
+  try {
+    const stored = await host.store.get();
+    if (stored === undefined) return;
+    host.terminal.apply(stored.token);
+    log.info("Applied the saved Bedrock API key to new terminals.");
+  } catch (error) {
+    log.warn(
+      `Could not read the system keychain: ${error instanceof Error ? error.message : "unknown failure"}`,
+    );
+  }
 }
 
 export function deactivate(): void {

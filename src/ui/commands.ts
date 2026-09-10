@@ -27,6 +27,17 @@ import { keyDisplayName } from "../health/labels.js";
 import { desiredFromManifest, type Manifest } from "../manifest/types.js";
 import type { Logger } from "../util/log.js";
 import { redact } from "../util/redact.js";
+import {
+  adoptToken,
+  type CredentialFlowDeps,
+  clearToken,
+  type FlowDeps,
+  reapplyToken,
+  resolveTokenConflict,
+  rotateToken,
+  setToken,
+  testConnection,
+} from "./flows.js";
 import { describeChange, pluralize, relativeAge } from "./present.js";
 import type { Node } from "./treeProvider.js";
 
@@ -41,6 +52,8 @@ export interface CommandDeps {
   runHealth: () => Promise<void>;
   /** Open the watcher's suppression window; called after every write. */
   markWrite: () => void;
+  /** The keychain, the terminal collection, and where a test result goes. */
+  credential: CredentialFlowDeps;
   now?: () => Date;
 }
 
@@ -70,7 +83,16 @@ const HANDLERS = {
   "sensibleDefaults.selectRegion": (deps) => selectRegion(deps),
   "sensibleDefaults.repairPermissions": (deps) => repairPermissionsCommand(deps),
   "sensibleDefaults.runFix": (deps, node) => runFix(deps, node),
-} satisfies Record<string, (deps: CommandDeps, ...args: never[]) => Promise<void>>;
+  // FR-4's flows. They take the same injected shape, so `CommandDeps` is a
+  // `FlowDeps` and the two files share one dependency graph rather than two.
+  "sensibleDefaults.setToken": (deps) => setToken(deps),
+  "sensibleDefaults.rotateToken": (deps) => rotateToken(deps),
+  "sensibleDefaults.clearToken": (deps) => clearToken(deps),
+  "sensibleDefaults.testConnection": (deps) => testConnection(deps),
+  "sensibleDefaults.adoptToken": (deps) => adoptToken(deps),
+  "sensibleDefaults.reapplyToken": (deps) => reapplyToken(deps),
+  "sensibleDefaults.resolveTokenConflict": (deps) => resolveTokenConflict(deps),
+} satisfies Record<string, (deps: CommandDeps & FlowDeps, ...args: never[]) => Promise<void>>;
 
 export const COMMAND_IDS = Object.keys(HANDLERS) as readonly (keyof typeof HANDLERS)[];
 

@@ -1,0 +1,576 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ApplySession, ConfigEnv, JsonObject, Settings } from "../../../src/config/index.js";
+import { createSession, MemorySnapshotStore, settingsPath } from "../../../src/config/index.js";
+import { TOKEN_ENV_VAR } from "../../../src/credential/types.js";
+import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
+import type { Manifest } from "../../../src/manifest/types.js";
+import type { FlowDeps } from "../../../src/ui/flows.js";
+import * as flows from "../../../src/ui/flows.js";
+import { messages, reset, state } from "./commandsHost.js";
+import { type FakeCredentialDeps, fakeCredentialDeps } from "./credentialDeps.js";
+
+vi.mock("vscode", async () => await import("./commandsHost.js"));
+
+const TOKEN = "ABSKQmVkcm9ja0FQSUtleUV4YW1wbGVWYWx1ZQ";
+const OTHER = "ABSKQW5vdGhlckJlZHJvY2tBUElLZXlWYWx1ZQ";
+const NOW = new Date("2026-09-10T12:00:00.000Z");
+
+let dir: string;
+let env: ConfigEnv;
+let session: ApplySession;
+let credential: FakeCredentialDeps;
+let logged: string[];
+let healthRuns: number;
+let writes: number;
+
+const log = {
+  info: (message: string) => logged.push(`info ${message}`),
+  warn: (message: string) => logged.push(`warn ${message}`),
+  error: (message: string) => logged.push(`error ${message}`),
+};
+
+function deps(manifest: Manifest = BUNDLED_MANIFEST): FlowDeps {
+  return {
+    env,
+    session,
+    manifest,
+    log: log as never,
+    runHealth: async () => {
+      healthRuns += 1;
+    },
+    markWrite: () => {
+      writes += 1;
+    },
+    credential,
+    now: () => NOW,
+  };
+}
+
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "scd-flows-"));
+  env = {
+    claudeDir: dir,
+    workspaceFolders: [],
+    snapshotStore: new MemorySnapshotStore(),
+    platform: process.platform,
+  };
+  session = createSession();
+  credential = fakeCredentialDeps();
+  logged = [];
+  healthRuns = 0;
+  writes = 0;
+  reset();
+});
+
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+async function seed(settings: unknown): Promise<void> {
+  await writeFile(settingsPath(dir), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
+
+async function fileToken(): Promise<unknown> {
+  const raw = await readFile(settingsPath(dir), "utf8").catch(() => "{}");
+  const settings = JSON.parse(raw) as Settings;
+  return (settings.env as JsonObject | undefined)?.[TOKEN_ENV_VAR];
+}
+
+/** Type the given value into the next input box. */
+function type(value: string): void {
+  state.inputBoxAnswer = () => value;
+}
+
+/** Answer a modal or notification by the label the user would click. */
+function click(label: string): void {
+  state.answer = (shown) => (shown.items.includes(label) ? label : undefined);
+}
+
+function pick(label: string): void {
+  state.quickPickAnswer = (call) =>
+    call.items.find((item) => (item as { label?: string }).label === label);
+}
+
+function respondWith(status: number, body = "{}"): void {
+  credential.respond = () => new Response(body, { status });
+}
+
+describe("setToken", () => {
+  it("masks the input, survives a lost focus, and links the console (FR-4.2)", async () => {
+    type(TOKEN);
+    await flows.setToken(deps());
+
+    const options = state.inputBoxes[0]?.options;
+    expect(options?.password).toBe(true);
+    expect(options?.ignoreFocusOut).toBe(true);
+    expect(options?.prompt).toContain(BUNDLED_MANIFEST.credential.consoleUrl);
+    expect(options?.prompt).toContain("long-term");
+    expect(options?.prompt).toMatch(/AWS recommends short-term keys/);
+  });
+
+  it("stores the key, injects it into terminals, and mirrors it into the file", async () => {
+    type(TOKEN);
+    await flows.setToken(deps());
+
+    await expect(credential.store.get()).resolves.toEqual({
+      token: TOKEN,
+      setAt: NOW.toISOString(),
+    });
+    expect(credential.terminal.applied).toEqual([TOKEN]);
+    expect(await fileToken()).toBe(TOKEN);
+    expect(writes).toBeGreaterThan(0);
+    expect(healthRuns).toBe(1);
+  });
+
+  it("trims what was pasted, so no stray newline reaches the header", async () => {
+    type(`  ${TOKEN}\n`);
+    await flows.setToken(deps());
+
+    await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+    expect(await fileToken()).toBe(TOKEN);
+  });
+
+  it("writes nothing when the user cancels", async () => {
+    await flows.setToken(deps());
+
+    await expect(credential.store.get()).resolves.toBeUndefined();
+    expect(await fileToken()).toBeUndefined();
+    expect(logged).toContain("info Key entry cancelled by the user.");
+    expect(healthRuns).toBe(0);
+  });
+
+  it("offers a test and runs it when accepted", async () => {
+    type(TOKEN);
+    click("Test connection now");
+    await flows.setToken(deps());
+
+    expect(credential.requests).toHaveLength(1);
+    expect(credential.recorded[0]).toMatchObject({ kind: "ok" });
+  });
+
+  it("does not call AWS when the offer is dismissed (Q-T)", async () => {
+    type(TOKEN);
+    await flows.setToken(deps());
+
+    expect(credential.requests).toEqual([]);
+    expect(credential.recorded).toEqual([]);
+  });
+});
+
+describe("validateInput", () => {
+  it("accepts a plausible key", () => {
+    expect(flows.validateInput(TOKEN)).toBeUndefined();
+  });
+
+  it("blocks an access key ID with an explanation", () => {
+    expect(flows.validateInput("AKIAIOSFODNN7EXAMPLE")).toMatch(/access key ID/);
+  });
+
+  it("blocks an empty value", () => {
+    expect(flows.validateInput("  ")).toMatch(/Paste your Bedrock API key/);
+  });
+
+  it("only warns about a short key, so a real one is never blocked", () => {
+    const verdict = flows.validateInput("ABSKshort");
+    expect(verdict).toMatchObject({ severity: 2 });
+    expect((verdict as { message: string }).message).toMatch(/still use it/);
+  });
+});
+
+describe("rotateToken", () => {
+  it("replaces the key without ever showing the old one", async () => {
+    await credential.store.set({ token: TOKEN, setAt: "2026-01-01T00:00:00.000Z" });
+    await seed({ env: { [TOKEN_ENV_VAR]: TOKEN } });
+    type(OTHER);
+
+    await flows.rotateToken(deps());
+
+    await expect(credential.store.get()).resolves.toEqual({
+      token: OTHER,
+      setAt: NOW.toISOString(),
+    });
+    expect(state.inputBoxes[0]?.options.title).toBe("Update Bedrock API Key");
+    for (const shown of [...messages(), ...logged]) {
+      expect(shown).not.toContain(TOKEN);
+      expect(shown).not.toContain(OTHER);
+    }
+  });
+
+  it("restarts the age clock, because that is all we can honestly claim", async () => {
+    await credential.store.set({ token: TOKEN, setAt: "2020-01-01T00:00:00.000Z" });
+    type(OTHER);
+
+    await flows.rotateToken(deps());
+
+    await expect(credential.store.get()).resolves.toMatchObject({ setAt: NOW.toISOString() });
+  });
+});
+
+describe("clearToken", () => {
+  beforeEach(async () => {
+    await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });
+    await seed({ env: { [TOKEN_ENV_VAR]: TOKEN, CLAUDE_CODE_USE_BEDROCK: "1" } });
+  });
+
+  it("keeps everything when the confirmation is declined", async () => {
+    await flows.clearToken(deps());
+
+    await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+    expect(await fileToken()).toBe(TOKEN);
+    expect(logged).toContain("info Key removal cancelled by the user.");
+  });
+
+  it("confirms modally, then clears all three places", async () => {
+    click("Remove key");
+    await flows.clearToken(deps());
+
+    expect(state.warn[0]?.options).toMatchObject({ modal: true });
+    await expect(credential.store.get()).resolves.toBeUndefined();
+    expect(credential.terminal.cleared).toBe(1);
+    expect(await fileToken()).toBeUndefined();
+    expect(healthRuns).toBe(1);
+  });
+
+  it("says plainly that the key still works elsewhere", async () => {
+    click("Remove key");
+    await flows.clearToken(deps());
+
+    expect((state.warn[0]?.options as { detail?: string } | undefined)?.detail).toMatch(
+      /Amazon console/,
+    );
+  });
+});
+
+describe("adoptToken", () => {
+  it("takes the key /setup-bedrock left in the file (Q-S)", async () => {
+    await seed({ env: { [TOKEN_ENV_VAR]: TOKEN } });
+
+    await flows.adoptToken(deps());
+
+    await expect(credential.store.get()).resolves.toEqual({
+      token: TOKEN,
+      setAt: NOW.toISOString(),
+    });
+    expect(credential.terminal.applied).toEqual([TOKEN]);
+    // The file keeps the same value; adoption is an ownership transfer.
+    expect(await fileToken()).toBe(TOKEN);
+    expect(healthRuns).toBe(1);
+  });
+
+  it("claims ownership, so the key stops reading as drift", async () => {
+    await seed({ env: { [TOKEN_ENV_VAR]: TOKEN } });
+
+    await flows.adoptToken(deps());
+
+    const snapshot = await env.snapshotStore.load();
+    expect(snapshot.values["env.AWS_BEARER_TOKEN_BEDROCK"]).toBe(TOKEN);
+  });
+
+  it("says so when there is nothing to adopt", async () => {
+    await flows.adoptToken(deps());
+
+    expect(messages()[0]).toMatch(/no Bedrock API key in your settings file/);
+    await expect(credential.store.get()).resolves.toBeUndefined();
+  });
+});
+
+describe("reapplyToken", () => {
+  it("copies the saved key into the file so the panel can see it", async () => {
+    await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });
+
+    await flows.reapplyToken(deps());
+
+    expect(await fileToken()).toBe(TOKEN);
+    expect(credential.terminal.applied).toEqual([TOKEN]);
+    expect(healthRuns).toBe(1);
+  });
+
+  it("says so when there is no saved key", async () => {
+    await flows.reapplyToken(deps());
+
+    expect(messages()[0]).toMatch(/no saved Bedrock API key/);
+    expect(await fileToken()).toBeUndefined();
+  });
+});
+
+describe("resolveTokenConflict", () => {
+  beforeEach(async () => {
+    await credential.store.set({ token: TOKEN, setAt: "2026-01-01T00:00:00.000Z" });
+    await seed({ env: { [TOKEN_ENV_VAR]: OTHER } });
+  });
+
+  it("offers the two by where they came from, never by their value", async () => {
+    await flows.resolveTokenConflict(deps());
+
+    const labels = (state.quickPicks[0]?.items ?? []).map(
+      (item) =>
+        `${(item as { label: string }).label} ${(item as { description: string }).description}`,
+    );
+    expect(labels).toHaveLength(2);
+    for (const label of labels) {
+      expect(label).not.toContain(TOKEN);
+      expect(label).not.toContain(OTHER);
+    }
+  });
+
+  it("keeps the file's key when the user picks it", async () => {
+    pick("Use the key in my settings file");
+
+    await flows.resolveTokenConflict(deps());
+
+    await expect(credential.store.get()).resolves.toMatchObject({ token: OTHER });
+    expect(await fileToken()).toBe(OTHER);
+    expect(healthRuns).toBe(1);
+  });
+
+  it("overwrites the file when the user picks the saved key", async () => {
+    pick("Use the key I saved");
+
+    await flows.resolveTokenConflict(deps());
+
+    await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+    expect(await fileToken()).toBe(TOKEN);
+  });
+
+  it("changes nothing when the user cancels", async () => {
+    await flows.resolveTokenConflict(deps());
+
+    await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+    expect(await fileToken()).toBe(OTHER);
+    expect(logged).toContain("info Key conflict left unresolved by the user.");
+  });
+
+  it("says so when the conflict resolved itself in the meantime", async () => {
+    await credential.store.clear();
+
+    await flows.resolveTokenConflict(deps());
+
+    expect(messages()[0]).toMatch(/no longer a conflict/);
+    expect(healthRuns).toBe(1);
+  });
+});
+
+describe("testConnection", () => {
+  beforeEach(async () => {
+    await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });
+  });
+
+  it("shows progress and sends the key exactly once, as a bearer token", async () => {
+    await seed({ env: { AWS_REGION: "eu-central-1" } });
+
+    await flows.testConnection(deps());
+
+    expect(state.progressTitles[0]).toMatch(/Testing your Bedrock API key/);
+    expect(credential.requests).toHaveLength(1);
+    expect(credential.requests[0]?.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(credential.requests[0]?.url).toContain("bedrock-runtime.eu-central-1.amazonaws.com");
+  });
+
+  it("tries Haiku first and Sonnet second (Q-U)", async () => {
+    const haiku = BUNDLED_MANIFEST.defaults.env.ANTHROPIC_DEFAULT_HAIKU_MODEL as string;
+    const sonnet = BUNDLED_MANIFEST.defaults.env.ANTHROPIC_DEFAULT_SONNET_MODEL as string;
+    credential.respond = (url) =>
+      url.includes(encodeURIComponent(haiku))
+        ? new Response('{"message":"AccessDeniedException: model not enabled"}', { status: 403 })
+        : new Response("{}", { status: 200 });
+
+    await flows.testConnection(deps());
+
+    expect(credential.requests.map((r) => r.url)).toEqual([
+      expect.stringContaining(encodeURIComponent(haiku)),
+      expect.stringContaining(encodeURIComponent(sonnet)),
+    ]);
+    expect(credential.recorded[0]).toMatchObject({ kind: "ok-without-haiku" });
+    expect(state.warn[0]?.message).toMatch(/small, fast Claude model/);
+  });
+
+  it("falls back to the recommended region when none is configured", async () => {
+    await flows.testConnection(deps());
+
+    expect(credential.requests[0]?.url).toContain(
+      `bedrock-runtime.${BUNDLED_MANIFEST.defaults.env.AWS_REGION}.amazonaws.com`,
+    );
+  });
+
+  it("uses the recommended region when the settings file cannot be read", async () => {
+    await writeFile(settingsPath(dir), "{,}", "utf8");
+
+    await flows.testConnection(deps());
+
+    expect(credential.requests[0]?.url).toContain(
+      `bedrock-runtime.${BUNDLED_MANIFEST.defaults.env.AWS_REGION}.amazonaws.com`,
+    );
+  });
+
+  it("records the result for cred.valid and reruns the checks", async () => {
+    await flows.testConnection(deps());
+
+    expect(credential.recorded).toEqual([{ kind: "ok", model: expect.any(String) }]);
+    expect(healthRuns).toBe(1);
+  });
+
+  it("reports a refused key without echoing the key or the status", async () => {
+    respondWith(403, '{"message":"UnrecognizedClientException: security token is invalid"}');
+
+    await flows.testConnection(deps());
+
+    expect(credential.recorded[0]).toMatchObject({ kind: "bad-credential" });
+    expect(state.error[0]?.message).toMatch(/wouldn't accept/);
+    expect(state.error[0]?.message).not.toContain("403");
+    expect(state.error[0]?.message).not.toContain(TOKEN);
+  });
+
+  it.each([
+    ["wrong region", 404, "{}", /region/],
+    ["a proxy in the way", 407, "", /Couldn't reach Amazon/],
+    ["an answer we don't understand", 500, "{}", /didn't understand/],
+  ])("reports %s", async (_name, status, body, expected) => {
+    respondWith(status, body);
+
+    await flows.testConnection(deps());
+
+    expect(state.error[0]?.message).toMatch(expected);
+  });
+
+  it("reports a model that is not turned on", async () => {
+    respondWith(403, '{"message":"AccessDeniedException for this model"}');
+
+    await flows.testConnection(deps());
+
+    expect(credential.recorded[0]).toMatchObject({ kind: "model-not-enabled" });
+    expect(state.error[0]?.message).toMatch(/aren't turned on/);
+  });
+
+  it("says so when there is no key to test", async () => {
+    await credential.store.clear();
+
+    await flows.testConnection(deps());
+
+    expect(messages()[0]).toMatch(/no Bedrock API key to test/);
+    expect(credential.requests).toEqual([]);
+  });
+
+  it("logs only the outcome, never the key or the response body", async () => {
+    respondWith(403, `{"message":"denied for ${TOKEN}"}`);
+
+    await flows.testConnection(deps());
+
+    for (const line of logged) expect(line).not.toContain(TOKEN);
+    expect(logged).toContain("info Connection test: bad-credential");
+  });
+
+  it("survives a manifest with no model pins rather than calling AWS blind", async () => {
+    const manifest: Manifest = {
+      ...BUNDLED_MANIFEST,
+      defaults: { ...BUNDLED_MANIFEST.defaults, env: { AWS_REGION: "us-east-1" } },
+    };
+
+    await flows.testConnection(deps(manifest));
+
+    expect(credential.requests).toEqual([]);
+    expect(credential.recorded[0]).toMatchObject({ kind: "unknown" });
+  });
+});
+
+/**
+ * Claude Code's own `/setup-bedrock` writes this file too, so a commit can lose
+ * the race between plan and commit. The answer is to re-plan against what is
+ * there now, never to force our document over theirs.
+ *
+ * The race is staged rather than mocked: `plan` reads the file, then loads the
+ * snapshot, so a snapshot store that touches the file during `load` reproduces
+ * exactly the window the real writer lands in.
+ */
+describe("a settings file that changes under the write", () => {
+  /** Rewrites the settings file during `load`, `times` times. */
+  function racingStore(times: number): MemorySnapshotStore {
+    const store = new MemorySnapshotStore();
+    let left = times;
+    const load = store.load.bind(store);
+    store.load = async () => {
+      if (left > 0) {
+        left -= 1;
+        await writeFile(
+          settingsPath(dir),
+          `${JSON.stringify({ env: { AWS_REGION: `r${left}` } })}\n`,
+          "utf8",
+        );
+      }
+      return load();
+    };
+    return store;
+  }
+
+  it("re-plans once and succeeds", async () => {
+    await seed({ env: {} });
+    env = { ...env, snapshotStore: racingStore(1) };
+    type(TOKEN);
+
+    await flows.setToken(deps());
+
+    expect(logged).toContain(
+      "warn The settings file changed while writing the key; retrying once.",
+    );
+    expect(await fileToken()).toBe(TOKEN);
+  });
+
+  it("gives up after one retry rather than forcing its document over theirs", async () => {
+    await seed({ env: {} });
+    env = { ...env, snapshotStore: racingStore(5) };
+    type(TOKEN);
+
+    await flows.setToken(deps());
+
+    expect(await fileToken()).toBeUndefined();
+    expect(messages()).toContainEqual(expect.stringMatching(/kept changing/));
+    // The keychain still has it: the canonical copy is written first and the
+    // file is a derived artefact, so `cred.mirrored` has a one-click fix.
+    await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+  });
+});
+
+/**
+ * Hard rule 4, end to end: a known token is seeded into the keychain, the
+ * settings file, and a test result, and every string these flows produce is
+ * searched for it. This is the test that would catch a well-meaning "show the
+ * last four characters so they can tell them apart" change.
+ */
+describe("the token never reaches a user-visible string", () => {
+  it("stays out of every message, log line and pick label", async () => {
+    await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });
+    await seed({ env: { [TOKEN_ENV_VAR]: OTHER } });
+    respondWith(403, `{"message":"denied for ${TOKEN}"}`);
+
+    type(TOKEN);
+    click("Test connection now");
+    pick("Use the key I saved");
+    await flows.setToken(deps());
+    await flows.rotateToken(deps());
+    await flows.resolveTokenConflict(deps());
+    await flows.reapplyToken(deps());
+    await flows.adoptToken(deps());
+    await flows.testConnection(deps());
+    click("Remove key");
+    await flows.clearToken(deps());
+
+    const rendered = [
+      ...messages(),
+      ...logged,
+      ...state.progressTitles,
+      ...state.inputBoxes.map((call) => JSON.stringify(call.options)),
+      ...state.quickPicks.map((call) => JSON.stringify(call.items)),
+      ...[...state.info, ...state.warn, ...state.error].map((shown) =>
+        JSON.stringify(shown.options ?? {}),
+      ),
+    ];
+    // The flows did run — otherwise this asserts over an empty list.
+    expect(rendered.length).toBeGreaterThan(20);
+    for (const text of rendered) {
+      expect(text).not.toContain(TOKEN);
+      expect(text).not.toContain(OTHER);
+    }
+  });
+});

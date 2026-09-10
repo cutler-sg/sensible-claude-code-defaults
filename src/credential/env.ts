@@ -6,7 +6,7 @@
  * what `writeThrough.ts` is for. Both paths exist; neither replaces the other.
  */
 
-import { BEDROCK_ENV_VAR, type EnvCollectionLike, TOKEN_ENV_VAR } from "./types.js";
+import { BEDROCK_ENV_VAR, type EnvCollectionLike, TOKEN_ENV_VAR, type TokenEnv } from "./types.js";
 
 /**
  * §10.4 assertion #4 as a runtime invariant, not a convention.
@@ -17,7 +17,7 @@ import { BEDROCK_ENV_VAR, type EnvCollectionLike, TOKEN_ENV_VAR } from "./types.
  * that off we must not put the token in the collection at all, so construction
  * fails loudly rather than the caller getting a silently unsafe object.
  */
-export class TerminalTokenEnv {
+export class TerminalTokenEnv implements TokenEnv {
   readonly #collection: EnvCollectionLike;
 
   constructor(collection: EnvCollectionLike) {

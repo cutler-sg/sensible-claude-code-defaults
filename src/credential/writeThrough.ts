@@ -101,6 +101,30 @@ async function claimOwnership(env: ConfigEnv, planned: ReadyPlan): Promise<void>
 }
 
 /**
+ * Take the token out of the file, whoever put it there.
+ *
+ * The one deliberate exception to "a value we did not write is preserved". A
+ * plain removal only removes a token we own, which would leave a key the user
+ * has just asked us to delete sitting in the file for Claude Code to keep
+ * using — the opposite of what "Remove Bedrock API Key" promises, and a worse
+ * outcome than the drift rule protects against. So the key is claimed and then
+ * removed, in one commit, with a forced backup so the value is recoverable.
+ *
+ * `CLAUDE_CODE_USE_BEDROCK` is untouched: it is a routing choice, not a
+ * credential, and `config.bedrock` owns it.
+ */
+export async function removeTokenFromSettings(
+  env: ConfigEnv,
+  session: ApplySession,
+  opts?: CommitMeta,
+): Promise<CommitResult> {
+  const planned = ready(
+    await resetKeyPlan(env, { [TOKEN_SETTINGS_KEY]: undefined }, TOKEN_SETTINGS_KEY),
+  );
+  return commit(env, session, planned, { forceBackup: true, ...opts });
+}
+
+/**
  * Read the token the file currently holds, without writing anything.
  *
  * Absent, malformed, or a non-string value all read as "no token": this feeds

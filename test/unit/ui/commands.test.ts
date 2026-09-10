@@ -10,6 +10,7 @@ import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import type { Manifest } from "../../../src/manifest/types.js";
 import { registerCommands } from "../../../src/ui/commands.js";
 import { messages, reset, run, state } from "./commandsHost.js";
+import { fakeCredentialDeps } from "./credentialDeps.js";
 
 // `vscode` is supplied by the extension host and never bundled, so a unit test
 // has to stand it in. This stub is the *command* half of the API and is
@@ -44,6 +45,7 @@ function register(manifest: Manifest = BUNDLED_MANIFEST): void {
       healthRuns += 1;
     },
     markWrite: () => {},
+    credential: fakeCredentialDeps(),
     now: () => new Date("2026-09-10T12:00:00Z"),
   });
 }
@@ -627,6 +629,7 @@ describe("the command wrapper", () => {
         throw new Error("the panel exploded");
       },
       markWrite: () => {},
+      credential: fakeCredentialDeps(),
     });
 
     await expect(run("sensibleDefaults.runHealthCheck")).resolves.toBeUndefined();
@@ -647,6 +650,7 @@ describe("the command wrapper", () => {
       log: log as never,
       runHealth: () => Promise.reject("plain string"),
       markWrite: () => {},
+      credential: fakeCredentialDeps(),
     });
 
     await run("sensibleDefaults.runHealthCheck");

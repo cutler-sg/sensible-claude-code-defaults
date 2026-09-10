@@ -20,6 +20,19 @@ export interface QuickPickCall {
   options?: unknown;
 }
 
+export interface InputBoxCall {
+  options: InputBoxOptions;
+}
+
+export interface InputBoxOptions {
+  title?: string;
+  prompt?: string;
+  placeHolder?: string;
+  password?: boolean;
+  ignoreFocusOut?: boolean;
+  validateInput?: (value: string) => unknown;
+}
+
 type Answer = (call: QuickPickCall) => unknown;
 
 export const state = {
@@ -27,6 +40,8 @@ export const state = {
   warn: [] as Shown[],
   error: [] as Shown[],
   quickPicks: [] as QuickPickCall[],
+  inputBoxes: [] as InputBoxCall[],
+  progressTitles: [] as string[],
   executed: [] as { command: string; args: unknown[] }[],
   registered: new Map<string, (...args: unknown[]) => Promise<void>>(),
   opened: [] as string[],
@@ -36,6 +51,10 @@ export const state = {
   openFailure: undefined as Error | undefined,
   /** Answers the next QuickPick; default cancels. */
   quickPickAnswer: (() => undefined) as Answer,
+  /** Answers the next input box; default cancels (returns undefined). */
+  inputBoxAnswer: ((_call: InputBoxCall) => undefined) as (
+    call: InputBoxCall,
+  ) => string | undefined,
   /** Answers a modal/notification by message; default dismisses. */
   answer: ((_shown: Shown) => undefined) as (shown: Shown) => string | undefined,
 };
@@ -45,6 +64,8 @@ export function reset(): void {
   state.warn = [];
   state.error = [];
   state.quickPicks = [];
+  state.inputBoxes = [];
+  state.progressTitles = [];
   state.executed = [];
   state.registered = new Map();
   state.opened = [];
@@ -52,6 +73,7 @@ export function reset(): void {
   state.configuration = new Map();
   state.openFailure = undefined;
   state.quickPickAnswer = () => undefined;
+  state.inputBoxAnswer = () => undefined;
   state.answer = () => undefined;
 }
 
@@ -83,7 +105,34 @@ export const window = {
   showTextDocument: async (document: unknown) => {
     state.shownDocuments.push(document);
   },
+  showInputBox: (options: InputBoxOptions = {}) => {
+    const call: InputBoxCall = { options };
+    state.inputBoxes.push(call);
+    return Promise.resolve(state.inputBoxAnswer(call));
+  },
+  /**
+   * The real API runs the task immediately and shows progress around it, so the
+   * stub does the same: a flow's behaviour must not depend on whether a
+   * notification is rendered.
+   */
+  withProgress: async <T>(options: { title?: string }, task: () => Promise<T>): Promise<T> => {
+    if (options.title !== undefined) state.progressTitles.push(options.title);
+    return task();
+  },
 };
+
+export enum InputBoxValidationSeverity {
+  Ignore = 0,
+  Info = 1,
+  Warning = 2,
+  Error = 3,
+}
+
+export enum ProgressLocation {
+  SourceControl = 1,
+  Window = 10,
+  Notification = 15,
+}
 
 export const workspace = {
   openTextDocument: async (uri: { fsPath: string }) => {

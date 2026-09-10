@@ -74,6 +74,14 @@ export const LABELS = {
   },
   "cred.valid": {
     skipped: "Not set up yet — connection testing arrives in the next update",
+    untested: "Your Bedrock API key hasn't been tried yet — test it to be sure it works",
+    pass: "Your Bedrock API key works",
+    withoutHaiku: "Your key works, but the small, fast Claude model isn't turned on for you",
+    badCredential: "Amazon wouldn't accept your Bedrock API key — it may have expired",
+    modelNotEnabled: "Amazon accepted your key, but the Claude models aren't turned on for you",
+    wrongRegion: "The Claude models aren't available in the Amazon region you chose",
+    network: "Couldn't reach Amazon to try your Bedrock API key",
+    unknown: "Amazon gave an answer we didn't understand when we tried your key",
   },
   "cred.age": {
     skipped: "Not set up yet — API key reminders arrive in the next update",
