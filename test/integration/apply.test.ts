@@ -379,15 +379,25 @@ describe("/setup-bedrock-style rewrite", () => {
     expect(planned.noop).toBe(true);
   });
 
-  it("repairs the file mode, and reports no repair the second time", async () => {
-    expect(await repairPermissions(env)).toEqual({ repaired: true });
+  it("repairs the file mode, and reports the mode it found", async () => {
+    expect(await repairPermissions(env)).toEqual({ kind: "repaired", before: 0o664 });
     expect(await mode(file)).toBe(0o600);
-    expect(await repairPermissions(env)).toEqual({ repaired: false });
+    expect(await repairPermissions(env)).toEqual({ kind: "ok", before: 0o600 });
   });
 
   it("reports Windows as unsupported rather than repairing mode bits", async () => {
-    expect(await repairPermissions({ ...env, platform: "win32" })).toEqual({ unsupported: true });
+    expect(await repairPermissions({ ...env, platform: "win32" })).toEqual({
+      kind: "unsupported",
+    });
     expect(await mode(file)).toBe(0o664);
+  });
+});
+
+describe("a fresh install with no settings.json", () => {
+  it("reports the file as absent rather than throwing out of the health check", async () => {
+    // FR-2.8 runs on every health check, and the first one happens before the
+    // user has ever applied anything: ENOENT is the normal case, not an error.
+    expect(await repairPermissions(env)).toEqual({ kind: "absent" });
   });
 });
 
@@ -508,6 +518,35 @@ describe("malformed containers inside a well-formed file", () => {
     expect(result.raw).toBe(text);
     expect(await readText()).toBe(text);
     expect(await exists(snapshotPath(claudeDir))).toBe(false);
+  });
+
+  it("blocks on a wrong-shaped desired value, with no file to quote", async () => {
+    // The manifest, not the file, is malformed here: nothing has been read, so
+    // the blocked result carries no raw text.
+    const result = await plan(env, desiredFixture({ enabledPlugins: ["not-a-map"] }));
+
+    expect(result).toMatchObject({ kind: "blocked", reason: "malformed", raw: "" });
+  });
+
+  it("does not swallow a failure that is not about the file's shape", async () => {
+    // Only MALFORMED_SETTINGS becomes a blocked plan. Anything else is a bug
+    // or a host failure, and must reach the caller rather than being reported
+    // to the user as "your settings.json is malformed".
+    const boom = new Error("snapshot store returned nonsense");
+    const values = {
+      get "env.AWS_REGION"(): never {
+        throw boom;
+      },
+    } as unknown as Snapshot["values"];
+    const broken: ConfigEnv = {
+      ...env,
+      snapshotStore: {
+        load: () => Promise.resolve({ schemaVersion: 1, values }),
+        save: () => Promise.resolve(),
+      },
+    };
+
+    await expect(plan(broken, desiredFixture())).rejects.toThrow(boom);
   });
 
   it("blocks a reset of the offending key too", async () => {
@@ -638,6 +677,41 @@ describe("resetting an element-owned key", () => {
     const shrunk = ready(await plan(env, desiredFixture({ extraKnownMarketplaces: {} })));
     await commit(env, session, shrunk);
     expect(getPath(await readJson(), "extraKnownMarketplaces")).toEqual({ theirs });
+  });
+
+  it("claims nothing when the file's value is the wrong shape", async () => {
+    await seedSettings(`${JSON.stringify({ permissions: { deny: "Read(./.env)" } }, null, 2)}\n`);
+
+    const planned = ready(await resetKeyPlan(env, desiredFixture(), "permissions.deny"));
+
+    // There is nothing to take ownership of, so the string is preserved and
+    // reported as drift — a reset is not a licence to reshape the file.
+    expect(planned.merge.changes).toEqual([]);
+    expect(planned.merge.drift.map((entry) => entry.key)).toEqual(["permissions.deny"]);
+  });
+
+  it("claims nothing when the manifest does not mention the key", async () => {
+    await seedSettings(`${JSON.stringify({ enabledPlugins: { "user@theirs": true } }, null, 2)}\n`);
+
+    const withoutPlugins: Desired = { ...desiredFixture() };
+    delete withoutPlugins.enabledPlugins;
+    const planned = ready(await resetKeyPlan(env, withoutPlugins, "enabledPlugins"));
+
+    expect(planned.noop).toBe(true);
+    expect(planned.merge.snapshotValues.enabledPlugins).toBeUndefined();
+  });
+
+  it("claims nothing when the recommended value is a removal", async () => {
+    await seedSettings(`${JSON.stringify({ enabledPlugins: { "user@theirs": true } }, null, 2)}\n`);
+
+    const planned = ready(
+      await resetKeyPlan(env, desiredFixture({ enabledPlugins: undefined }), "enabledPlugins"),
+    );
+
+    // A reset can only adopt elements we recommend; recommending none leaves
+    // the user's plugin unowned rather than adopting it in order to delete it.
+    expect(planned.merge.changes).toEqual([]);
+    expect(getPath(planned.merge.next, "enabledPlugins")).toEqual({ "user@theirs": true });
   });
 
   it("never adopts an element the manifest does not ask for", async () => {

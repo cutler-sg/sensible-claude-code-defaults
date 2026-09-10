@@ -36,6 +36,7 @@ import {
 import {
   backupSettings,
   ensureMode0600,
+  type ModeRepair,
   pruneBackups,
   restoreBackup,
   type WriteOptions,
@@ -307,17 +308,15 @@ async function forgetOwnership(env: ConfigEnv): Promise<void> {
 /**
  * FR-2.8: Claude Code rewrites `settings.json` itself and does not preserve its
  * mode, so this runs on every health check rather than only after our writes.
+ *
+ * The writer's outcome is passed through unchanged, `absent` included: the
+ * first health check of a fresh install runs before the user has applied
+ * anything, and "there is no file yet" is a state the panel reports rather than
+ * a failure that should throw out of it. Windows ACL repair is M6 (plan Q-K);
+ * mode bits mean nothing there, so it reports `unsupported`.
  */
-export async function repairPermissions(
-  env: ConfigEnv,
-): Promise<{ repaired: boolean } | { unsupported: true }> {
-  const platform = env.platform ?? process.platform;
-  if (platform === "win32") {
-    // Windows ACL repair is M6 (plan Q-K); mode bits mean nothing there.
-    return { unsupported: true };
-  }
-  const { repaired } = await ensureMode0600(settingsPath(env.claudeDir), platform);
-  return { repaired };
+export async function repairPermissions(env: ConfigEnv): Promise<ModeRepair> {
+  return ensureMode0600(settingsPath(env.claudeDir), env.platform ?? process.platform);
 }
 
 async function backupOnce(
