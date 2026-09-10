@@ -8,7 +8,7 @@ import { credValidCheck } from "../../../src/health/checks/cred.valid.js";
 import { LABELS } from "../../../src/health/labels.js";
 import type { CheckContext, CredentialContext } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
-import { daysAgo, makeCtx, NOW, okCredential } from "./fixture.js";
+import { daysAgo, FIXTURE_TOKEN, makeCtx, NOW, okCredential } from "./fixture.js";
 
 const POLICY = BUNDLED_MANIFEST.credential;
 
@@ -139,6 +139,15 @@ describe("cred.valid", () => {
     expect(result.label).not.toBe(LABELS["cred.valid"].modelNotEnabled);
   });
 
+  it("says 'couldn't tell' rather than throwing on a kind it does not know (F12)", () => {
+    // A future `ConnectionResult` variant must degrade to a row the user can
+    // read, not an exception the runner has to catch and badge.
+    const result = withResult({ kind: "not-a-real-kind" } as never);
+    expect(result.level).toBe("info");
+    expect(result.label).toBe(LABELS["cred.valid"].unrecognised);
+    expect(result.fix).toMatchObject({ command: "sensibleDefaults.testConnection" });
+  });
+
   it.each([
     ["bad-credential", { kind: "bad-credential", status: 403 } as const],
     ["insufficient-permissions", { kind: "insufficient-permissions", status: 403 } as const],
@@ -171,6 +180,32 @@ describe("cred.valid", () => {
     expect(
       withResult({ kind: "model-not-enabled", model: "us.anthropic.claude-haiku" }).label,
     ).not.toContain("us.anthropic");
+  });
+
+  /**
+   * Hard rule 4, on the two branches added for F8 and F12. Both render a
+   * `ConnectionResult` the check has not seen before, so both are asked to
+   * prove they render nothing that came from AWS or from the key.
+   */
+  it("renders nothing from the result on the new branches", () => {
+    const leaky = [
+      { kind: "insufficient-permissions", status: 403 },
+      // A future variant, carrying exactly the things a body would smuggle in.
+      {
+        kind: "some-future-kind",
+        status: 418,
+        token: FIXTURE_TOKEN,
+        message: `AccessDeniedException for ${FIXTURE_TOKEN} in account 123456789012`,
+      },
+    ] as unknown as ConnectionResult[];
+
+    for (const result of leaky) {
+      const rendered = JSON.stringify(withResult(result));
+      expect(rendered).not.toContain(FIXTURE_TOKEN);
+      expect(rendered).not.toContain("123456789012");
+      expect(rendered).not.toContain("AccessDeniedException");
+      expect(rendered).not.toMatch(/\b418\b/);
+    }
   });
 });
 

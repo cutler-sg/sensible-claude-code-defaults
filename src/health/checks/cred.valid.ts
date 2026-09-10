@@ -53,6 +53,11 @@ function describe(result: ConnectionResult): { level: Level; label: string } {
       return { level: "error", label: LABELS["cred.valid"].network };
     case "unknown":
       return { level: "error", label: LABELS["cred.valid"].unknown };
+    default:
+      // A `ConnectionResult` variant this check has not been taught about.
+      // `info`, so an unreadable row never badges, and never an exception: a
+      // check that throws gives the user an error they cannot act on (F12).
+      return { level: "info", label: LABELS["cred.valid"].unrecognised };
   }
 }
 

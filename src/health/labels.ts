@@ -89,6 +89,7 @@ export const LABELS = {
     wrongRegion: "The Claude models aren't available in the Amazon region you chose",
     network: "Couldn't reach Amazon to try your Bedrock API key",
     unknown: "Amazon gave an answer we didn't understand when we tried your key",
+    unrecognised: "We couldn't tell how the last test of your Bedrock API key went — try it again",
   },
   "cred.age": {
     unknown: "We don't know how long ago your Bedrock API key was saved",
