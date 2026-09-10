@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Secrets cannot be referenced directly in `if:`, so surface them as job-level env.
+    env:
+      HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' }}
+      HAS_OVSX: ${{ secrets.OVSX_PAT != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test
+
+      - name: Package
+        run: bun run package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: "*.vsix"
+          if-no-files-found: error
+
+      # Azure DevOps retires global PATs on 2026-12-01; publish via Entra workload
+      # identity federation from the outset (PRD §8).
+      - name: Azure login (OIDC)
+        if: ${{ env.HAS_AZURE == 'true' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish to VS Code Marketplace
+        if: ${{ env.HAS_AZURE == 'true' }}
+        run: bunx vsce publish --azure-credential --pre-release --no-dependencies
+
+      - name: Publish to Open VSX
+        if: ${{ env.HAS_OVSX == 'true' }}
+        run: bunx ovsx publish --pre-release -p "${{ secrets.OVSX_PAT }}"
