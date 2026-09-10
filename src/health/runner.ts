@@ -8,6 +8,7 @@
  */
 
 import { LABELS } from "./labels.js";
+import { noticeResults } from "./notices.js";
 import type { Check, CheckContext, CheckResult, HealthReport } from "./types.js";
 import { countLevels } from "./types.js";
 
@@ -16,11 +17,17 @@ export async function runAll(
   ctx: CheckContext,
   now: () => Date = () => new Date(),
 ): Promise<HealthReport> {
+  const at = now();
   const results: CheckResult[] = [];
   for (const check of checks) {
     results.push(await runOne(check, ctx));
   }
-  return { at: now().toISOString(), results, counts: countLevels(results) };
+  // Appended rather than registered: a notice is manifest text, not a check,
+  // and there are between zero and two per run. The tree groups by `group`, so
+  // they land at the end of Configuration — next to `config.stale`, which is
+  // the other row about what the recommendations currently say.
+  results.push(...noticeResults(ctx.manifest, at));
+  return { at: at.toISOString(), results, counts: countLevels(results) };
 }
 
 /**
