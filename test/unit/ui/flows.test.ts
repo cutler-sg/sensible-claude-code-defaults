@@ -380,6 +380,98 @@ describe("adoptToken", () => {
   });
 });
 
+/**
+ * F2 and F3. A mirror that did not happen is never announced as one.
+ *
+ * `merge` preserves a value at the token key that we did not write (hard rule
+ * 3, correctly), so a commit can report `written: true` for the
+ * `CLAUDE_CODE_USE_BEDROCK` half while the token itself was never mirrored —
+ * and the flows said "Claude Code can now see your Bedrock API key" anyway.
+ * `reapplyToken` was the worst of it: `cred.mirrored` routes to it whenever the
+ * file's token reads as absent, which includes an empty string, so the user got
+ * a fix button that claimed success, changed nothing, and reappeared on the
+ * next health run for ever.
+ */
+describe("a settings file whose token key holds something else", () => {
+  const SUCCESS = /Claude Code can now see your Bedrock API key/;
+  const BLOCKED = /wasn't copied into your settings file/;
+
+  /** The action offered alongside the "not mirrored" warning. */
+  const TAKE_OVER = "Use the key I saved";
+
+  it.each([
+    ["a rival key", OTHER],
+    // The value that made `reapplyToken` a permanent no-op: the file's token
+    // reads as absent, so `cred.mirrored` keeps nominating the fix.
+    ["an empty string", ""],
+  ])("does not claim setToken mirrored the key over %s", async (_name, existing) => {
+    await seed({ env: { [TOKEN_ENV_VAR]: existing } });
+    type(TOKEN);
+
+    await flows.setToken(deps());
+
+    expect(await fileToken()).toBe(existing);
+    expect(messages()).not.toContainEqual(expect.stringMatching(SUCCESS));
+    expect(messages()).toContainEqual(expect.stringMatching(BLOCKED));
+  });
+
+  it("does not claim reapplyToken mirrored the key", async () => {
+    await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });
+    await seed({ env: { [TOKEN_ENV_VAR]: "", CLAUDE_CODE_USE_BEDROCK: "1" } });
+
+    await flows.reapplyToken(deps());
+
+    expect(messages()).not.toContainEqual(expect.stringMatching(SUCCESS));
+    expect(messages()).toContainEqual(expect.stringMatching(BLOCKED));
+  });
+
+  /**
+   * The point of the whole finding: the fix button has to be able to finish.
+   * Health says "Claude Code can't see your key", the user clicks the fix, and
+   * the next health run must not say the same thing again.
+   */
+  it("terminates the health → fix → health loop when the user takes the key over", async () => {
+    await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });
+    await seed({ env: { [TOKEN_ENV_VAR]: "", CLAUDE_CODE_USE_BEDROCK: "1" } });
+    click(TAKE_OVER);
+
+    await flows.reapplyToken(deps());
+
+    expect(await fileToken()).toBe(TOKEN);
+
+    // A second click has nothing left to complain about, which is what
+    // "terminates" means: the same fix, run again, no longer reports a
+    // conflict — so the health run behind it stops re-offering it.
+    reset();
+    await flows.reapplyToken(deps());
+
+    expect(await fileToken()).toBe(TOKEN);
+    expect(messages()).not.toContainEqual(expect.stringMatching(BLOCKED));
+    expect(messages()).toContainEqual(expect.stringMatching(SUCCESS));
+  });
+
+  it("changes nothing when the user does not take the key over", async () => {
+    await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });
+    await seed({ env: { [TOKEN_ENV_VAR]: OTHER } });
+
+    await flows.reapplyToken(deps());
+
+    expect(await fileToken()).toBe(OTHER);
+  });
+
+  it("names neither key in the warning or its action (hard rule 4)", async () => {
+    await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });
+    await seed({ env: { [TOKEN_ENV_VAR]: OTHER } });
+
+    await flows.reapplyToken(deps());
+
+    for (const shown of [...state.warn, ...state.info, ...state.error]) {
+      expect(JSON.stringify(shown)).not.toContain(TOKEN);
+      expect(JSON.stringify(shown)).not.toContain(OTHER);
+    }
+  });
+});
+
 describe("reapplyToken", () => {
   it("copies the saved key into the file so the panel can see it", async () => {
     await credential.store.set({ token: TOKEN, setAt: NOW.toISOString() });

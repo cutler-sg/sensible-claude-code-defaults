@@ -30,6 +30,7 @@ import {
   readTokenFromSettings,
   removeTokenFromSettings,
   syncTokenToSettings,
+  TOKEN_SETTINGS_KEY,
 } from "../credential/writeThrough.js";
 import { LABELS } from "../health/labels.js";
 import type { Manifest } from "../manifest/types.js";
@@ -104,8 +105,7 @@ async function enterToken(
   const token = normalizeToken(entered);
   await store(deps, token);
   deps.log.info("Saved a Bedrock API key to the system keychain.");
-  await mirror(deps, token);
-  await offerTest(deps);
+  if (await mirror(deps, token)) await offerTest(deps);
   await deps.runHealth();
 }
 
@@ -247,9 +247,7 @@ export async function reapplyToken(deps: FlowDeps): Promise<void> {
   }
 
   deps.credential.terminal.apply(stored.token);
-  await sync(deps, stored.token);
-  deps.log.info("Copied the saved Bedrock API key into the settings file.");
-  await vscode.window.showInformationMessage("Claude Code can now see your Bedrock API key.");
+  await mirror(deps, stored.token);
   await deps.runHealth();
 }
 
@@ -404,10 +402,57 @@ async function store(deps: FlowDeps, token: string): Promise<void> {
   deps.credential.terminal.apply(token);
 }
 
-async function mirror(deps: FlowDeps, token: string): Promise<void> {
+/**
+ * Write the token through and say only what actually happened (F2, F3).
+ *
+ * `merge` preserves a value at the token key that we did not write — hard rule
+ * 3, and correct — so a commit can come back `written: true` for the
+ * `CLAUDE_CODE_USE_BEDROCK` half while the token itself never moved. Announcing
+ * success off the commit alone therefore told the user Claude Code could see a
+ * key it could not, and left `reapplyToken` as a fix button that changed
+ * nothing and reappeared on the next health run for ever.
+ *
+ * So the result is inspected rather than discarded: the token key appearing in
+ * `drift` means the file kept someone else's value, which is a conflict only
+ * the user can settle. Returns whether the file now holds the token, so callers
+ * do not follow a failed mirror with an offer that assumes it worked.
+ */
+async function mirror(deps: FlowDeps, token: string): Promise<boolean> {
   const result = await sync(deps, token);
-  if (result?.reason === "stale") return;
+  if (result === undefined || result.reason === "stale") return false;
+
+  if (result.drift.some((entry) => entry.key === TOKEN_SETTINGS_KEY)) {
+    await offerTakeOver(deps, token);
+    return false;
+  }
+
+  deps.log.info("Copied the saved Bedrock API key into the settings file.");
   await vscode.window.showInformationMessage("Claude Code can now see your Bedrock API key.");
+  return true;
+}
+
+/**
+ * The file holds a token we did not write. Overwriting it silently is exactly
+ * what hard rule 3 forbids, and leaving the user with a button that does
+ * nothing is what made this a bug — so the one thing that can end it is asked
+ * for directly, in the same words `resolveTokenConflict` uses.
+ *
+ * The two keys are described by where they came from and never by their value:
+ * there is nothing safe to show that would tell them apart.
+ */
+async function offerTakeOver(deps: FlowDeps, token: string): Promise<void> {
+  deps.log.warn("The settings file holds a different Bedrock API key; it was not overwritten.");
+  const choice = await vscode.window.showWarningMessage(
+    "Your key wasn't copied into your settings file, because it already holds a different one. Which should Claude Code use?",
+    USE_SAVED,
+  );
+  if (choice !== USE_SAVED) {
+    deps.log.info("The user left the settings file's Bedrock API key in place.");
+    return;
+  }
+
+  await takeOwnership(deps, token);
+  deps.log.info("Replaced the settings file's Bedrock API key with the saved one.");
 }
 
 /**
