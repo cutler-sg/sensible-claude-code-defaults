@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { settingsPath } from "../../../src/config/paths.js";
 import { MemorySnapshotStore } from "../../../src/config/snapshot.js";
 import type { ConfigEnv } from "../../../src/config/types.js";
+import { MemoryTokenStore } from "../../../src/credential/store.js";
+import { readTokenFromSettings } from "../../../src/credential/writeThrough.js";
+import type { CredentialDeps } from "../../../src/health/context.js";
 import type { ClaudeCodeDetection, HealthReport } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import {
@@ -16,6 +19,7 @@ import {
 } from "../../../src/ui/healthRunner.js";
 import { APPLY_ACTION, DETAILS_ACTION } from "../../../src/ui/notify.js";
 import { messages, reset, state } from "./commandsHost.js";
+import { FakeTerminalEnv } from "./credentialDeps.js";
 
 vi.mock("vscode", async () => await import("./commandsHost.js"));
 
@@ -30,6 +34,8 @@ function memento(): NotifiedStore {
     },
   };
 }
+
+const TOKEN = "ABSKQmVkcm9ja0FQSUtleUV4YW1wbGVWYWx1ZQ";
 
 const INSTALLED: ClaudeCodeDetection = {
   extension: { installed: true, version: "2.1.267" },
@@ -249,6 +255,65 @@ describe("FR-5.5 notification gating", () => {
     level = "error";
     await run();
     expect(state.info).toHaveLength(1);
+  });
+});
+
+/**
+ * F13. The terminal collection is a third copy of the token, and until now
+ * nothing ever repaired it: window A went on exporting a key into every new
+ * terminal that window B had cleared, because a collection is per-window and
+ * only the flow that changed the key touched it.
+ *
+ * The keychain is canonical, so the collection is re-derived from it on every
+ * health run — the runs that already happen when the file changes, when the
+ * panel refreshes, and at startup.
+ */
+describe("re-deriving the terminal collection from the keychain", () => {
+  function credential(store: MemoryTokenStore): () => CredentialDeps {
+    return () => ({ store, readFromSettings: () => readTokenFromSettings(env) });
+  }
+
+  it("exports the saved key, so a window that missed the change catches up", async () => {
+    const store = new MemoryTokenStore({ token: TOKEN, setAt: "2026-01-01T00:00:00.000Z" });
+    const terminal = new FakeTerminalEnv();
+
+    await runner({ credential: credential(store), terminal })();
+
+    expect(terminal.applied).toEqual([TOKEN]);
+  });
+
+  it("stops exporting a key another window cleared", async () => {
+    const store = new MemoryTokenStore({ token: TOKEN, setAt: "2026-01-01T00:00:00.000Z" });
+    const terminal = new FakeTerminalEnv();
+    const run = runner({ credential: credential(store), terminal });
+
+    await run();
+    await store.clear();
+    await run();
+
+    expect(terminal.cleared).toBe(1);
+  });
+
+  it("names no part of the key in anything it logs (hard rule 4)", async () => {
+    const store = new MemoryTokenStore({ token: TOKEN, setAt: "2026-01-01T00:00:00.000Z" });
+
+    await runner({ credential: credential(store), terminal: new FakeTerminalEnv() })();
+
+    for (const line of logged) expect(line).not.toContain(TOKEN.slice(0, 6));
+  });
+
+  it("does not take the run down when the keychain will not open", async () => {
+    const store = new MemoryTokenStore();
+    store.get = () => Promise.reject(new Error("Cannot autolaunch D-Bus"));
+    const terminal = new FakeTerminalEnv();
+
+    await runner({ credential: credential(store), terminal })();
+
+    // `cred.present` reports an unreachable keychain with its own message; the
+    // panel must still paint, and the collection is left exactly as it was.
+    expect(reports).toHaveLength(1);
+    expect(terminal.applied).toEqual([]);
+    expect(terminal.cleared).toBe(0);
   });
 });
 

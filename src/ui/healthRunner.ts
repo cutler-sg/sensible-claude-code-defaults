@@ -13,6 +13,7 @@
 
 import * as vscode from "vscode";
 import type { ConfigEnv } from "../config/types.js";
+import type { TokenEnv } from "../credential/types.js";
 import { ALL_CHECKS } from "../health/catalogue.js";
 import type { CredentialDeps } from "../health/context.js";
 import { buildContext } from "../health/context.js";
@@ -51,6 +52,13 @@ export interface HealthRunnerDeps {
    * "not tested yet" immediately after a test.
    */
   credential?: () => CredentialDeps;
+  /**
+   * The integrated-terminal collection, re-derived from the keychain on every
+   * run (F13). The collection is a per-window copy of the token that only the
+   * flow which changed the key used to touch, so a second window went on
+   * exporting a key the first had cleared, into every terminal it opened.
+   */
+  terminal?: TokenEnv;
   /** Injected only so a test can run a small catalogue. */
   checks?: readonly Check[];
 }
@@ -86,6 +94,7 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
       ...(deps.credential ? { credential: deps.credential() } : {}),
     });
     const report = await runAll(checks, ctx);
+    await syncTerminals(deps);
     deps.present(report);
     await vscode.commands.executeCommand("setContext", "sensibleDefaults.hasReport", true);
     await vscode.commands.executeCommand(
@@ -110,6 +119,39 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
       await vscode.window.showErrorMessage(HEALTH_FAILED_MESSAGE);
     }
   };
+}
+
+/**
+ * Bring the terminal collection back in line with the keychain (F13).
+ *
+ * The keychain is read here rather than taken from the context on purpose: a
+ * `CheckContext` has no field a token value can go into, which is what makes
+ * hard rule 4 structural for every check. So this is a second read — the same
+ * one `pushTokenToTerminals` does at activation, and cheap enough at the rate
+ * health runs happen.
+ *
+ * A keychain that will not open leaves the collection exactly as it is: "we
+ * could not ask" is not evidence the key is gone, and `cred.present` already
+ * reports that condition with a message the user can act on.
+ */
+async function syncTerminals(deps: HealthRunnerDeps): Promise<void> {
+  const terminal = deps.terminal;
+  const credential = deps.credential?.();
+  if (terminal === undefined || credential === undefined) return;
+
+  let stored: Awaited<ReturnType<CredentialDeps["store"]["get"]>>;
+  try {
+    stored = await credential.store.get();
+  } catch (error) {
+    deps.log.warn(`Could not read the system keychain: ${messageOf(error)}`);
+    return;
+  }
+
+  if (stored === undefined) {
+    terminal.clear();
+    return;
+  }
+  terminal.apply(stored.token);
 }
 
 async function notify(
