@@ -83,6 +83,29 @@ const MIN_WARN_AFTER_DAYS = 7;
 const NAME_SHAPE = /^[A-Za-z0-9._@ -]{1,64}$/;
 const NAME_PROBLEM = "name must be 1-64 characters of letters, digits, . _ @ - or space";
 /**
+ * How many entries each collection may hold.
+ *
+ * Unbounded, the manifest could ship tens of thousands of individually valid
+ * entries; `merge` would build a settings document over a megabyte and the
+ * writer would atomically write it. That is a denial of service against Claude
+ * Code's own config parse which *survives removal of the manifest*, because the
+ * damage is in the user's file rather than in the channel.
+ *
+ * The numbers are an order of magnitude above the bundled copy — three deny
+ * rules, four regions, no marketplaces — and far below anything a user would
+ * want in their settings.json.
+ */
+const MAX_DENY_RULES = 64;
+const MAX_MARKETPLACES = 32;
+const MAX_PLUGINS = 64;
+const MAX_REGIONS = 32;
+/**
+ * `selectNotices` renders two; this is what may be *carried*. It is higher on
+ * purpose: validation has no clock, so capping at two here would let a pair of
+ * long-expired notices take both slots and suppress a live one (Q-AA).
+ */
+const MAX_NOTICE_ENTRIES = 16;
+/**
  * A dot segment is two legal characters either side of a slash, so the shape
  * above cannot tell `../evil` from `a.b/c` — and a consumer joining it against
  * `https://github.com/` gets `https://github.com/evil`, a different repository
@@ -197,22 +220,28 @@ function validateDefaults(value: unknown, fail: Fail): Manifest["defaults"] | un
     }
   }
 
-  const deny: string[] = [];
-  const permissions = value.permissions;
-  if (!isPlainObject(permissions) || !Array.isArray(permissions.deny)) {
-    fail("defaults.permissions.deny", "must be an array");
-  } else {
-    for (const [index, rule] of permissions.deny.entries()) {
-      if (typeof rule !== "string") fail(`defaults.permissions.deny[${index}]`, "must be a string");
-      else deny.push(rule);
-    }
-  }
+  const deny = validateDeny(value.permissions, fail) ?? [];
 
   const extraKnownMarketplaces = validateMarketplaces(value.extraKnownMarketplaces, fail);
   const enabledPlugins = validatePlugins(value.enabledPlugins, fail);
 
   if (extraKnownMarketplaces === undefined || enabledPlugins === undefined) return undefined;
   return { env, permissions: { deny }, extraKnownMarketplaces, enabledPlugins };
+}
+
+function validateDeny(permissions: unknown, fail: Fail): string[] | undefined {
+  const path = "defaults.permissions.deny";
+  if (!isPlainObject(permissions) || !Array.isArray(permissions.deny)) {
+    return fail(path, "must be an array");
+  }
+  if (tooMany(permissions.deny, MAX_DENY_RULES, path, fail)) return undefined;
+
+  const deny: string[] = [];
+  for (const [index, rule] of permissions.deny.entries()) {
+    if (typeof rule !== "string") fail(`${path}[${index}]`, "must be a string");
+    else deny.push(rule);
+  }
+  return deny;
 }
 
 /**
@@ -222,6 +251,9 @@ function validateDefaults(value: unknown, fail: Fail): Manifest["defaults"] | un
  */
 function validateMarketplaces(value: unknown, fail: Fail): JsonObject | undefined {
   if (!isPlainObject(value)) return fail("defaults.extraKnownMarketplaces", "must be an object");
+  if (tooMany(Object.keys(value), MAX_MARKETPLACES, "defaults.extraKnownMarketplaces", fail)) {
+    return undefined;
+  }
 
   const out: JsonObject = {};
   for (const [name, entry] of Object.entries(value)) {
@@ -263,6 +295,7 @@ function validatePlugins(
   fail: Fail,
 ): Record<string, boolean | string[]> | undefined {
   if (!isPlainObject(value)) return fail("defaults.enabledPlugins", "must be an object");
+  if (tooMany(Object.keys(value), MAX_PLUGINS, "defaults.enabledPlugins", fail)) return undefined;
 
   const out: Record<string, boolean | string[]> = {};
   for (const [name, entry] of Object.entries(value)) {
@@ -287,6 +320,7 @@ function validateRegions(value: unknown, fail: Fail): string[] | undefined {
   if (!Array.isArray(value) || value.length === 0) {
     return fail("regions", "must be a non-empty array");
   }
+  if (tooMany(value, MAX_REGIONS, "regions", fail)) return undefined;
   const out: string[] = [];
   for (const [index, region] of value.entries()) {
     if (typeof region !== "string" || !REGION_SHAPE.test(region)) {
@@ -341,6 +375,7 @@ function validateCredential(value: unknown, fail: Fail): CredentialPolicy | unde
 function validateNotices(value: unknown, fail: Fail): ManifestNotice[] | undefined {
   if (value === undefined) return [];
   if (!Array.isArray(value)) return fail("notices", "must be an array");
+  if (tooMany(value, MAX_NOTICE_ENTRIES, "notices", fail)) return undefined;
 
   const out: ManifestNotice[] = [];
   for (const [index, entry] of value.entries()) {
@@ -380,6 +415,18 @@ function sanitizeNotice(message: string): string {
   return stripped.length > MAX_NOTICE_LENGTH
     ? `${stripped.slice(0, MAX_NOTICE_LENGTH - 1)}…`
     : stripped;
+}
+
+/**
+ * Refuse the collection rather than truncate it. Which entries would survive a
+ * truncation is an accident of key or array order, and the result is a set of
+ * defaults nobody authored — the same reason every other rule here fails the
+ * field instead of repairing it.
+ */
+function tooMany(entries: readonly unknown[], max: number, path: string, fail: Fail): boolean {
+  if (entries.length <= max) return false;
+  fail(path, `must have at most ${max} entries`);
+  return true;
 }
 
 function requireString(value: unknown, path: string, fail: Fail): string | undefined {

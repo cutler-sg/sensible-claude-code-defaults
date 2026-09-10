@@ -1247,6 +1247,121 @@ describe("validateManifest", () => {
   });
 });
 
+/**
+ * F10. Every collection was unbounded, so 20,000 marketplaces + 20,000 plugins
+ * + 20,000 deny rules validated, `merge` produced a settings document over a
+ * megabyte, and the writer atomically wrote it to disk. That is a permanent
+ * denial of service against Claude Code's own config parse — delivered over the
+ * channel and surviving removal of the manifest, because the damage is in the
+ * user's file rather than in the manifest.
+ *
+ * Each cap fails the field rather than truncating: a truncated collection is a
+ * set of defaults nobody authored, and which half survives is an accident of
+ * key order.
+ */
+describe("collection caps", () => {
+  function repeated<T>(count: number, make: (index: number) => [string, T]): Record<string, T> {
+    return Object.fromEntries(Array.from({ length: count }, (_, index) => make(index)));
+  }
+
+  function marketplaces(count: number): Json {
+    return defaultsWith({
+      extraKnownMarketplaces: repeated(count, (index) => [
+        `market-${index}`,
+        { source: { source: "github", repo: `acme/tools-${index}` } },
+      ]),
+    });
+  }
+
+  function plugins(count: number): Json {
+    return defaultsWith({
+      enabledPlugins: repeated(count, (index) => [`linter-${index}@acme`, true]),
+    });
+  }
+
+  function denyRules(count: number): Json {
+    return defaultsWith({
+      permissions: { deny: Array.from({ length: count }, (_, index) => `Bash(cmd-${index}:*)`) },
+    });
+  }
+
+  function regionList(count: number): Json {
+    return manifestWith({
+      regions: Array.from({ length: count }, (_, index) => `us-east-${index + 1}`),
+    });
+  }
+
+  function noticeList(count: number): Json {
+    return manifestWith({
+      notices: Array.from({ length: count }, (_, index) => ({
+        level: "info",
+        message: `notice ${index}`,
+      })),
+    });
+  }
+
+  it.each([
+    ["defaults.permissions.deny", 64, denyRules],
+    ["defaults.extraKnownMarketplaces", 32, marketplaces],
+    ["defaults.enabledPlugins", 64, plugins],
+    ["regions", 32, regionList],
+    ["notices", 16, noticeList],
+  ])("accepts exactly %s entries at the cap for %s", (_path, cap, build) => {
+    expect(validateManifest(build(cap)).ok).toBe(true);
+  });
+
+  it.each([
+    ["defaults.permissions.deny", 64, denyRules],
+    ["defaults.extraKnownMarketplaces", 32, marketplaces],
+    ["defaults.enabledPlugins", 64, plugins],
+    ["regions", 32, regionList],
+    ["notices", 16, noticeList],
+  ])("refuses one entry past the cap for %s", (path, cap, build) => {
+    expect(refuse(build(cap + 1))).toContainEqual({
+      path,
+      problem: `must have at most ${cap} entries`,
+    });
+  });
+
+  // The reviewer's document: individually valid entries, collectively a
+  // settings.json no editor will open again.
+  it("refuses the 20,000-entry document that would brick the config parse", () => {
+    const oversized = structuredClone(VALID);
+    const defaults = oversized.defaults as Json;
+    defaults.extraKnownMarketplaces = (
+      marketplaces(20_000).defaults as Json
+    ).extraKnownMarketplaces;
+    defaults.enabledPlugins = (plugins(20_000).defaults as Json).enabledPlugins;
+    defaults.permissions = (denyRules(20_000).defaults as Json).permissions;
+
+    expect(refuse(oversized).map((problem) => problem.path)).toEqual([
+      "defaults.permissions.deny",
+      "defaults.extraKnownMarketplaces",
+      "defaults.enabledPlugins",
+    ]);
+  });
+
+  // Fail, do not truncate: which 64 of 20,000 survive is an accident of key
+  // order, and the result is a set of defaults nobody wrote.
+  it("refuses an oversized collection rather than keeping its first entries", () => {
+    expect(validateManifest(denyRules(65)).ok).toBe(false);
+  });
+
+  // The cap is on the collection, not a substitute for checking what is in it.
+  it("still checks every entry of a collection inside the cap", () => {
+    expect(refuse(defaultsWith({ permissions: { deny: ["ok", 7] } }))).toEqual([
+      { path: "defaults.permissions.deny[1]", problem: "must be a string" },
+    ]);
+  });
+
+  // `selectNotices` shows two; the cap is 16 because validation has no clock
+  // and must not let expired notices crowd out live ones (Q-AA).
+  it("keeps the notices cap above what the panel renders", () => {
+    expect(accept(noticeList(16)).notices).toHaveLength(16);
+    expect(selectNotices(accept(noticeList(16)).notices, new Date())).toHaveLength(2);
+  });
+});
+
 describe("selectNotices", () => {
   const NOW = new Date("2026-09-11T00:00:00Z");
 
