@@ -98,12 +98,34 @@ export async function fetchManifest(options: FetchManifestOptions): Promise<Fetc
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   try {
-    return await request(call, target, controller.signal, maxBytes);
+    // Raced against the budget rather than merely handed the signal. Passing
+    // `signal` asks the fetch implementation to cooperate; a stream that does
+    // not — and a `fetch` that never settles — would otherwise leave this
+    // promise pending forever, and with it the holder's `refresh()`, so no
+    // further health run happens for the life of the window. The request is
+    // still aborted; this only guarantees we stop waiting on it.
+    return await Promise.race([
+      request(call, target, controller.signal, maxBytes),
+      expire(controller.signal),
+    ]);
   } catch (error) {
     return { kind: "failed", reason: classifyThrown(error) };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Resolves — never rejects — the moment the budget is spent. The signal is
+ * always fresh here (the timer that fires it is armed one line above), so there
+ * is no already-aborted case to handle.
+ */
+function expire(signal: AbortSignal): Promise<FetchOutcome> {
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve({ kind: "failed", reason: "timeout" }), {
+      once: true,
+    });
+  });
 }
 
 async function request(
@@ -242,6 +264,12 @@ async function readCapped(response: Response, maxBytes: number): Promise<Body> {
       chunks.push(value);
     }
   } catch {
+    // Only a real read failure lands here. An abort mid-read used to as well,
+    // and was reported as a server sending us something unreadable, because
+    // this catch swallowed the `AbortError` before `classifyThrown` could see
+    // it. The race in `fetchManifest` now settles `timeout` the instant the
+    // signal fires, strictly before this catch can run, so the two support
+    // conversations these codes exist to tell apart stay told apart.
     return { kind: "unreadable-body" };
   } finally {
     // Releases the socket whether we finished, capped out, or failed.
