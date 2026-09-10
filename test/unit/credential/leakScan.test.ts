@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_FILE_BYTES,
@@ -397,7 +397,7 @@ describe("what the scan skips", () => {
         // `<workspace>/sub/../../<outside>`: a real directory, spelled as a
         // traversal. Reported unresolved, the hit path contains the workspace
         // folder's own name and reads as a file inside it.
-        const traversal = join(dir, "sub", "..", "..", outside.split("/").pop() ?? "");
+        const traversal = join(dir, "sub", "..", "..", basename(outside));
 
         const outcome = await scan({ folders: [traversal] });
 
@@ -405,7 +405,7 @@ describe("what the scan skips", () => {
         const found = outcome.kind === "hits" ? outcome.hits[0]?.file : undefined;
         expect(found).toBe(join(await realpath(outside), ".env"));
         expect(found).not.toContain("..");
-        expect(found).not.toContain(dir.split("/").pop() ?? "");
+        expect(found).not.toContain(basename(dir));
       } finally {
         await rm(outside, { recursive: true, force: true });
       }
@@ -440,7 +440,9 @@ describe("what the scan skips", () => {
       expect(outcome.kind).toBe("hits");
       const files = outcome.kind === "hits" ? outcome.hits.map((hit) => hit.file) : [];
       expect(files).toHaveLength(2);
-      for (const found of files) expect(found.startsWith(`${root}/`)).toBe(true);
+      // `${root}${sep}`, not a literal slash: on Windows every path the scan
+      // reports is backslash-separated and the literal form never matches.
+      for (const found of files) expect(found.startsWith(`${root}${sep}`)).toBe(true);
     });
 
     /**
