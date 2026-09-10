@@ -40,7 +40,7 @@ export {
   stateDir,
 } from "./paths.js";
 export { readSettings, serialize } from "./reader.js";
-export type { SnapshotMemento } from "./snapshot.js";
+export type { SnapshotMemento, SnapshotStoreOptions } from "./snapshot.js";
 export {
   createMementoSnapshotStore,
   FileSnapshotStore,

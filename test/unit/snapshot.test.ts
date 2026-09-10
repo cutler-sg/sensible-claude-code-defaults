@@ -1,4 +1,14 @@
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -347,5 +357,61 @@ describe("createMementoSnapshotStore", () => {
       schemaVersion: 1,
       values: {},
     });
+  });
+});
+
+describe("FileSnapshotStore honours the workspace guard (F14)", () => {
+  it("refuses to save a snapshot inside a workspace folder", async () => {
+    const workspace = join(dir, "proj");
+    await mkdir(workspace, { recursive: true });
+    const store = new FileSnapshotStore(join(workspace, "state.json"), {
+      workspaceFolders: [workspace],
+    });
+
+    await expect(store.save(SAMPLE)).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+    expect(await readdir(workspace)).toEqual([]);
+  });
+
+  it("refuses when only a symlink on the way points into a workspace", async () => {
+    const workspace = join(dir, "proj");
+    await mkdir(workspace, { recursive: true });
+    const link = join(dir, "state-dir");
+    await symlink(workspace, link);
+    const store = new FileSnapshotStore(join(link, "state.json"), {
+      workspaceFolders: [workspace],
+    });
+
+    await expect(store.save(SAMPLE)).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+    expect(await readdir(workspace)).toEqual([]);
+  });
+
+  it("refuses to quarantine a corrupt snapshot into a workspace folder", async () => {
+    const workspace = join(dir, "proj");
+    await mkdir(workspace, { recursive: true });
+    const file = join(workspace, "state.json");
+    await writeFile(file, "{ not json");
+    const store = new FileSnapshotStore(file, { workspaceFolders: [workspace] });
+
+    // A load must still succeed: the snapshot is advisory, and refusing to
+    // rename inside a workspace is not a reason to fail the health check.
+    await expect(store.load()).resolves.toEqual({ schemaVersion: 1, values: {} });
+    expect(await readdir(workspace)).toEqual(["state.json"]);
+  });
+
+  it("defaults to no workspace folders so existing callers keep working", async () => {
+    const store = new FileSnapshotStore(join(dir, "state.json"));
+
+    await store.save(SAMPLE);
+
+    await expect(store.load()).resolves.toEqual(SAMPLE);
+  });
+
+  it("uses the injected platform for the guard's path flavour", async () => {
+    const store = new FileSnapshotStore("C:\\proj\\state.json", {
+      workspaceFolders: ["c:\\PROJ"],
+      platform: "win32",
+    });
+
+    await expect(store.save(SAMPLE)).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
   });
 });

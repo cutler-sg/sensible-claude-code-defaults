@@ -13,8 +13,9 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import { assertOutsideWorkspace } from "./paths.js";
 import { EMPTY_SNAPSHOT, type JsonValue, type Snapshot, type SnapshotStore } from "./types.js";
 
 /** A fresh empty snapshot. Never hand out `EMPTY_SNAPSHOT` itself. */
@@ -112,8 +113,18 @@ function parseSnapshot(candidate: unknown): Snapshot | undefined {
  * Mode `0600` throughout: the snapshot records the value we wrote to
  * `env.AWS_BEARER_TOKEN_BEDROCK`, so it is as sensitive as the settings file.
  */
+export interface SnapshotStoreOptions {
+  /** Absolute workspace folder paths; a write resolving into any of them is refused. */
+  workspaceFolders: readonly string[];
+  /** Injected for tests. Defaults to `process.platform`. */
+  platform?: NodeJS.Platform;
+}
+
 export class FileSnapshotStore implements SnapshotStore {
-  constructor(private readonly file: string) {}
+  constructor(
+    private readonly file: string,
+    private readonly opts: SnapshotStoreOptions = { workspaceFolders: [] },
+  ) {}
 
   async load(): Promise<Snapshot> {
     let raw: string;
@@ -143,6 +154,10 @@ export class FileSnapshotStore implements SnapshotStore {
   }
 
   async save(snapshot: Snapshot): Promise<void> {
+    // FR-2.6: the snapshot holds the value we wrote to
+    // `env.AWS_BEARER_TOKEN_BEDROCK`, so it is exactly as unwelcome inside a
+    // workspace folder as `settings.json` is (F14).
+    await this.assertOutside(this.file);
     await mkdir(dirname(this.file), { recursive: true });
     const body = `${JSON.stringify(snapshot, null, 2)}\n`;
     const temp = `${this.file}.${randomUUID()}.tmp`;
@@ -165,10 +180,33 @@ export class FileSnapshotStore implements SnapshotStore {
   /** Move an unreadable snapshot aside so a support request can still see it. */
   private async quarantine(): Promise<void> {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const target = `${this.file}.corrupt-${stamp}`;
     try {
-      await rename(this.file, `${this.file}.corrupt-${stamp}`);
+      await this.assertOutside(target);
+      await rename(this.file, target);
     } catch {
-      // The snapshot is advisory; failing to set it aside must not fail a load.
+      // The snapshot is advisory; failing to set it aside — including because
+      // it would land inside a workspace folder — must not fail a load.
+    }
+  }
+
+  /** Guard the literal path and the path a symlink actually leads to (F1, F14). */
+  private async assertOutside(target: string): Promise<void> {
+    const platform = this.opts.platform ?? process.platform;
+    assertOutsideWorkspace(target, this.opts.workspaceFolders, platform);
+    assertOutsideWorkspace(await resolveTarget(target), this.opts.workspaceFolders, platform);
+  }
+}
+
+/** The file a path really names, falling back to its parent when it does not exist yet. */
+async function resolveTarget(file: string): Promise<string> {
+  try {
+    return await realpath(file);
+  } catch {
+    try {
+      return join(await realpath(dirname(file)), basename(file));
+    } catch {
+      return resolve(file);
     }
   }
 }
