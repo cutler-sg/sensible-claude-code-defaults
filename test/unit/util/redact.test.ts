@@ -247,3 +247,58 @@ describe("redactValue", () => {
     expect(JSON.stringify(out)).toContain(REDACTED);
   });
 });
+
+/**
+ * A settings document's keys are unconstrained user data, and a transposed
+ * key/value is an ordinary hand-editing mistake — so a key is as capable of
+ * carrying the token as a value is. `redactValue` walking values only meant
+ * that the one place `redact` could not reach was the one place a key/value
+ * swap puts the secret.
+ */
+describe("redactValue over object keys", () => {
+  const LEAVES: ReadonlySet<string> = new Set(
+    [...SECRET_KEYS].map((key) => key.slice(key.lastIndexOf(".") + 1)),
+  );
+
+  it("redacts a registered secret that appears as a key", () => {
+    register(UNRECOGNISED);
+
+    const out = redactValue({ env: { [UNRECOGNISED]: "AWS_BEARER_TOKEN_BEDROCK" } }, LEAVES);
+
+    expect(JSON.stringify(out)).not.toContain(UNRECOGNISED);
+    expect(JSON.stringify(out)).toContain(REDACTED);
+  });
+
+  /**
+   * The transposition in full: the value is the key name and the key is the
+   * key. `redact()` on the same text as a string would have caught this, so a
+   * walker that skips keys is strictly weaker than not walking at all.
+   */
+  it("catches a key the pattern net recognises, with an empty registry", () => {
+    const pasted = "ABSKQmVkcm9ja0FQSUtleVZhbHVl";
+
+    const out = redactValue(
+      JSON.parse(`{"env":{"${pasted}":"AWS_BEARER_TOKEN_BEDROCK"}}`) as unknown,
+      LEAVES,
+    );
+
+    expect(JSON.stringify(out)).not.toContain(pasted);
+  });
+
+  /**
+   * The one key that must survive verbatim: redacting it too would leave a row
+   * of two «redacted»s, and the reader could no longer tell which setting was
+   * removed.
+   */
+  it("keeps a secret key's own name so the row stays identifiable", () => {
+    expect(redactValue({ env: { AWS_BEARER_TOKEN_BEDROCK: "x" } }, LEAVES)).toEqual({
+      env: { AWS_BEARER_TOKEN_BEDROCK: REDACTED },
+    });
+  });
+
+  it("leaves an ordinary key alone", () => {
+    register(UNRECOGNISED);
+
+    expect(redactValue({ model: "sonnet", n: 1 }, LEAVES)).toEqual({ model: "sonnet", n: 1 });
+  });
+});

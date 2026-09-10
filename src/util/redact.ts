@@ -94,6 +94,15 @@ export function redact(message: string): string {
  * wrong and the registry is empty — which is exactly the situation on a machine
  * where the user pasted a key by hand and the extension has never held it.
  *
+ * Key *names* go through `redact` too, and for the same reason values do: a
+ * settings document's keys are unconstrained user data, so a transposed
+ * key/value — `{"ABSK…": "AWS_BEARER_TOKEN_BEDROCK"}`, an ordinary hand-editing
+ * slip — puts the token in the one position a value-only walker cannot see.
+ * Leaving keys alone also made this walker strictly weaker than `redact` over
+ * the serialised text, which would have caught that. A key that *is* a secret
+ * key keeps its own name: the row has to stay identifiable, or the reader
+ * cannot tell which setting was removed.
+ *
  * `secretKeys` may hold either dotted paths (`env.AWS_BEARER_TOKEN_BEDROCK`, as
  * `SECRET_KEYS` does) or bare leaf names; both match. Handing this the project's
  * own constant and having it silently match nothing, degrading the key rule to
@@ -105,11 +114,12 @@ export function redactValue(value: unknown, secretKeys: ReadonlySet<string>): un
   if (typeof value === "object" && value !== null) {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      const redacted = isSecret(key, secretKeys) ? REDACTED : redactValue(entry, secretKeys);
+      const secret = isSecret(key, secretKeys);
+      const redacted = secret ? REDACTED : redactValue(entry, secretKeys);
       // Defined, not assigned: `out.__proto__ = x` sets the prototype instead of
       // adding a key, so the entry vanishes from `JSON.stringify` and the report
       // silently omits part of the file the user is pasting to get help.
-      Object.defineProperty(out, key, {
+      Object.defineProperty(out, secret ? key : redact(key), {
         value: redacted,
         writable: true,
         enumerable: true,
