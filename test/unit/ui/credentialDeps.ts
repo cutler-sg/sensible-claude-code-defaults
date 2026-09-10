@@ -24,6 +24,25 @@ export class FakeTerminalEnv implements TokenEnv {
   }
 }
 
+/**
+ * A body shaped like a real `InvokeModel` answer.
+ *
+ * `validate.ts` refuses to read a bare `200` as proof the key works — a captive
+ * portal or an intercepting proxy answers 200 with its own page — so a fake
+ * that returns `{}` models a *failure*, not a success. Anything asserting on
+ * the happy path has to answer with the fields Bedrock actually sends.
+ */
+export const BEDROCK_OK_BODY = JSON.stringify({
+  content: [{ type: "text", text: "." }],
+  stop_reason: "max_tokens",
+  usage: { input_tokens: 1, output_tokens: 1 },
+});
+
+/** A `200` carrying that body, ready to hand back from a fake `fetch`. */
+export function bedrockOk(): Response {
+  return new Response(BEDROCK_OK_BODY, { status: 200 });
+}
+
 export interface FakeCredentialDeps extends CredentialFlowDeps {
   store: MemoryTokenStore;
   terminal: FakeTerminalEnv;
@@ -40,7 +59,7 @@ export function fakeCredentialDeps(initial?: StoredToken): FakeCredentialDeps {
     terminal: new FakeTerminalEnv(),
     recorded: [],
     requests: [],
-    respond: () => new Response("{}", { status: 200 }),
+    respond: () => bedrockOk(),
     recordTest: (result) => {
       deps.recorded.push(result);
     },

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   ageInDays,
   ageLevel,
+  CorruptTokenSecretError,
   MemoryTokenStore,
   SecretTokenStore,
 } from "../../../src/credential/store.js";
@@ -84,42 +85,70 @@ describe("SecretTokenStore", () => {
     expect(store.stamp(TOKEN)).toEqual({ token: TOKEN, setAt: NOW.toISOString() });
   });
 
-  describe("corrupt secrets", () => {
-    it("treats unparseable JSON as absent and clears it", async () => {
-      // Not JSON, and the whitespace inside rules it out as a token too.
+  /**
+   * F7. A secret we cannot read is never deleted.
+   *
+   * `get` runs before the user has clicked anything — the activation path pushes
+   * the token into the terminal collection — so a delete here destroys a key
+   * with no consent, no confirmation and no copy anywhere. The shape rules are
+   * documented as permissive precisely because they cannot tell a real key from
+   * an odd-looking one, which makes them the wrong thing to hang a deletion on.
+   * So: a secret that might hold a key is kept and reported; a secret that
+   * cannot hold one reads as absent and is still kept.
+   */
+  describe("a secret that cannot be parsed", () => {
+    /** Every branch below must leave the secret exactly as it found it. */
+    function expectKept(raw: string): void {
+      expect(secrets.values.get(TOKEN_SECRET_KEY)).toBe(raw);
+      expect(secrets.calls).not.toContain(`delete:${TOKEN_SECRET_KEY}`);
+    }
+
+    it("reports unparseable JSON rather than deleting it", async () => {
+      // Not JSON, and the whitespace inside rules it out as a token too — but
+      // it is still a string that might have held one.
       secrets.values.set(TOKEN_SECRET_KEY, "{not json");
-      await expect(store.get()).resolves.toBeUndefined();
-      expect(secrets.values.has(TOKEN_SECRET_KEY)).toBe(false);
+      await expect(store.get()).rejects.toThrow(CorruptTokenSecretError);
+      expectKept("{not json");
     });
 
-    it("treats a JSON value that is not an object as absent and clears it", async () => {
+    it("names no part of the secret in the error it throws (hard rule 4)", async () => {
+      secrets.values.set(TOKEN_SECRET_KEY, `{not json ${TOKEN}`);
+      await expect(store.get()).rejects.toThrow(/can't be read/);
+      const error = await store.get().catch((thrown: Error) => thrown);
+      expect((error as Error).message).not.toContain(TOKEN.slice(0, 6));
+    });
+
+    it("reports a JSON value that is not an object as absent, and keeps it", async () => {
       secrets.values.set(TOKEN_SECRET_KEY, "[1,2,3]");
       await expect(store.get()).resolves.toBeUndefined();
-      expect(secrets.values.has(TOKEN_SECRET_KEY)).toBe(false);
+      expectKept("[1,2,3]");
     });
 
-    it("treats an object with no token as absent and clears it", async () => {
-      secrets.values.set(TOKEN_SECRET_KEY, JSON.stringify({ setAt: NOW.toISOString() }));
+    it("reports an object with no token as absent, and keeps it", async () => {
+      const raw = JSON.stringify({ setAt: NOW.toISOString() });
+      secrets.values.set(TOKEN_SECRET_KEY, raw);
       await expect(store.get()).resolves.toBeUndefined();
-      expect(secrets.values.has(TOKEN_SECRET_KEY)).toBe(false);
+      expectKept(raw);
     });
 
-    it("treats an empty-string token as absent and clears it", async () => {
-      secrets.values.set(TOKEN_SECRET_KEY, JSON.stringify({ token: "", setAt: "x" }));
+    it("reports an empty-string token as absent, and keeps it", async () => {
+      const raw = JSON.stringify({ token: "", setAt: "x" });
+      secrets.values.set(TOKEN_SECRET_KEY, raw);
       await expect(store.get()).resolves.toBeUndefined();
-      expect(secrets.values.has(TOKEN_SECRET_KEY)).toBe(false);
+      expectKept(raw);
     });
 
-    it("treats an empty JSON string as absent and clears it", async () => {
-      secrets.values.set(TOKEN_SECRET_KEY, JSON.stringify("  "));
+    it("reports an empty JSON string as absent, and keeps it", async () => {
+      const raw = JSON.stringify("  ");
+      secrets.values.set(TOKEN_SECRET_KEY, raw);
       await expect(store.get()).resolves.toBeUndefined();
-      expect(secrets.values.has(TOKEN_SECRET_KEY)).toBe(false);
+      expectKept(raw);
     });
 
-    it("treats an empty raw secret as absent and clears it", async () => {
+    it("reports an empty raw secret as absent, and keeps it", async () => {
       secrets.values.set(TOKEN_SECRET_KEY, "   ");
       await expect(store.get()).resolves.toBeUndefined();
-      expect(secrets.values.has(TOKEN_SECRET_KEY)).toBe(false);
+      expectKept("   ");
     });
 
     it("keeps a token whose setAt is missing, losing only the age", async () => {
@@ -149,11 +178,31 @@ describe("SecretTokenStore", () => {
       expect(secrets.calls).toContain(`store:${TOKEN_SECRET_KEY}`);
     });
 
-    it("refuses a bare string that could not be a key, and clears it", async () => {
-      // An access key id in the secret is corruption, not a legacy token.
-      secrets.values.set(TOKEN_SECRET_KEY, "AKIAIOSFODNN7EXAMPLE");
-      await expect(store.get()).resolves.toBeUndefined();
-      expect(secrets.values.has(TOKEN_SECRET_KEY)).toBe(false);
+    /**
+     * F7 again, on the branch that made the deletion so damaging: `asLegacy`
+     * calls the permissive shape rules, and a real long-term key that happens
+     * to look like an IAM secret access key would have been destroyed on the
+     * first read. Both spellings of a bare secret are covered — a raw one and a
+     * JSON-quoted one — because they take different routes through `parse`.
+     */
+    it.each([
+      ["a raw access key id", (value: string) => value],
+      ["a JSON-quoted access key id", (value: string) => JSON.stringify(value)],
+    ])("keeps %s rather than destroying it", async (_name, encode) => {
+      const raw = encode("AKIAIOSFODNN7EXAMPLE");
+      secrets.values.set(TOKEN_SECRET_KEY, raw);
+      await expect(store.get()).rejects.toThrow(CorruptTokenSecretError);
+      expect(secrets.values.get(TOKEN_SECRET_KEY)).toBe(raw);
+    });
+
+    it("keeps a bare string shaped like a secret access key", async () => {
+      // Forty base64 characters: the shape rules call this an IAM secret, but
+      // AWS does not document the key format, so they cannot be sure enough to
+      // delete it.
+      const raw = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY12";
+      secrets.values.set(TOKEN_SECRET_KEY, raw);
+      await expect(store.get()).rejects.toThrow(CorruptTokenSecretError);
+      expect(secrets.values.get(TOKEN_SECRET_KEY)).toBe(raw);
     });
 
     it("trims a legacy value before migrating it", async () => {

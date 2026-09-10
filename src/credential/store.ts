@@ -46,11 +46,17 @@ export class SecretTokenStore implements TokenStore {
     }
 
     const parsed = parse(raw);
-    if (parsed === undefined) {
-      // A secret we cannot parse is a secret we can never use, and leaving it
-      // makes every future read fail the same way. Clearing it puts the user
-      // back on the ordinary "no key set" path, which has a fix attached.
-      await this.#secrets.delete(TOKEN_SECRET_KEY);
+    if (parsed.kind === "corrupt") {
+      // Never deleted (F7). This runs before the user has clicked anything —
+      // activation pushes a stored key into the terminal collection — so a
+      // delete here destroys a credential with no consent and no copy
+      // anywhere. The shape rules that decide "this could not be a key" are
+      // deliberately permissive because AWS does not document the format, and
+      // a rule too unsure to reject a value at the input box is far too unsure
+      // to erase one. So the secret stays and the condition is reported.
+      throw new CorruptTokenSecretError();
+    }
+    if (parsed.kind === "absent") {
       return undefined;
     }
 
@@ -106,22 +112,54 @@ export class MemoryTokenStore implements TokenStore {
   }
 }
 
-type Parsed = { kind: "stored"; value: StoredToken } | { kind: "legacy"; token: string };
+/**
+ * A secret that is present and unreadable.
+ *
+ * Distinguishable so the host can tell it apart from a keychain that will not
+ * open, and empty of detail on purpose: the value it is about is a credential,
+ * so not one character of it — not a length, not a prefix — appears in the
+ * message (hard rule 4).
+ */
+export class CorruptTokenSecretError extends Error {
+  override readonly name = "CorruptTokenSecretError";
+
+  constructor() {
+    super(
+      "The saved Bedrock API key can't be read. It has been left alone — set a key again to replace it.",
+    );
+  }
+}
+
+type Parsed =
+  | { kind: "stored"; value: StoredToken }
+  | { kind: "legacy"; token: string }
+  /** Nothing recoverable is in there: report "no key set" and leave it be. */
+  | { kind: "absent" }
+  /** Something is in there that we cannot use and must not destroy. */
+  | { kind: "corrupt" };
+
+const ABSENT: Parsed = { kind: "absent" };
+const CORRUPT: Parsed = { kind: "corrupt" };
 
 /**
  * A bare string is ambiguous: it is both "what an earlier shape would have
- * stored" and "a secret that failed to parse". Shape decides which — a value
- * that could not be a key is corruption, and anything else is a token we would
- * have accepted from the user, so migrating it is strictly better than making
- * them re-enter it. `too-short` is a warning, so it migrates too (see shape.ts).
+ * stored" and "a secret that failed to parse". Shape decides how it is
+ * reported — never whether it survives. A value we would have accepted from the
+ * user migrates; a value the shape rules reject is `corrupt`, because those
+ * rules are permissive by design and cannot tell a real long-term key from an
+ * IAM secret access key with enough confidence to erase one. `too-short` is a
+ * warning, so it migrates too (see shape.ts). An empty string is the one case
+ * with nothing to lose, so it reads as plain absence.
  */
-function asLegacy(token: string): Parsed | undefined {
-  return validateTokenShape(token)?.severity === "error"
-    ? undefined
-    : { kind: "legacy", token: token.trim() };
+function asLegacy(token: string): Parsed {
+  const verdict = validateTokenShape(token);
+  if (verdict === undefined || verdict.severity !== "error") {
+    return { kind: "legacy", token: token.trim() };
+  }
+  return verdict.problem === "empty" ? ABSENT : CORRUPT;
 }
 
-function parse(raw: string): Parsed | undefined {
+function parse(raw: string): Parsed {
   let data: unknown;
   try {
     data = JSON.parse(raw);
@@ -132,12 +170,14 @@ function parse(raw: string): Parsed | undefined {
   if (typeof data === "string") {
     return asLegacy(data);
   }
+  // A JSON document that is not our envelope cannot be carrying a bare key, so
+  // there is no credential to preserve and nothing to report beyond absence.
   if (!isRecord(data)) {
-    return undefined;
+    return ABSENT;
   }
   const { token, setAt } = data;
   if (typeof token !== "string" || token === "") {
-    return undefined;
+    return ABSENT;
   }
   // A missing or non-string `setAt` costs us the age check, not the token, so
   // the value is kept and the stamp is repaired on the next `set`.

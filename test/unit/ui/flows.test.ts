@@ -10,7 +10,7 @@ import type { Manifest } from "../../../src/manifest/types.js";
 import type { FlowDeps } from "../../../src/ui/flows.js";
 import * as flows from "../../../src/ui/flows.js";
 import { messages, reset, state } from "./commandsHost.js";
-import { type FakeCredentialDeps, fakeCredentialDeps } from "./credentialDeps.js";
+import { bedrockOk, type FakeCredentialDeps, fakeCredentialDeps } from "./credentialDeps.js";
 
 vi.mock("vscode", async () => await import("./commandsHost.js"));
 
@@ -375,7 +375,7 @@ describe("testConnection", () => {
     credential.respond = (url) =>
       url.includes(encodeURIComponent(haiku))
         ? new Response('{"message":"AccessDeniedException: model not enabled"}', { status: 403 })
-        : new Response("{}", { status: 200 });
+        : bedrockOk();
 
     await flows.testConnection(deps());
 
