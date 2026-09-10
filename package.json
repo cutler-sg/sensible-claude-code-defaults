@@ -2,13 +2,25 @@
   "name": "sensible-claude-code-defaults",
   "displayName": "Sensible Claude Code Defaults",
   "description": "Health checks and working defaults for Claude Code on AWS Bedrock.",
-  "publisher": "cutler",
+  "publisher": "cutler-sg",
   "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cutler-sg/sensible-claude-code-defaults"
+    "url": "https://github.com/cutler-sg/sensible-claude-code-defaults.git"
   },
+  "homepage": "https://cutler.sg/sensible-claude-code-defaults",
+  "bugs": {
+    "url": "https://github.com/cutler-sg/sensible-claude-code-defaults/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude code",
+    "bedrock",
+    "aws",
+    "configuration"
+  ],
+  "qna": "https://github.com/cutler-sg/sensible-claude-code-defaults/issues",
   "icon": "media/icon.png",
   "categories": [
     "Other"

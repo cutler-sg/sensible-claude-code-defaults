@@ -2,7 +2,7 @@
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 
-const EXTENSION_ID = "cutler.sensible-claude-code-defaults";
+const EXTENSION_ID = "cutler-sg.sensible-claude-code-defaults";
 
 /**
  * Smoke test only: that the extension activates in a real host, that the view

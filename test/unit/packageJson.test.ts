@@ -10,6 +10,13 @@ describe("package.json", () => {
     expect(manifest.extensionDependencies).toEqual(["anthropic.claude-code"]);
   });
 
+  it("publishes under the verified cutler-sg identity", () => {
+    // The publisher id prefixes the extension id forever and decides which
+    // apex domain can be verified later; cutler.sg is the one we hold.
+    expect(manifest.publisher).toBe("cutler-sg");
+    expect(manifest.homepage).toBe("https://cutler.sg/sensible-claude-code-defaults");
+  });
+
   it("activates only on startup finished (FR-1.1)", () => {
     expect(manifest.activationEvents).toEqual(["onStartupFinished"]);
   });

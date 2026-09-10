@@ -81,7 +81,7 @@ Tests (write alongside, per CLAUDE.md):
 ## Open questions
 
 Blocking M0 publish (not M0 scaffolding):
-- **Q-A (PRD Q4)** Publisher ID. All four candidates free on both registries. Recommend `cutler`: matches the repo org and keeps `carrotly-ai` off a tool that asks users for a cloud credential. Which apex for verification: `cutler.sg` (already serves the agents endpoint) or `cutler.io` (named in §9)?
+- ~~**Q-A (PRD Q4)** Publisher ID.~~ **RESOLVED 2026-09-10: `cutler-sg`**, verification domain **`cutler.sg`** (verified live: apex, DNS A 216.150.1.1, HTTPS 200, valid TLS, Vercel). `cutler-sg` confirmed free on both the VS Code Marketplace and Open VSX. Extension id is therefore `cutler-sg.sensible-claude-code-defaults`; listing homepage will be `https://cutler.sg/sensible-claude-code-defaults`. The six-month verified-publisher clock starts when the publisher account is created — do that now, before any code ships.
 - **Q-B** GitHub remote: `cotdp` account, repo `cotdp/sensible-claude-code-defaults`? Consent for the one initial push to `main`.
 - **Q-C** Is there an Entra tenant to federate `vsce publish --azure-credential` against? If not, PAT stopgap (Marketplace Manage, all orgs) is viable for 12 weeks only.
 
