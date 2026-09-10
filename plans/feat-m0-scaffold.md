@@ -76,7 +76,7 @@ Tests (write alongside, per CLAUDE.md):
 - [x] `writer.test.ts` — atomicity (inject a failing rename, assert original intact and no `.tmp` left), mode `0600` after write, symlink target preserved, formatting preserved, backup rotation keeps exactly 10 newest, restore round-trip.
 - [x] `paths.test.ts` — `CLAUDE_CONFIG_DIR` honoured/ignored per Q-F, `assertOutsideWorkspace` rejects a target inside any folder (§10.4 assertion #2; also rejects `.claude/settings.local.json` inside a workspace by construction).
 - [x] `integration/apply.test.ts` under a temp dir — fresh install, hand-written existing config, malformed (no write, no backup), drifted, `/setup-bedrock`-style rewrite of a model pin between two applies, backup/restore round-trip.
-- [x] DoD: `bun test` green (229 tests, 8 files); coverage of `src/config` 99% lines (every module 100%, `index.ts` barrel uncovered); no `vscode` import under `src/config`. Adversarial review pending (2026-09-10).
+- [x] DoD: `bun test` green (229 tests, 8 files); coverage of `src/config` 99% lines (every module 100%, `index.ts` barrel uncovered); no `vscode` import under `src/config`. Adversarial review (2026-09-10) found 17 issues, 5 critical (symlink bypass of the workspace guard, plan→commit TOCTOU, resetKeyPlan adopting user elements, prototype-chain reads in mergeMap, restore undone by next apply); all fixed with regression tests — 333 tests, 100% per module. Residual: TOCTOU is narrowed (stale-check in commit), not closed — a write between the check and the rename is still lost; a lock protocol Claude Code honours does not exist (see Q-J below).
 
 ## Open questions
 
@@ -92,7 +92,8 @@ M1 design calls (assumption in bold; say "no" to flip):
 - **Q-G** Removal semantics (missing from FR-2.2): needed for `clearToken` and for managed keys dropped from a future manifest. **Delete only if current equals snapshot; otherwise preserve + drift.**
 - **Q-H** Backup dir: PRD says `~/.claude/.backups/`. Claude Code already owns `~/.claude/backups/`. Proposal: **`~/.claude/sensible-defaults/backups/`**, namespaced with the state file.
 - **Q-I** Confirm "Node 22" = toolchain only; bundle targets **node20**.
-- **Q-J** **bun** + `vsce --no-dependencies`; fall back to npm only if vsce fights it.
+- **Q-J** **bun** + `vsce --no-dependencies`; fall back to npm only if vsce fights it. *(resolved: bun works.)*
+- **Q-J2** Concurrent-writer window: `commit` now refuses a stale plan, but nothing locks the file between the re-read and the rename. Claude Code has no lock protocol we can honour. Options: accept (the window is milliseconds and the pre-write backup is always taken first), or take an advisory `settings.json.lock` that only *we* respect (protects two VS Code windows, not Claude Code). **Assume accept for v1; revisit if M6 platform testing shows real collisions.**
 - **Q-K** Windows ACL check/repair (FR-2.8) **deferred to M6**; M1 does POSIX `0600` only, with a no-op + info log on `win32`.
 - **Q-L** PRD §16 Q2 ("report on vs install the plugin marketplace") is already answered by §4.2 ("Extension, once"). Writing `extraKnownMarketplaces` + `enabledPlugins` to the user file *is* installing. Suggest closing Q2 as "install, once, via the merge engine" or removing those two keys from `MANAGED_KEYS` for v1.
 

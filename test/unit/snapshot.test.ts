@@ -407,8 +407,10 @@ describe("FileSnapshotStore honours the workspace guard (F14)", () => {
   });
 
   it("uses the injected platform for the guard's path flavour", async () => {
-    const store = new FileSnapshotStore("C:\\proj\\state.json", {
-      workspaceFolders: ["c:\\PROJ"],
+    // A tmp-rooted fixture: if the guard ever regresses, the write lands in
+    // the temp dir rather than as a literal `C:\proj\state.json` in the repo.
+    const store = new FileSnapshotStore(join(dir, "state.json"), {
+      workspaceFolders: [dir.toUpperCase()],
       platform: "win32",
     });
 
