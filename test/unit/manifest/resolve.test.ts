@@ -270,7 +270,9 @@ describe("resolveManifest — FR-3.5 minExtensionVersion gate", () => {
    * exists so a manifest can safely use fields this extension cannot read yet.
    */
   it("still honours a gate a real next release would satisfy", async () => {
-    for (const wanted of ["0.2.0", "1.0.0", "9.9.9"]) {
+    // Within `isEnforceableExtensionFloor`'s window of plausible releases
+    // ahead of the running 0.1.0.
+    for (const wanted of ["0.2.0", "1.0.0", "2.4.1"]) {
       const resolution = await resolveManifest(
         deps({ fetch: serving(manifest({ minExtensionVersion: wanted })) }),
       );

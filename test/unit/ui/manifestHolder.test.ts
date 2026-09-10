@@ -158,12 +158,12 @@ describe("refresh", () => {
 
   it("carries the FR-3.5 gate through to the status the checks see", async () => {
     const manifests = holder({
-      fetch: serving(() => manifest({ revision: "remote-1", minExtensionVersion: "9.0.0" })),
+      fetch: serving(() => manifest({ revision: "remote-1", minExtensionVersion: "2.0.0" })),
     });
 
     await manifests.refresh();
 
-    expect(manifests.current().status.needsExtensionVersion).toBe("9.0.0");
+    expect(manifests.current().status.needsExtensionVersion).toBe("2.0.0");
     // The gate rejected the fetched manifest, so the defaults in force are the
     // bundled ones — not the manifest that demanded the update.
     expect(manifests.current().manifest.revision).toBe(BUNDLED_MANIFEST.revision);
@@ -392,12 +392,12 @@ describe("FR-3.2 / FR-7.2 logging", () => {
 
   it("names the version the FR-3.5 gate wants", async () => {
     const manifests = holder({
-      fetch: serving(() => manifest({ minExtensionVersion: "9.0.0" })),
+      fetch: serving(() => manifest({ minExtensionVersion: "2.0.0" })),
     });
 
     await manifests.refresh();
 
-    expect(logged.some((line) => line.includes("needs extension 9.0.0"))).toBe(true);
+    expect(logged.some((line) => line.includes("needs extension 2.0.0"))).toBe(true);
   });
 
   /**

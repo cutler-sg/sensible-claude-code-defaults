@@ -14,7 +14,7 @@
 import { BUNDLED_MANIFEST } from "./bundled.js";
 import type { ManifestCache } from "./cache.js";
 import { fetchManifest } from "./fetch.js";
-import { validateManifest } from "./schema.js";
+import { isEnforceableExtensionFloor, validateManifest } from "./schema.js";
 import type { Manifest } from "./types.js";
 import { compareVersions } from "./version.js";
 
@@ -172,7 +172,9 @@ function bundled(deps: ResolveDeps, problems: ResolutionProblem[]): Manifest {
  * evaluated before the manifest is used — while `config.stale` tells every user
  * an extension update with newer recommendations is available. It is not, and
  * never will be. So a demand no plausible release could satisfy is not a
- * compatibility signal at all, and is ignored.
+ * compatibility signal at all, and is ignored. `isEnforceableExtensionFloor`
+ * (in `schema.ts`) answers only whether the demand is plausible; what to do
+ * about it — skip, report, log — stays here.
  */
 class Gate {
   #needs: string | undefined;
@@ -181,7 +183,7 @@ class Gate {
 
   admits(manifest: Manifest, source: ManifestSource, problems: ResolutionProblem[]): boolean {
     if (compareVersions(manifest.minExtensionVersion, this.extensionVersion) <= 0) return true;
-    if (!isReachableVersion(manifest.minExtensionVersion)) {
+    if (!isEnforceableExtensionFloor(manifest.minExtensionVersion, this.extensionVersion)) {
       // F12: admitted on its merits, and the demand is logged rather than
       // honoured. Nothing else changes — it goes on to be cached and used like
       // any other manifest.
@@ -202,25 +204,4 @@ class Gate {
   note(): { needsExtensionVersion?: string } {
     return this.#needs === undefined ? {} : { needsExtensionVersion: this.#needs };
   }
-}
-
-/**
- * The highest major this extension will treat as a real future release (F12).
- *
- * A cap and not a diff from the running version: a diff would have to be
- * re-tuned every time the extension's own major moved, and getting it wrong in
- * the tight direction breaks the gate for the release it exists to announce.
- * 100 majors is far beyond anything this project will ship and far below the
- * numbers an off-switch reaches for.
- *
- * Local to this file for now: the other half of M4 is exporting a predicate
- * from `schema.ts` for the same question, and this collapses into that call
- * when it lands. The bound belongs on both sides anyway — the validator can
- * refuse to store one, and the resolver must not honour one that reached it
- * through the cache from an older release.
- */
-const MAX_PLAUSIBLE_MAJOR = 100;
-
-function isReachableVersion(version: string): boolean {
-  return compareVersions(version, `${MAX_PLAUSIBLE_MAJOR}.0.0`) < 0;
 }
