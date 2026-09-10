@@ -20,6 +20,7 @@ import type { Check, ClaudeCodeDetection, HealthReport } from "../health/types.j
 import type { Manifest } from "../manifest/types.js";
 import type { Logger } from "../util/log.js";
 import { APPLY_ACTION, decideNotification, type NotificationKind } from "./notify.js";
+import { needsSetup } from "./treeProvider.js";
 
 /**
  * The `globalState` slice the runner needs. Narrower than `vscode.Memento` so a
@@ -40,6 +41,8 @@ export interface HealthRunnerDeps {
   present: (report: HealthReport) => void;
   /** Survives the window, so a toast fires once per user, not once per window. */
   notified: NotifiedStore;
+  /** Called when the silent permission repair touched the file (F14). */
+  onSelfWrite?: () => void;
   /** Injected only so a test can run a small catalogue. */
   checks?: readonly Check[];
 }
@@ -71,10 +74,16 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
       manifest: deps.manifest,
       platform: deps.platform,
       detect: deps.detect,
+      ...(deps.onSelfWrite ? { onSelfWrite: deps.onSelfWrite } : {}),
     });
     const report = await runAll(checks, ctx);
     deps.present(report);
     await vscode.commands.executeCommand("setContext", "sensibleDefaults.hasReport", true);
+    await vscode.commands.executeCommand(
+      "setContext",
+      "sensibleDefaults.needsSetup",
+      needsSetup(report),
+    );
     deps.log.info(`Health check: ${JSON.stringify(report.counts)}`);
 
     const kind = transition(previous, report);

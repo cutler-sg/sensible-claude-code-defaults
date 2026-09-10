@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -79,8 +79,9 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-async function seed(settings: unknown): Promise<void> {
+async function seed(settings: unknown, mode = 0o600): Promise<void> {
   await writeFile(settingsPath(dir), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  await chmod(settingsPath(dir), mode);
 }
 
 describe("a successful run", () => {
@@ -93,6 +94,10 @@ describe("a successful run", () => {
     expect(state.executed[0]).toMatchObject({
       command: "setContext",
       args: ["sensibleDefaults.hasReport", true],
+    });
+    expect(state.executed[1]).toMatchObject({
+      command: "setContext",
+      args: ["sensibleDefaults.needsSetup", false],
     });
     expect(logged.some((line) => line.startsWith("info Health check:"))).toBe(true);
   });
@@ -202,7 +207,7 @@ describe("FR-5.5 notification gating", () => {
   it("does nothing extra when the toast is dismissed", async () => {
     await runner()();
 
-    expect(state.executed.map((call) => call.command)).toEqual(["setContext"]);
+    expect(state.executed.map((call) => call.command)).toEqual(["setContext", "setContext"]);
   });
 
   it("does not fire on a report with no notable transition", async () => {
@@ -244,5 +249,27 @@ describe("FR-5.5 notification gating", () => {
     level = "error";
     await run();
     expect(state.info).toHaveLength(1);
+  });
+});
+
+describe("wiring the panel to the watcher and welcome view", () => {
+  it("forwards the silent permission repair to onSelfWrite", async () => {
+    await seed({ env: { CLAUDE_CODE_USE_BEDROCK: "1" } }, 0o664);
+    const onSelfWrite = vi.fn();
+
+    await runner({ onSelfWrite })();
+
+    expect(onSelfWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets needsSetup when Claude Code is installed but nothing is configured", async () => {
+    await runner()();
+
+    expect(state.executed).toContainEqual(
+      expect.objectContaining({
+        command: "setContext",
+        args: ["sensibleDefaults.needsSetup", true],
+      }),
+    );
   });
 });

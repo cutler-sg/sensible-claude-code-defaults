@@ -25,6 +25,9 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   let suppressUntil = 0;
+  const markWrite = (): void => {
+    suppressUntil = Date.now() + SUPPRESS_MS;
+  };
 
   const runHealth = createHealthRunner({
     env: host.env,
@@ -33,6 +36,7 @@ export function activate(context: vscode.ExtensionContext): void {
     detect: host.detect,
     log,
     notified: context.globalState,
+    onSelfWrite: markWrite,
     present: (report) => {
       provider.setReport(report);
       view.badge =
@@ -40,6 +44,10 @@ export function activate(context: vscode.ExtensionContext): void {
           ? { value: provider.errorCount, tooltip: `${provider.errorCount} problem(s) to fix` }
           : undefined;
     },
+  });
+
+  const watcher = watchSettings(host.claudeDir, host.settingsFile, () => void runHealth(), {
+    suppress: () => Date.now() < suppressUntil,
   });
 
   const commands = registerCommands({
@@ -51,12 +59,11 @@ export function activate(context: vscode.ExtensionContext): void {
     log,
     runHealth,
     markWrite: () => {
-      suppressUntil = Date.now() + SUPPRESS_MS;
+      markWrite();
+      // A commit may have just created ~/.claude on a fresh install; the
+      // watcher was waiting on the parent directory and may have missed it.
+      watcher.rearm();
     },
-  });
-
-  const watcher = watchSettings(host.claudeDir, host.settingsFile, () => void runHealth(), {
-    suppress: () => Date.now() < suppressUntil,
   });
 
   context.subscriptions.push(channel, view, commands, watcher);
