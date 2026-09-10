@@ -24,6 +24,13 @@
  * the workspace is trusted rather than relying on a manifest declaration that
  * is about something else. Injected, so it stays testable.
  *
+ * **It stays inside the folders it was given.** Each folder is resolved with
+ * `realpath` and every path read is required to sit under that resolved root.
+ * VS Code hands `uri.fsPath` through verbatim, so a folder can arrive as a
+ * traversal or be a symlink to somewhere else entirely — and reading through
+ * one means reading files the workspace-trust decision never covered, and
+ * reporting a hit at a path that is not where the file is (F5).
+ *
  * Nothing here imports `vscode`: the folders, the trust answer and the clock
  * all arrive as data.
  */
@@ -41,27 +48,77 @@ export const MAX_FILE_BYTES = 1024 * 1024;
 export const MAX_FILES = 5000;
 
 /**
- * Directories never descended into. Every one of them is generated or
- * versioned content: a hit inside `node_modules` is a dependency's fixture, and
- * a hit inside `.git` is history — which is a real problem, but not one this
- * scan can act on, and `cred.leak` says so separately when a hit's file is
- * tracked.
+ * Never descended into, at any depth. Each of these is generated or versioned
+ * content whose *name* is unambiguous wherever it appears: nobody keeps notes
+ * in a `node_modules`, and a monorepo has one per package, so skipping them
+ * everywhere is what keeps the 3 s budget meaningful.
+ *
+ * A hit inside `.git` is history — a real problem, but not one this scan can
+ * act on; `cred.leak` says so separately when a hit's file is tracked.
  */
-export const SKIPPED_DIRS: ReadonlySet<string> = new Set([
+export const SKIPPED_DIRS_ANYWHERE: ReadonlySet<string> = new Set([
   "node_modules",
   ".git",
-  "dist",
-  "out",
   ".venv",
 ]);
 
 /**
+ * Skipped only as an immediate child of a workspace folder (F10).
+ *
+ * `dist` and `out` are build directories at the top of a repository and
+ * ordinary source directory names anywhere else — `src/out/`, `lib/dist/`,
+ * `docs/dist/`. Matching them by basename at any depth meant a key pasted into
+ * `src/out/notes.md` reported a clean bill of health, and a false clean is the
+ * worst answer this scan can give: the user reads "your key is not in your
+ * project" and stops looking.
+ *
+ * Root-only keeps what the rule was for — the build output, which is where the
+ * volume is — and gives it up nowhere it was actually protecting anything.
+ */
+export const SKIPPED_DIRS_AT_ROOT: ReadonlySet<string> = new Set(["dist", "out"]);
+
+/**
  * What is worth reading. Deliberately not "every file": the point is the places
  * a credential actually ends up — a settings file, an env file, a note, a
- * script — and reading a repository's entire source tree for a string is a
- * different, much slower product.
+ * script, a container recipe — and reading a repository's entire source tree
+ * for a string is a different, much slower product.
+ *
+ * `.txt`, `.yaml`, `.yml` and `.toml` are here because a key pasted "somewhere
+ * to keep it" lands in a note or a config file far more often than in a shell
+ * script, and `.bak` because a settings file copied before editing is
+ * `settings.json.bak` and was invisible to an extension-only rule (F11).
  */
-const EXTENSIONS: ReadonlySet<string> = new Set([".json", ".md", ".sh", ".ps1"]);
+const EXTENSIONS: ReadonlySet<string> = new Set([
+  ".json",
+  ".md",
+  ".sh",
+  ".ps1",
+  ".bat",
+  ".cmd",
+  ".txt",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".bak",
+]);
+
+/**
+ * Files with no extension, or whose extension is not the interesting part.
+ *
+ * A shell profile is where a user told to "export it" by a tutorial puts the
+ * key permanently, and a `Dockerfile` is where one told to "put it in the
+ * image" puts it — both are inside the project folder and both were unreadable
+ * to an extension-based rule.
+ */
+const EXACT_NAMES: ReadonlySet<string> = new Set([
+  ".envrc",
+  ".zshrc",
+  ".bashrc",
+  ".bash_profile",
+  ".zprofile",
+  ".profile",
+  "Dockerfile",
+]);
 
 export interface LeakHit {
   /** Absolute path. The **only** thing reported: never a line, never a snippet. */
@@ -133,10 +190,27 @@ export async function scanWorkspaceForToken(deps: LeakScanDeps): Promise<ScanOut
 
   const hits: LeakHit[] = [];
   let examined = 0;
-  /** Guards against a symlink cycle, and against two folders that overlap. */
+  /**
+   * Files already read. Paths are already resolved-and-contained by the time
+   * they land here, so this is what stops two open folders that overlap — or
+   * one nested inside another — reading the same file twice and reporting it
+   * as two hits.
+   */
   const seen = new Set<string>();
 
-  const visit = async (dir: string): Promise<"ok" | "timeout" | "file-cap"> => {
+  /**
+   * `root` is the resolved workspace folder and never changes down the
+   * recursion; `dir` is where we are. `root` is what `SKIPPED_DIRS_AT_ROOT` is
+   * measured against — containment itself needs no check, and a check would be
+   * worse than none: `path.join(dir, entry.name)` over a `readdir` result
+   * cannot produce a path outside `dir` (there is no `..` in a directory
+   * listing), and the walk only ever descends into real directories, because
+   * `isDirectory()` is false for a symlink to one. Resolving the root with
+   * `realpath` before the walk starts is therefore the whole of F5: it is what
+   * makes "inside the folder the user opened" and "inside the folder the
+   * trust decision covered" the same directory.
+   */
+  const visit = async (dir: string, root: string): Promise<"ok" | "timeout" | "file-cap"> => {
     if (now() >= deadline) return "timeout";
 
     let entries: import("node:fs").Dirent[];
@@ -153,8 +227,11 @@ export async function scanWorkspaceForToken(deps: LeakScanDeps): Promise<ScanOut
       const full = path.join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        if (SKIPPED_DIRS.has(entry.name)) continue;
-        const outcome = await visit(full);
+        if (SKIPPED_DIRS_ANYWHERE.has(entry.name)) continue;
+        // Root-only (F10): `dist` and `out` are build output at the top of a
+        // repository and ordinary source folders anywhere else.
+        if (dir === root && SKIPPED_DIRS_AT_ROOT.has(entry.name)) continue;
+        const outcome = await visit(full, root);
         if (outcome !== "ok") return outcome;
         continue;
       }
@@ -165,19 +242,34 @@ export async function scanWorkspaceForToken(deps: LeakScanDeps): Promise<ScanOut
       if (!isCandidate(entry.name)) continue;
       if (examined >= maxFiles) return "file-cap";
 
-      const real = path.resolve(full);
-      if (seen.has(real)) continue;
-      seen.add(real);
+      if (seen.has(full)) continue;
+      seen.add(full);
       examined += 1;
 
-      const line = await findToken(real, token, maxBytes);
-      if (line !== undefined) hits.push({ file: real, line });
+      const line = await findToken(full, token, maxBytes);
+      if (line !== undefined) hits.push({ file: full, line });
+
+      // F8. Checked here, not only at the top of the next entry: `stat` +
+      // `readFile` + the newline count is the expensive part, and the last
+      // candidate file in a walk has no next entry to be checked against — so
+      // a read that ran past the deadline used to fall out of the loop, out of
+      // `visit` as `ok`, and out of the scan as **clean**. FR-4.8's three
+      // seconds is a guarantee, and a false all-clear is the one answer this
+      // module must never give.
+      if (now() >= deadline) return "timeout";
     }
     return "ok";
   };
 
   for (const folder of deps.folders) {
-    const outcome = await visit(folder);
+    // Resolved before anything is read, so the walk's containment check and
+    // the paths it reports both describe where the files actually are. A
+    // folder that does not resolve is skipped whole rather than walked
+    // unresolved: without a root there is nothing to hold the walk inside.
+    const root = await fsp.realpath(folder).catch(() => undefined);
+    if (root === undefined) continue;
+
+    const outcome = await visit(root, root);
     if (outcome !== "ok") {
       // A partial result is still asked about tracking: the hits it did find
       // are real, and the advice they need does not depend on the scan having
@@ -211,15 +303,19 @@ async function withTracking(
 }
 
 /**
- * FR-4.8's file list: `.claude/settings*.json`, `.env*`, and the four
- * extensions a credential is realistically pasted into.
+ * FR-4.8's file list: `.claude/settings*.json`, `.env*`, the extensions a
+ * credential is realistically pasted into, and a handful of exact names whose
+ * extension is not the interesting part (F11).
  *
  * `.env*` is matched by prefix rather than by extension — `.env.local`,
  * `.env.production` and bare `.env` are all the same file to a user, and the
- * extension-based rule would see `.local` and skip.
+ * extension-based rule would see `.local` and skip. `Dockerfile` gets the same
+ * treatment for `Dockerfile.dev` and friends.
  */
 function isCandidate(name: string): boolean {
   if (name === ".env" || name.startsWith(".env.")) return true;
+  if (name === "Dockerfile" || name.startsWith("Dockerfile.")) return true;
+  if (EXACT_NAMES.has(name)) return true;
   return EXTENSIONS.has(path.extname(name).toLowerCase());
 }
 

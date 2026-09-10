@@ -1,14 +1,53 @@
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_FILE_BYTES,
   MAX_FILES,
   SCAN_BUDGET_MS,
-  SKIPPED_DIRS,
+  SKIPPED_DIRS_ANYWHERE,
+  SKIPPED_DIRS_AT_ROOT,
   scanWorkspaceForToken,
 } from "../../../src/credential/leakScan.js";
+
+/**
+ * Every `node:fs/promises` function the scan reaches for, in call order.
+ *
+ * Two assertions in this file are about what the scan *touches* rather than
+ * what it returns, and neither can be made from an outcome: "the trust gate is
+ * asked before a byte is read" and "nothing is ever written inside a workspace
+ * folder" (hard rule 1) are both invisible to a caller that only sees a
+ * `ScanOutcome`. So the module is wrapped and the calls are recorded.
+ *
+ * The wrapper passes straight through, so every other test in this file — and
+ * this file's own `mkdtemp`/`writeFile` fixtures — behave exactly as before.
+ * Tests that care reset the log immediately before the call under test.
+ */
+const fsCalls = vi.hoisted(() => [] as string[]);
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return Object.fromEntries(
+    Object.entries(actual).map(([name, value]) => [
+      name,
+      typeof value === "function"
+        ? (...args: unknown[]) => {
+            fsCalls.push(name);
+            return (value as (...a: unknown[]) => unknown)(...args);
+          }
+        : value,
+    ]),
+  );
+});
+
+/**
+ * The only filesystem calls a scan is allowed to make. An allowlist rather than
+ * a list of forbidden writes: a call this list does not name has to be argued
+ * for, which is the right default for the one component that reads a user's
+ * project.
+ */
+const READ_ONLY_FS_CALLS = ["realpath", "readdir", "lstat", "stat", "readFile"];
 
 const TOKEN = "ABSKTGVha1NjYW5UZXN0QmVkcm9ja0tleVZhbHVl";
 
@@ -71,18 +110,55 @@ describe("what the scan refuses to do", () => {
 
   /**
    * The trust gate is asked before a single byte is read, so an untrusted
-   * workspace cannot even be enumerated. Checked structurally: the scan is
-   * pointed at a path that does not exist, and a `skipped` answer proves it
-   * never tried to walk it.
+   * workspace cannot even be enumerated.
+   *
+   * The outcome alone cannot prove that. An earlier version of this test
+   * pointed the scan at a path that does not exist and asserted `skipped` —
+   * but `visit` swallows the `readdir` failure and answers `ok`, so `skipped`
+   * came back whether the gate ran before the walk or after it, and moving the
+   * gate to the end of the function left the whole suite green.
+   *
+   * So this one points at a directory that genuinely contains the token, and
+   * asserts both halves: the answer is `skipped`, and the filesystem was never
+   * touched at all.
    */
   it("asks about trust before touching the filesystem", async () => {
-    const outcome = await scanWorkspaceForToken({
-      token: TOKEN,
-      folders: [join(dir, "does-not-exist")],
-      isTrusted: false,
-    });
+    await file(".env", `AWS_BEARER_TOKEN_BEDROCK=${TOKEN}`);
+    fsCalls.length = 0;
+
+    const outcome = await scan({ isTrusted: false });
 
     expect(outcome).toEqual({ kind: "skipped", reason: "untrusted" });
+    expect(fsCalls).toEqual([]);
+  });
+
+  /** Same reasoning, for the gate that runs before it. */
+  it("looks for nothing on the filesystem when there is no key", async () => {
+    await file(".env", `AWS_BEARER_TOKEN_BEDROCK=${TOKEN}`);
+    fsCalls.length = 0;
+
+    const outcome = await scan({ token: undefined });
+
+    expect(outcome).toEqual({ kind: "skipped", reason: "no-token" });
+    expect(fsCalls).toEqual([]);
+  });
+
+  /**
+   * Hard rule 1, and plan Q-AD. The extension never writes inside a workspace
+   * folder, and the scan is the only component that is even in one — so the
+   * rule is asserted here mechanically rather than left to review. A scan that
+   * finds a hit is the case that would most tempt a fix-it-for-you write.
+   */
+  it("never writes anything inside a workspace folder (hard rule 1)", async () => {
+    await file(".env", `AWS_BEARER_TOKEN_BEDROCK=${TOKEN}`);
+    await file("notes.md", TOKEN);
+    fsCalls.length = 0;
+
+    await expect(scan({ isTracked: async () => true })).resolves.toMatchObject({ kind: "hits" });
+
+    expect(fsCalls.filter((name) => !READ_ONLY_FS_CALLS.includes(name))).toEqual([]);
+    // And the log is not vacuously empty: it really did read the files.
+    expect(fsCalls).toContain("readFile");
   });
 });
 
@@ -115,6 +191,35 @@ describe("what the scan finds", () => {
 
   it.each([".md", ".sh", ".ps1", ".json"])("reads a %s file", async (extension) => {
     await file(`notes${extension}`, `my key is ${TOKEN}`);
+
+    await expect(scan()).resolves.toMatchObject({ kind: "hits" });
+  });
+
+  /**
+   * F11. The names a credential realistically lands in, as a table rather than
+   * as a sentence in a comment — the README makes a promise about this list and
+   * a promise nothing checks is how the list drifts.
+   */
+  it.each([
+    ".env.local",
+    "settings.json.bak",
+    ".envrc",
+    "Dockerfile",
+    "Dockerfile.dev",
+    "config.yaml",
+    "config.yml",
+    "notes.txt",
+    "config.toml",
+    ".zshrc",
+    ".bashrc",
+    ".bash_profile",
+    ".zprofile",
+    ".profile",
+    "run.bat",
+    "run.cmd",
+    ".claude.json",
+  ])("reads %s", async (name) => {
+    await file(name, `export AWS_BEARER_TOKEN_BEDROCK=${TOKEN}`);
 
     await expect(scan()).resolves.toMatchObject({ kind: "hits" });
   });
@@ -172,11 +277,48 @@ describe("what the scan finds", () => {
 });
 
 describe("what the scan skips", () => {
-  it.each([...SKIPPED_DIRS])("never descends into %s", async (skipped) => {
+  it.each([...SKIPPED_DIRS_ANYWHERE])("never descends into %s at the root", async (skipped) => {
     await file(`${skipped}/leaked.json`, TOKEN);
 
     await expect(scan()).resolves.toEqual({ kind: "clean" });
   });
+
+  /**
+   * These three are never a place a person pastes a key, and they are the ones
+   * that make a repository expensive to walk — a monorepo has a `node_modules`
+   * per package. Skipping them at every depth is what keeps the 3 s budget
+   * meaningful.
+   */
+  it.each([...SKIPPED_DIRS_ANYWHERE])("never descends into a nested %s", async (skipped) => {
+    await file(`packages/thing/${skipped}/leaked.json`, TOKEN);
+
+    await expect(scan()).resolves.toEqual({ kind: "clean" });
+  });
+
+  it.each([...SKIPPED_DIRS_AT_ROOT])("skips %s at the workspace root", async (skipped) => {
+    await file(`${skipped}/leaked.json`, TOKEN);
+
+    await expect(scan()).resolves.toEqual({ kind: "clean" });
+  });
+
+  /**
+   * F10. `out` and `dist` are build directories at the top of a repository and
+   * ordinary source directory names anywhere else — `src/out/`, `lib/dist/`.
+   * Matching them by basename at any depth meant a key in `src/out/notes.md`
+   * reported a clean bill of health, which is the worst answer this scan can
+   * give.
+   */
+  it.each([...SKIPPED_DIRS_AT_ROOT])(
+    "reads a file inside a nested %s, which is an ordinary source folder",
+    async (skipped) => {
+      const path = await file(`src/${skipped}/notes.md`, TOKEN);
+
+      const outcome = await scan();
+
+      expect(outcome).toMatchObject({ kind: "hits" });
+      expect(outcome.kind === "hits" && outcome.hits[0]?.file).toBe(path);
+    },
+  );
 
   it("ignores a file type a credential does not end up in", async () => {
     await file("bundle.js", TOKEN);
@@ -198,6 +340,119 @@ describe("what the scan skips", () => {
     await expect(scan({ maxFileBytes: Buffer.byteLength(content, "utf8") })).resolves.toMatchObject(
       { kind: "hits" },
     );
+  });
+
+  /**
+   * F5. `deps.folders` went to the walk verbatim: no `realpath`, no containment
+   * check. The `!entry.isFile()` guard only stops links found *during* the
+   * walk — the root itself was never resolved and never checked.
+   *
+   * The invariant these pin is one sentence: **every path the scan reads, and
+   * every path it reports, sits under the resolved root of the folder that
+   * produced it.** Not "a symlinked root is refused" — VS Code hands
+   * `uri.fsPath` through verbatim and a symlinked project root
+   * (`~/work` → `/mnt/shared/work`) is an ordinary way to work, so refusing it
+   * would silently switch the check off for those users. Resolving it is what
+   * makes the trust decision and the reported path describe the same directory.
+   */
+  describe("staying inside the folders the user opened (F5)", () => {
+    it("reports a hit under a symlinked root at its real path, not through the link", async () => {
+      const target = await mkdtemp(join(tmpdir(), "scd-leak-target-"));
+      try {
+        await writeFile(join(target, ".env"), TOKEN, "utf8");
+        const link = join(dir, "linked-root");
+        await symlink(target, link, "dir");
+
+        const outcome = await scan({ folders: [link] });
+
+        // The hit is real and must be found — but named where the file
+        // actually is. `<workspace>/linked-root/.env` reads as a path inside
+        // the folder the user opened, and it is not one.
+        expect(outcome).toMatchObject({ kind: "hits" });
+        const found = outcome.kind === "hits" ? outcome.hits[0]?.file : undefined;
+        expect(found).toBe(join(await realpath(target), ".env"));
+        expect(found).not.toContain("linked-root");
+      } finally {
+        await rm(target, { recursive: true, force: true });
+      }
+    });
+
+    it("normalises a folder path containing .. before reading anything", async () => {
+      const outside = await mkdtemp(join(tmpdir(), "scd-leak-esc-"));
+      try {
+        await writeFile(join(outside, ".env"), TOKEN, "utf8");
+        await mkdir(join(dir, "sub"), { recursive: true });
+        // `<workspace>/sub/../../<outside>`: a real directory, spelled as a
+        // traversal. Reported unresolved, the hit path contains the workspace
+        // folder's own name and reads as a file inside it.
+        const traversal = join(dir, "sub", "..", "..", outside.split("/").pop() ?? "");
+
+        const outcome = await scan({ folders: [traversal] });
+
+        expect(outcome).toMatchObject({ kind: "hits" });
+        const found = outcome.kind === "hits" ? outcome.hits[0]?.file : undefined;
+        expect(found).toBe(join(await realpath(outside), ".env"));
+        expect(found).not.toContain("..");
+        expect(found).not.toContain(dir.split("/").pop() ?? "");
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("reads nothing at all through a folder that does not resolve", async () => {
+      fsCalls.length = 0;
+
+      const outcome = await scan({ folders: [join(dir, "does-not-exist")] });
+
+      // An unresolvable root is skipped whole: without a resolved root there is
+      // nothing to hold the walk inside, so nothing is walked.
+      expect(outcome).toEqual({ kind: "clean" });
+      expect(fsCalls.filter((name) => name === "readdir")).toEqual([]);
+    });
+
+    it("keeps scanning the other folders when one does not resolve", async () => {
+      await file(".env", TOKEN);
+
+      await expect(scan({ folders: [join(dir, "does-not-exist"), dir] })).resolves.toMatchObject({
+        kind: "hits",
+      });
+    });
+
+    it("reports every hit under the resolved root, never a path outside it", async () => {
+      const root = await realpath(dir);
+      await file(".env", TOKEN);
+      await file("deep/nested/notes.md", TOKEN);
+
+      const outcome = await scan();
+
+      expect(outcome.kind).toBe("hits");
+      const files = outcome.kind === "hits" ? outcome.hits.map((hit) => hit.file) : [];
+      expect(files).toHaveLength(2);
+      for (const found of files) expect(found.startsWith(`${root}/`)).toBe(true);
+    });
+
+    /**
+     * The containment check is a second line, behind the `!entry.isFile()`
+     * guard: a directory swapped for a symlink between `readdir` and the
+     * recursive descent would otherwise take the walk straight out of the
+     * resolved root.
+     */
+    it("never reads a file outside the resolved root, even under a linked subdirectory", async () => {
+      const outside = await mkdtemp(join(tmpdir(), "scd-leak-sub-"));
+      try {
+        await writeFile(join(outside, "leaked.json"), TOKEN, "utf8");
+        await symlink(outside, join(dir, "nested"), "dir");
+        const escaped = join(await realpath(outside), "leaked.json");
+        fsCalls.length = 0;
+
+        const outcome = await scan();
+
+        expect(outcome).toEqual({ kind: "clean" });
+        expect(JSON.stringify(outcome)).not.toContain(escaped);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
   });
 
   /**
@@ -303,6 +558,67 @@ describe("running out of budget", () => {
 
     expect(outcome).toMatchObject({ kind: "partial", reason: "file-cap" });
     expect(outcome.kind === "partial" && outcome.hits.length).toBeGreaterThanOrEqual(1);
+  });
+
+  /**
+   * F8. The clock was checked at the top of each directory and at the top of
+   * each entry, but never after the `stat` + `readFile` + newline count — and
+   * the last candidate file in the walk has no entry after it to be checked
+   * against. So a read that ran clean past the deadline fell out of the loop,
+   * out of `visit` as `ok`, and out of the scan as **clean**: a false all-clear,
+   * which is the one answer this module's header says it must never give.
+   *
+   * Time advances only when the scan asks, so the deadline is crossed
+   * deterministically: frozen until the first file has actually been read, then
+   * past the budget.
+   */
+  it("reports partial, not clean, when the last file read used up the budget", async () => {
+    await file("only.json", "nothing");
+    fsCalls.length = 0;
+    const now = (): number => (fsCalls.includes("readFile") ? 10_000 : 0);
+
+    const outcome = await scan({ now, budgetMs: 100 });
+
+    expect(outcome).not.toEqual({ kind: "clean" });
+    expect(outcome).toMatchObject({ kind: "partial", reason: "timeout" });
+  });
+
+  it("says the same when the last file is deep in a subdirectory", async () => {
+    await file("a/b/c/only.json", "nothing");
+    fsCalls.length = 0;
+    const now = (): number => (fsCalls.includes("readFile") ? 10_000 : 0);
+
+    const outcome = await scan({ now, budgetMs: 100 });
+
+    expect(outcome).toMatchObject({ kind: "partial", reason: "timeout" });
+  });
+
+  /**
+   * And the same when there is something to report: hits found before the
+   * budget ran out are real, but the list is not exhaustive and must not be
+   * presented as if it were.
+   */
+  it("reports partial rather than hits when the budget went during the last read", async () => {
+    await file("only.json", TOKEN);
+    fsCalls.length = 0;
+    const now = (): number => (fsCalls.includes("readFile") ? 10_000 : 0);
+
+    const outcome = await scan({ now, budgetMs: 100 });
+
+    expect(outcome).toMatchObject({ kind: "partial", reason: "timeout" });
+    expect(outcome.kind === "partial" && outcome.hits).toHaveLength(1);
+  });
+
+  /** The overshoot is bounded at one file: the read in flight, and no more. */
+  it("reads no further file once a read has taken it past the deadline", async () => {
+    for (let i = 0; i < 10; i += 1) await file(`f-${i}.json`, "nothing");
+    fsCalls.length = 0;
+    const now = (): number => (fsCalls.includes("readFile") ? 10_000 : 0);
+
+    const outcome = await scan({ now, budgetMs: 100 });
+
+    expect(outcome).toMatchObject({ kind: "partial", reason: "timeout" });
+    expect(fsCalls.filter((name) => name === "readFile")).toHaveLength(1);
   });
 
   it("checks the clock before reading the first directory", async () => {
