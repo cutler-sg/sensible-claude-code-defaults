@@ -414,19 +414,23 @@ describe("backup and restore", () => {
     }
     expect(await readText(target.path)).toBe(v1);
 
-    const snapshotBefore = await readSnapshotFile();
     await restore(env, createSession(), target.path);
 
     expect(await readText()).toBe(v1);
     expect(await listBackups(dir)).toHaveLength(3);
-    expect(await readSnapshotFile()).toEqual(snapshotBefore);
+    // Restoring disclaims ownership of everything: the file's provenance is
+    // now unknown, so the snapshot must not keep claiming we wrote any of it.
+    expect(await readSnapshotFile()).toEqual({ schemaVersion: 1, values: {} });
 
     const planned = ready(
       await plan(env, desiredFixture({ "env.ANTHROPIC_DEFAULT_OPUS_MODEL": OPUS_V2 })),
     );
+    // Every restored key is unowned and preserved; only the one the manifest
+    // has moved on from reads as drift.
     expect(planned.merge.drift.map((entry) => entry.key)).toEqual([
       "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
     ]);
+    expect(planned.merge.changes).toEqual([]);
   });
 });
 
@@ -742,5 +746,63 @@ describe("a concurrent write between plan and commit", () => {
       changes: [],
       drift: [],
     });
+  });
+});
+
+describe("restore then apply", () => {
+  /**
+   * FR-2.4's undo has to survive the next apply. Before the fix the restored
+   * file looked like "our keys are missing but the snapshot says we wrote
+   * them", which the table reads as a plain re-add — the undo was reverted
+   * silently, with nothing in the diff preview to show for it.
+   */
+  it("shows the restored-away keys as visible adds, not a silent revert", async () => {
+    await seedSettings(`${JSON.stringify({ model: "opus" }, null, 2)}\n`);
+    const original = await readText();
+
+    await applyFixture();
+    const backups = await listBackups(backupsDir(claudeDir));
+    const target = backups[0];
+    if (target === undefined) {
+      throw new Error("expected a backup");
+    }
+
+    await restore(env, createSession(), target.path);
+    expect(await readText()).toBe(original);
+    expect(await readSnapshotFile()).toEqual({ schemaVersion: 1, values: {} });
+
+    const planned = ready(await plan(env, desiredFixture()));
+
+    expect(planned.merge.changes).toHaveLength(9);
+    expect(planned.merge.changes.every((change) => change.kind === "add")).toBe(true);
+    expect(planned.merge.drift).toEqual([]);
+    // Nothing is written until the user commits the plan they just saw.
+    expect(await readText()).toBe(original);
+  });
+
+  it("treats keys the restore brought back as unowned: preserved and drifting", async () => {
+    await seedSettings(`${JSON.stringify({ env: { AWS_REGION: "eu-west-1" } }, null, 2)}\n`);
+    // Adopt the user's region so the snapshot claims it, then restore over it.
+    await commit(env, session, ready(await resetKeyPlan(env, desiredFixture(), "env.AWS_REGION")));
+    expect(await envValue("AWS_REGION")).toBe("us-east-1");
+
+    const target = (await listBackups(backupsDir(claudeDir)))[0];
+    if (target === undefined) {
+      throw new Error("expected a backup");
+    }
+    await restore(env, createSession(), target.path);
+
+    const planned = ready(await plan(env, desiredFixture()));
+
+    expect(planned.merge.drift).toContainEqual({
+      key: "env.AWS_REGION",
+      current: "eu-west-1",
+      lastApplied: undefined,
+      recommended: "us-east-1",
+    });
+    expect(planned.merge.changes.map((change) => change.key)).not.toContain("env.AWS_REGION");
+
+    await commit(env, session, planned);
+    expect(await envValue("AWS_REGION")).toBe("eu-west-1");
   });
 });

@@ -23,8 +23,10 @@ import {
   type Desired,
   type Drift,
   type ElementOwnedKey,
+  EMPTY_SNAPSHOT,
   type JsonObject,
   type JsonValue,
+  MANAGED_KEYS,
   type ManagedKey,
   type PlanResult,
   type ReadResult,
@@ -263,11 +265,15 @@ async function hasChangedSince(file: string, read: ReadResult): Promise<boolean>
 
 /**
  * Put a backup's bytes back, having first backed up what is there now so the
- * restore is itself undoable.
+ * restore is itself undoable, then forget everything we thought we owned.
  *
- * The snapshot is deliberately left alone: the provenance of restored content
- * is unknown, so the next plan reports every managed key that differs as drift
- * and preserves it. Adopting it would be a guess about who wrote it.
+ * Dropping the snapshot is what makes the undo stick. Keeping it would leave
+ * the restored file looking like "our keys are missing but the snapshot says we
+ * wrote them" — the `absent` + snapshot-present row, which is a plain re-add,
+ * so the next apply would silently undo the restore with nothing in the diff
+ * preview to show for it. With the snapshot dropped, every key the restore
+ * brought back is unowned (preserved, reported as drift) and every key it
+ * removed is an ordinary add the user sees and accepts.
  */
 export async function restore(
   env: ConfigEnv,
@@ -280,6 +286,20 @@ export async function restore(
 
   await backupOnce(env, session, opts);
   await restoreBackup(backupPath, file, opts);
+  await forgetOwnership(env);
+}
+
+/**
+ * Drop every managed key from the snapshot, along with the `appliedAt` and
+ * `manifestRevision` that described the apply we just undid. The envelope
+ * stays so a later load sees a schema-version-1 document rather than a missing
+ * file, and any key a future version stopped managing is carried through.
+ */
+async function forgetOwnership(env: ConfigEnv): Promise<void> {
+  const snapshot = await env.snapshotStore.load();
+  const values: Snapshot["values"] = { ...snapshot.values };
+  for (const key of MANAGED_KEYS) delete values[key];
+  await env.snapshotStore.save({ ...EMPTY_SNAPSHOT, values });
 }
 
 /**
