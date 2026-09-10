@@ -210,6 +210,11 @@ export async function commit(
 
   const file = settingsPath(env.claudeDir);
   const opts = writeOptions(env);
+  // The writer asserts this too; asserting here means a refused write also
+  // means a refused backup, so nothing at all lands inside a workspace — and it
+  // comes first, so a forbidden target is refused without even being read.
+  assertOutsideWorkspace(file, opts.workspaceFolders, opts.platform);
+
   // `planned.merge.next` is the whole document, computed from the bytes `plan`
   // read. Between the two phases a diff preview sits in front of a human, and
   // Claude Code's own `/setup-bedrock` may write the file in that window —
@@ -218,9 +223,6 @@ export async function commit(
   if (await hasChangedSince(file, planned.read)) {
     return { written: false, reason: "stale", backup: undefined, changes, drift };
   }
-  // The writer asserts this too; asserting here means a refused write also
-  // means a refused backup, so nothing at all lands inside a workspace.
-  assertOutsideWorkspace(file, opts.workspaceFolders, opts.platform);
 
   const backup = await backupOnce(env, session, opts);
   await writeSettingsAtomic(file, next, planned.style, opts);

@@ -724,6 +724,20 @@ describe("a concurrent write between plan and commit", () => {
     expect(await readText()).toBe("{ oops");
   });
 
+  it("refuses when the file became unreadable for a host reason", async () => {
+    await seedSettings(BEFORE);
+    const planned = ready(await plan(env, { "env.AWS_REGION": "us-east-1" }));
+
+    // EISDIR rather than a content problem: we cannot see what is there, so we
+    // must not write over it.
+    await rm(file);
+    await mkdir(file);
+    const result = await commit(env, session, planned);
+
+    expect(result).toMatchObject({ written: false, reason: "stale" });
+    expect(await readdir(file)).toEqual([]);
+  });
+
   it("commits when a rewrite left the bytes identical", async () => {
     await seedSettings(BEFORE);
     const planned = ready(await plan(env, { "env.AWS_REGION": "us-east-1" }));
