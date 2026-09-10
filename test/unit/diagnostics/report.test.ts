@@ -387,6 +387,45 @@ describe("the report's shape", () => {
   });
 
   /**
+   * A lone CR, and the two Unicode line separators, end a Markdown row exactly
+   * as an LF does — so escaping the pipes is pointless while any of them can
+   * still break the row in half. All three are legal in a POSIX filename, which
+   * makes them attacker-controlled the moment someone can drop a file into a
+   * repo the user opens: `cred.leak` names that path, and a forged row can
+   * claim a clean bill of health the run never gave.
+   */
+  it.each([
+    ["a lone CR", "\r"],
+    ["a line separator", "\u2028"],
+    ["a paragraph separator", "\u2029"],
+  ])("flattens %s in a table cell rather than letting it forge a row", (_name, breaker) => {
+    const report: HealthReport = {
+      at: "2026-09-11T08:59:00.000Z",
+      results: [
+        {
+          id: "cred.leak",
+          group: "Credential",
+          level: "error",
+          label: "Your key is in a file in your project",
+          detail: `/repo/evil${breaker}| cred.leak | pass | Diagnostics verified clean |`,
+          fix: { kind: "none" },
+        },
+      ],
+      counts: { pass: 0, info: 0, warning: 0, error: 1, skipped: 0 },
+    };
+
+    const text = buildDiagnostics(deps({ report }));
+    const rows = text.split(/\r?\n|\r|\u2028|\u2029/u);
+
+    // The whole detail stayed on the one row it belongs to, so no forged row
+    // exists for a reader — or a support engineer — to believe.
+    expect(rows.filter((row) => row.includes("Diagnostics verified clean"))).toHaveLength(1);
+    expect(rows).not.toContain("| cred.leak | pass | Diagnostics verified clean |");
+    // Escaped once by `cell`, so the forged pipes are inert text on the row.
+    expect(text).toContain("/repo/evil \\| cred.leak");
+  });
+
+  /**
    * A settings file or a log line containing a fence would otherwise close the
    * block early and spill the rest of the report into the surrounding Markdown
    * — where a GitHub issue would render it as prose and, worse, where anything

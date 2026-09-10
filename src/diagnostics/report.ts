@@ -248,9 +248,17 @@ function table(headers: readonly string[], rows: readonly (readonly string[])[])
 
 /**
  * A value safe to put in a Markdown table cell. A pipe would end the cell and a
- * newline would end the row, either of which turns the rest of the report into
- * garbage — and both can arrive from a path, a parse error, or a check detail.
+ * line break would end the row, either of which turns the rest of the report
+ * into garbage — and both arrive routinely, from a path, a parse error, or a
+ * check detail.
+ *
+ * Every character that ends a line, not just LF and CRLF. A lone CR and the two
+ * Unicode separators break a row exactly as an LF does, and all three are legal
+ * in a POSIX filename — so someone who can drop a file into a repo the user
+ * opens controls the `cred.leak` detail that names it, and can forge whatever
+ * row they like, up to a "Diagnostics verified clean" the run never produced.
+ * Escaping the pipes is pointless while the row can still be broken in half.
  */
 function cell(value: string): string {
-  return value.replaceAll("|", "\\|").replaceAll(/\r?\n/g, " ");
+  return value.replaceAll("|", "\\|").replaceAll(/\r\n|[\n\r\u2028\u2029]/gu, " ");
 }
