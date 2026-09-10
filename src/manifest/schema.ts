@@ -29,7 +29,7 @@ export type ValidationResult =
 /** Longer than any legitimate notice; a manifest is advice, not a document. */
 const MAX_NOTICE_LENGTH = 200;
 /** Two is enough to say something; more is a channel for nagging every user. */
-const MAX_NOTICES = 2;
+export const MAX_NOTICES = 2;
 /** Bedrock env values Claude Code reads. Anything else is not ours to write. */
 const ALLOWED_ENV_KEYS = new Set([
   "CLAUDE_CODE_USE_BEDROCK",
@@ -122,16 +122,17 @@ function validateDefaults(value: unknown, fail: Fail): Manifest["defaults"] | un
     fail("defaults.env", "must be an object");
   } else {
     for (const [key, entry] of Object.entries(value.env)) {
+      // Skip before type-checking, not after. An unknown key is not ours to
+      // judge: a newer manifest adding a non-string field under `env` would
+      // otherwise reject the whole document for every older install and pin
+      // them silently to their cache — the exact forward-compatibility failure
+      // dropping unknown keys exists to avoid.
+      if (!ALLOWED_ENV_KEYS.has(key)) continue;
       // Claude Code reads these as environment variables, so a JSON boolean or
       // number would be written as a value it cannot use. Reject rather than
       // coerce: a manifest saying `true` meant something we cannot infer.
-      if (typeof entry !== "string") {
-        fail(`defaults.env.${key}`, "must be a string");
-      } else if (ALLOWED_ENV_KEYS.has(key)) {
-        env[key] = entry;
-      }
-      // An unknown key is dropped, not refused: an older extension meeting a
-      // newer manifest should use what it understands rather than fall back.
+      if (typeof entry !== "string") fail(`defaults.env.${key}`, "must be a string");
+      else env[key] = entry;
     }
   }
 
@@ -249,9 +250,15 @@ function validateCredential(value: unknown, fail: Fail): CredentialPolicy | unde
 }
 
 /**
- * Notices are remote text shown to every user, so they are capped, stripped of
- * control characters, and dropped once expired. They are displayed and nothing
- * else: never a command id, never a URL the extension opens.
+ * Notices are remote text shown to every user, so they are stripped of control
+ * characters and truncated. They are displayed and nothing else: never a
+ * command id, never a URL the extension opens.
+ *
+ * Validation deliberately keeps expired notices and does not apply the cap. It
+ * has no clock, and applying a cap here would let two long-expired notices take
+ * both slots and silently suppress a live one. Expiry and the cap are one
+ * decision and both belong to the caller, which has the clock: see
+ * `selectNotices`.
  */
 function validateNotices(value: unknown, fail: Fail): ManifestNotice[] | undefined {
   if (value === undefined) return [];
@@ -259,7 +266,6 @@ function validateNotices(value: unknown, fail: Fail): ManifestNotice[] | undefin
 
   const out: ManifestNotice[] = [];
   for (const [index, entry] of value.entries()) {
-    if (out.length === MAX_NOTICES) break;
     const path = `notices[${index}]`;
     if (!isPlainObject(entry)) {
       fail(path, "must be an object");
@@ -327,4 +333,22 @@ function isIsoDate(value: string): boolean {
 
 function isPlainObject(value: unknown): value is Record<string, JsonValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The notices to actually show, given a clock (FR-3 `notices`).
+ *
+ * Expiry and the cap are applied together and in that order, so a stale notice
+ * can never crowd out a live one — the reason validation does neither.
+ */
+export function selectNotices(notices: readonly ManifestNotice[], now: Date): ManifestNotice[] {
+  return notices.filter((notice) => !hasExpired(notice, now)).slice(0, MAX_NOTICES);
+}
+
+function hasExpired(notice: ManifestNotice, now: Date): boolean {
+  if (notice.expiresAt === undefined) return false;
+  const expiry = Date.parse(notice.expiresAt);
+  // An unparseable date cannot have passed: validation already refused one, and
+  // treating a date we cannot read as expired would silently drop live advice.
+  return !Number.isNaN(expiry) && expiry <= now.getTime();
 }
