@@ -53,12 +53,36 @@ const CANCEL = "Cancel";
 /** One retry, everywhere. See `commitSingle`. */
 const MAX_STALE_RETRIES = 1;
 
+/**
+ * Every command this file registers, as data.
+ *
+ * Registration is derived from this table rather than written out beside it, so
+ * the ids a test can read are the ids the extension actually registers — a
+ * cross-check against `package.json` proves something only if there is no
+ * second list for the two to drift apart on.
+ */
+const HANDLERS = {
+  "sensibleDefaults.runHealthCheck": (deps) => deps.runHealth(),
+  "sensibleDefaults.applyDefaults": (deps) => applyDefaults(deps, 0),
+  "sensibleDefaults.openSettings": (deps) => openSettings(deps),
+  "sensibleDefaults.restoreBackup": (deps) => restoreBackupCommand(deps),
+  "sensibleDefaults.resetKey": (deps, node) => resetKey(deps, node, 0),
+  "sensibleDefaults.selectRegion": (deps) => selectRegion(deps),
+  "sensibleDefaults.repairPermissions": (deps) => repairPermissionsCommand(deps),
+  "sensibleDefaults.runFix": (deps, node) => runFix(deps, node),
+} satisfies Record<string, (deps: CommandDeps, ...args: never[]) => Promise<void>>;
+
+export const COMMAND_IDS = Object.keys(HANDLERS) as readonly (keyof typeof HANDLERS)[];
+
 export function registerCommands(deps: CommandDeps): vscode.Disposable {
-  const register = (id: string, handler: (...args: never[]) => Promise<void>): vscode.Disposable =>
+  const register = (id: keyof typeof HANDLERS): vscode.Disposable =>
     vscode.commands.registerCommand(id, async (...args: unknown[]) => {
       deps.log.info(`Command: ${id}`);
       try {
-        await (handler as (...a: unknown[]) => Promise<void>)(...args);
+        await (HANDLERS[id] as (deps: CommandDeps, ...a: unknown[]) => Promise<void>)(
+          deps,
+          ...args,
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         deps.log.error(`${id} failed: ${message}`);
@@ -66,16 +90,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
       }
     });
 
-  return vscode.Disposable.from(
-    register("sensibleDefaults.runHealthCheck", () => deps.runHealth()),
-    register("sensibleDefaults.applyDefaults", () => applyDefaults(deps, 0)),
-    register("sensibleDefaults.openSettings", () => openSettings(deps)),
-    register("sensibleDefaults.restoreBackup", () => restoreBackupCommand(deps)),
-    register("sensibleDefaults.resetKey", (node: unknown) => resetKey(deps, node, 0)),
-    register("sensibleDefaults.selectRegion", () => selectRegion(deps)),
-    register("sensibleDefaults.repairPermissions", () => repairPermissionsCommand(deps)),
-    register("sensibleDefaults.runFix", (node: unknown) => runFix(deps, node)),
-  );
+  return vscode.Disposable.from(...COMMAND_IDS.map(register));
 }
 
 /** FR-6.1: preview, then write. A stale plan is recomputed, never forced. */
