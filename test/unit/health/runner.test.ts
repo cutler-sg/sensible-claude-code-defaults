@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ALL_CHECKS } from "../../../src/health/catalogue.js";
 import { runAll, transition } from "../../../src/health/runner.js";
 import type {
+  CatalogueCheckId,
   Check,
   CheckId,
   CheckResult,
@@ -12,7 +13,7 @@ import { makeCtx } from "./fixture.js";
 
 const AT = () => new Date("2026-09-10T13:00:00.000Z");
 
-function stub(id: CheckId, level: Level): Check {
+function stub(id: CatalogueCheckId, level: Level): Check {
   return {
     id,
     group: "Configuration",
@@ -26,7 +27,7 @@ function stub(id: CheckId, level: Level): Check {
   };
 }
 
-function thrower(id: CheckId, error: unknown): Check {
+function thrower(id: CatalogueCheckId, error: unknown): Check {
   return {
     id,
     group: "Configuration",

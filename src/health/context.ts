@@ -14,11 +14,23 @@ import { normalizeToken } from "../credential/shape.js";
 import type { TokenPresence, TokenStore } from "../credential/types.js";
 import type { Manifest } from "../manifest/types.js";
 import { desiredFromManifest } from "../manifest/types.js";
-import type { CheckContext, ClaudeCodeDetection, CredentialContext } from "./types.js";
+import type {
+  CheckContext,
+  ClaudeCodeDetection,
+  CredentialContext,
+  ManifestStatus,
+} from "./types.js";
 
 export interface BuildContextInput {
   env: ConfigEnv;
   manifest: Manifest;
+  /**
+   * Where `manifest` came from. Optional so a host that has not wired the
+   * resolver — and every test that only cares about a different check — gets
+   * the truthful "this is the copy we shipped" answer rather than a required
+   * argument to restate at every call site.
+   */
+  manifestStatus?: ManifestStatus;
   platform: NodeJS.Platform;
   detect: () => Promise<ClaudeCodeDetection>;
   /**
@@ -82,6 +94,10 @@ export async function buildContext(input: BuildContextInput): Promise<CheckConte
         : { kind: "malformed", raw: planned.raw, error: planned.error },
     snapshot,
     manifest,
+    manifestStatus: input.manifestStatus ?? {
+      revision: manifest.revision,
+      source: "bundled",
+    },
     plan: planned,
     drift: driftOf(planned),
     detection,
