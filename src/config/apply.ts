@@ -27,6 +27,7 @@ import {
   type JsonValue,
   type ManagedKey,
   type PlanResult,
+  type ReadResult,
   type Settings,
   type Snapshot,
 } from "./types.js";
@@ -60,6 +61,12 @@ export function createSession(): ApplySession {
 
 export interface CommitResult {
   written: boolean;
+  /**
+   * Why nothing was written. `noop` means the plan asked for no changes;
+   * `stale` means the file changed under us between `plan` and `commit`, so the
+   * plan describes a document that no longer exists and must be recomputed.
+   */
+  reason?: "noop" | "stale" | undefined;
   /** The backup taken by this commit, if it was the first write of the session. */
   backup?: BackupInfo | undefined;
   changes: Change[];
@@ -180,7 +187,7 @@ function claimElements(
 }
 
 /**
- * Back up once, write the file, then advance the snapshot.
+ * Re-read, back up once, write the file, then advance the snapshot.
  *
  * The ordering is the safe one and must not be swapped: if the write fails the
  * snapshot still describes what is genuinely on disk, so the next plan reads
@@ -196,11 +203,19 @@ export async function commit(
 ): Promise<CommitResult> {
   const { changes, drift, next, snapshotValues } = planned.merge;
   if (planned.noop) {
-    return { written: false, backup: undefined, changes, drift };
+    return { written: false, reason: "noop", backup: undefined, changes, drift };
   }
 
   const file = settingsPath(env.claudeDir);
   const opts = writeOptions(env);
+  // `planned.merge.next` is the whole document, computed from the bytes `plan`
+  // read. Between the two phases a diff preview sits in front of a human, and
+  // Claude Code's own `/setup-bedrock` may write the file in that window —
+  // writing `next` would then destroy that write with no drift to show for it
+  // and, after the session's one backup, no copy of it anywhere.
+  if (await hasChangedSince(file, planned.read)) {
+    return { written: false, reason: "stale", backup: undefined, changes, drift };
+  }
   // The writer asserts this too; asserting here means a refused write also
   // means a refused backup, so nothing at all lands inside a workspace.
   assertOutsideWorkspace(file, opts.workspaceFolders, opts.platform);
@@ -219,7 +234,31 @@ export async function commit(
   // failure we want.
   await env.snapshotStore.save(snapshot);
 
-  return { written: true, backup, changes, drift };
+  return { written: true, reason: undefined, backup, changes, drift };
+}
+
+/**
+ * Compare the file against what the plan was built from: raw bytes when it read
+ * one, mere existence when it did not. Bytes rather than parsed content, so a
+ * reformat or a comment-shaped edit still counts — the plan's `next` carries
+ * the whole document, so any difference makes it the wrong thing to write.
+ *
+ * This narrows the race rather than closing it: nothing here holds a lock, so a
+ * write landing between this read and the rename is still lost. That is the
+ * same exposure Claude Code itself has, and closing it needs a lock protocol
+ * both sides honour (plan Q-J).
+ */
+async function hasChangedSince(file: string, read: ReadResult): Promise<boolean> {
+  const now = await readSettings(file).catch(() => undefined);
+  if (now === undefined) {
+    // The file became unreadable for a host reason (EACCES, EISDIR). Treat it
+    // as changed: the write would fail or clobber something we cannot see.
+    return true;
+  }
+  if (read.kind === "absent") {
+    return now.kind !== "absent";
+  }
+  return now.kind === "absent" || now.raw !== read.raw;
 }
 
 /**

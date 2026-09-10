@@ -470,7 +470,13 @@ describe("no-op apply", () => {
 
     const result = await commit(env, createSession(), planned);
 
-    expect(result).toEqual({ written: false, backup: undefined, changes: [], drift: [] });
+    expect(result).toEqual({
+      written: false,
+      reason: "noop",
+      backup: undefined,
+      changes: [],
+      drift: [],
+    });
     expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
     expect(await listBackups(backupsDir(claudeDir))).toEqual([]);
   });
@@ -641,5 +647,100 @@ describe("resetting an element-owned key", () => {
     session = createSession();
     await commit(env, session, ready(await plan(env, desiredFixture({ enabledPlugins: {} }))));
     expect(getPath(await readJson(), "enabledPlugins")).toEqual({ "user@theirs": true });
+  });
+});
+
+describe("a concurrent write between plan and commit", () => {
+  const BEFORE = `${JSON.stringify({ model: "opus", env: { MY: "x" } }, null, 2)}\n`;
+  /** What `/setup-bedrock` leaves behind while the diff preview is open. */
+  const CLAUDE_CODE = `${JSON.stringify(
+    { model: "opus", env: { MY: "x", AWS_BEARER_TOKEN_BEDROCK: "ABSK-real-user-token" } },
+    null,
+    2,
+  )}\n`;
+
+  it("refuses to commit a plan built from a file that has since changed", async () => {
+    await seedSettings(BEFORE);
+    const planned = ready(await plan(env, { "env.AWS_REGION": "us-east-1" }));
+
+    await writeFile(file, CLAUDE_CODE, "utf8");
+    const result = await commit(env, session, planned);
+
+    expect(result).toMatchObject({ written: false, reason: "stale", backup: undefined });
+    expect(await readText()).toBe(CLAUDE_CODE);
+    expect(await exists(snapshotPath(claudeDir))).toBe(false);
+    expect(await listBackups(backupsDir(claudeDir))).toEqual([]);
+  });
+
+  it("refuses even when the session has already taken its one backup", async () => {
+    // The unrecoverable case: with the session's backup already spent, an
+    // overwrite here would destroy the token with no copy of it anywhere.
+    await seedSettings(BEFORE);
+    await applyFixture({ "env.AWS_REGION": "us-east-1" });
+
+    const planned = ready(await plan(env, { "env.ANTHROPIC_DEFAULT_OPUS_MODEL": OPUS_V1 }));
+    await writeFile(file, CLAUDE_CODE, "utf8");
+    const result = await commit(env, session, planned);
+
+    expect(result.written).toBe(false);
+    expect(await readJson()).toMatchObject({
+      env: { AWS_BEARER_TOKEN_BEDROCK: "ABSK-real-user-token" },
+    });
+  });
+
+  it("refuses when the file appeared after a plan that read no file", async () => {
+    const planned = ready(await plan(env, { "env.AWS_REGION": "us-east-1" }));
+
+    await seedSettings(CLAUDE_CODE);
+    const result = await commit(env, session, planned);
+
+    expect(result).toMatchObject({ written: false, reason: "stale" });
+    expect(await readText()).toBe(CLAUDE_CODE);
+  });
+
+  it("refuses when the file was deleted after the plan read it", async () => {
+    await seedSettings(BEFORE);
+    const planned = ready(await plan(env, { "env.AWS_REGION": "us-east-1" }));
+
+    await rm(file);
+    const result = await commit(env, session, planned);
+
+    expect(result).toMatchObject({ written: false, reason: "stale" });
+    expect(await exists(file)).toBe(false);
+  });
+
+  it("refuses when the file became unparseable after the plan read it", async () => {
+    await seedSettings(BEFORE);
+    const planned = ready(await plan(env, { "env.AWS_REGION": "us-east-1" }));
+
+    await writeFile(file, "{ oops", "utf8");
+    const result = await commit(env, session, planned);
+
+    expect(result).toMatchObject({ written: false, reason: "stale" });
+    expect(await readText()).toBe("{ oops");
+  });
+
+  it("commits when a rewrite left the bytes identical", async () => {
+    await seedSettings(BEFORE);
+    const planned = ready(await plan(env, { "env.AWS_REGION": "us-east-1" }));
+
+    await writeFile(file, BEFORE, "utf8");
+    const result = await commit(env, session, planned);
+
+    expect(result.written).toBe(true);
+    expect(await envValue("AWS_REGION")).toBe("us-east-1");
+  });
+
+  it("reports a no-op as such, not as stale", async () => {
+    await applyFixture();
+    const result = await commit(env, createSession(), ready(await plan(env, desiredFixture())));
+
+    expect(result).toEqual({
+      written: false,
+      reason: "noop",
+      backup: undefined,
+      changes: [],
+      drift: [],
+    });
   });
 });
