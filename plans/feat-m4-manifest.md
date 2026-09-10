@@ -45,6 +45,32 @@ src/manifest/
 - [ ] Publish the manifest itself: `manifest/defaults.json` is served from the repo's `main` via `raw.githubusercontent.com` (PRD §16 Q1 leans this way). Add a CI job that validates `manifest/defaults.json` against `schema.ts` on every push so a bad manifest cannot reach `main`.
 - [ ] README "Network requests" section updated with the manifest URL and the fact that it carries no identifiers.
 
+## Blocker found on 2026-09-11: the manifest URL 404s while the repo is private
+
+`manifest/defaults.json` is now committed on `main` (39ccd62), but
+`raw.githubusercontent.com` serves 404 to anonymous requests for a private
+repository, and the extension fetches it unauthenticated by design — it holds no
+GitHub credential and must not.
+
+Verified against the live URL: `fetchManifest` returns
+`{kind: "failed", reason: "http-status", status: 404}` and `resolveManifest`
+falls through to `source: "bundled"` with a usable manifest, silently, exactly
+as FR-3.2 requires. So nothing breaks. But every install would sit permanently
+on the bundled copy, which makes the whole update channel inert — the thing M4
+exists to build.
+
+**Resolution required before any release (MC's call, one of):**
+1. Make the repository public. It ships publicly anyway (D1), the PRD's §13
+   trust posture explicitly wants a public repository, and this is the cheapest
+   fix.
+2. Serve the manifest from `cutler.sg` instead, which is already verified and
+   hosting the future landing page. Changes `sensibleDefaults.manifestUrl`'s
+   default and revisits Q-Y, but keeps the repo private if that is wanted.
+
+Until one of these happens the fallback chain is doing its job and the panel
+says "using built-in defaults" honestly, which is the correct behaviour for a
+channel that is not yet reachable.
+
 ## Decisions taken (assumption in bold, all reversible)
 
 - **Q-Y** GitHub raw hosting for v1 (PRD Q1). Free, versioned, auditable, and the rate limit is irrelevant at one fetch per hour per window. Revisit if install counts make it a problem.
