@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { backupsDir, createSession } from "./config/index.js";
-import type { ConnectionResult } from "./credential/types.js";
 import { readTokenFromSettings } from "./credential/writeThrough.js";
+import type { CredentialContext } from "./health/types.js";
 import { BUNDLED_MANIFEST } from "./manifest/bundled.js";
 import { registerCommands } from "./ui/commands.js";
 import type { CredentialFlowDeps } from "./ui/flows.js";
@@ -36,13 +36,26 @@ export function activate(context: vscode.ExtensionContext): void {
    * The last test call, per window (plan Q-T). In memory on purpose: it says
    * what AWS answered a moment ago, and a result restored from disk after a
    * restart would vouch for a key that may since have been revoked.
+   *
+   * For the same reason it does not survive a change to the key it was about
+   * (F5): a result is evidence about one credential, and rotating, clearing or
+   * replacing that credential leaves it evidence about nothing. It is dropped
+   * on every store change, and stamped with the tested key so `cred.valid` can
+   * catch a change this window did not make either.
    */
-  let lastTest: { at: string; result: ConnectionResult } | undefined;
+  let lastTest: CredentialContext["lastTest"];
   const credential: CredentialFlowDeps = {
     store: host.store,
     terminal: host.terminal,
-    recordTest: (result) => {
-      lastTest = { at: new Date().toISOString(), result };
+    recordTest: (result, tokenSetAt) => {
+      lastTest = {
+        at: new Date().toISOString(),
+        ...(tokenSetAt === undefined ? {} : { tokenSetAt }),
+        result,
+      };
+    },
+    onTokenChanged: () => {
+      lastTest = undefined;
     },
   };
 
@@ -58,6 +71,10 @@ export function activate(context: vscode.ExtensionContext): void {
       readFromSettings: () => readTokenFromSettings(host.env),
       ...(lastTest === undefined ? {} : { lastTest }),
     }),
+    // FR-4.3 / F13: the collection is re-derived from the keychain on every
+    // run, so a window that missed a change made in another one catches up
+    // rather than exporting a key that has been cleared or replaced.
+    terminal: host.terminal,
     onSelfWrite: markWrite,
     present: (report) => {
       provider.setReport(report);
@@ -101,6 +118,10 @@ export function activate(context: vscode.ExtensionContext): void {
     // file on activation would be a silent change to a user's configuration
     // made before they have seen the panel, and a file whose key we removed by
     // hand is a `cred.mirrored` error with a one-click fix instead.
+    //
+    // A health run does this too (F13), but not when the user has opted out of
+    // the startup check — and terminal injection is not the configuration
+    // check they opted out of.
     void pushTokenToTerminals(host, log);
     if (!vscode.workspace.getConfiguration().get("sensibleDefaults.checkOnStartup", true)) {
       log.info("Startup health check skipped: sensibleDefaults.checkOnStartup is off.");

@@ -41,8 +41,18 @@ export interface CredentialFlowDeps {
   store: TokenStore;
   /** The integrated-terminal collection (FR-4.3). */
   terminal: TokenEnv;
-  /** Hand the result to the host so `cred.valid` can report it (plan Q-T). */
-  recordTest: (result: ConnectionResult) => void;
+  /**
+   * Hand the result to the host so `cred.valid` can report it (plan Q-T).
+   * `tokenSetAt` is the stamp of the key the call actually tested, so a result
+   * that outlives its key can be recognised rather than trusted (F5).
+   */
+  recordTest: (result: ConnectionResult, tokenSetAt?: string) => void;
+  /**
+   * Called after every change to the stored token. The host holds the last test
+   * result in memory, and a result about a key that has been rotated, cleared
+   * or replaced must not go on vouching for the one that took its place (F5).
+   */
+  onTokenChanged?: () => void;
   /** Injected only by tests; production uses the global. */
   fetch?: typeof globalThis.fetch;
 }
@@ -172,6 +182,7 @@ export async function clearToken(deps: FlowDeps): Promise<void> {
 
   await deps.credential.store.clear();
   deps.credential.terminal.clear();
+  deps.credential.onTokenChanged?.();
   deps.log.info("Removed the Bedrock API key from the settings file, keychain and terminals.");
   await vscode.window.showInformationMessage("Removed your Bedrock API key.");
   await deps.runHealth();
@@ -346,7 +357,9 @@ export async function testConnection(deps: FlowDeps): Promise<void> {
       }),
   );
 
-  deps.credential.recordTest(result);
+  // Stamped with the key it tested, so `cred.valid` can tell a result that has
+  // outlived its credential from one that still speaks for it (F5).
+  deps.credential.recordTest(result, stored.setAt);
   // The kind, never the body and never the token: `ConnectionResult` carries
   // only a status, a region, or a model id we supplied ourselves.
   deps.log.info(`Connection test: ${result.kind}`);
@@ -391,6 +404,9 @@ async function announce(result: ConnectionResult): Promise<void> {
     case "bad-credential":
       await vscode.window.showErrorMessage(labels.badCredential);
       return;
+    case "insufficient-permissions":
+      await vscode.window.showErrorMessage(labels.insufficientPermissions);
+      return;
     case "model-not-enabled":
       await vscode.window.showErrorMessage(labels.modelNotEnabled);
       return;
@@ -402,6 +418,13 @@ async function announce(result: ConnectionResult): Promise<void> {
       return;
     case "unknown":
       await vscode.window.showErrorMessage(labels.unknown);
+      return;
+    default:
+      // A `ConnectionResult` variant this toast has not been taught about.
+      // `announce` returns `Promise<void>`, so an unhandled case compiles fine
+      // and simply shows the user nothing at all after a test they ran on
+      // purpose — worse than an imprecise sentence.
+      await vscode.window.showErrorMessage(labels.unrecognised);
   }
 }
 
@@ -418,6 +441,7 @@ async function store(deps: FlowDeps, token: string): Promise<void> {
   const now = (deps.now ?? (() => new Date()))();
   await deps.credential.store.set({ token, setAt: now.toISOString() });
   deps.credential.terminal.apply(token);
+  deps.credential.onTokenChanged?.();
 }
 
 /**

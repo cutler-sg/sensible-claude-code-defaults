@@ -47,6 +47,8 @@ export interface FakeCredentialDeps extends CredentialFlowDeps {
   store: MemoryTokenStore;
   terminal: FakeTerminalEnv;
   recorded: ConnectionResult[];
+  /** The stamped results, so a test can assert which key a result speaks for. */
+  recordedAt: { tokenSetAt?: string; result: ConnectionResult }[];
   /** Requests the fake `fetch` saw, so a test can assert the token left once. */
   requests: { url: string; authorization: string }[];
   /** What the next Bedrock call answers with. */
@@ -58,10 +60,12 @@ export function fakeCredentialDeps(initial?: StoredToken): FakeCredentialDeps {
     store: new MemoryTokenStore(initial),
     terminal: new FakeTerminalEnv(),
     recorded: [],
+    recordedAt: [],
     requests: [],
     respond: () => bedrockOk(),
-    recordTest: (result) => {
+    recordTest: (result, tokenSetAt) => {
       deps.recorded.push(result);
+      deps.recordedAt.push({ result, ...(tokenSetAt === undefined ? {} : { tokenSetAt }) });
     },
     fetch: (input, init) => {
       const url = String(input);
@@ -71,4 +75,48 @@ export function fakeCredentialDeps(initial?: StoredToken): FakeCredentialDeps {
     },
   };
   return deps;
+}
+
+/**
+ * The shortest run of a secret worth reporting (F11).
+ *
+ * Four, not six. Six was the brief, but the disclosure that slipped past the
+ * old whole-value assertions was `` `…${token.slice(-4)}` `` — a four-character
+ * run, which no six-character rule can see. Four is also what the token
+ * alphabet allows: these are base64-ish, so a four-character window is ~24 bits
+ * and does not collide with anything the panel prints on its own (asserted
+ * below by running it over a real report). Three would start matching ordinary
+ * English inside a base64 key.
+ */
+export const MIN_LEAK_RUN = 4;
+
+/** Every contiguous `MIN_LEAK_RUN`-character window of `secret`. */
+function runsOf(secret: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i + MIN_LEAK_RUN <= secret.length; i += 1) {
+    out.push(secret.slice(i, i + MIN_LEAK_RUN));
+  }
+  return out;
+}
+
+/**
+ * Hard rule 4 as an assertion: no fragment of any `secret` appears in any of
+ * `strings`.
+ *
+ * The failure names the offset of the run that escaped and never the run
+ * itself — a test that printed the token on failure would put it in CI logs,
+ * which is the thing being prevented.
+ */
+export function expectNoTokenLeak(strings: readonly string[], secrets: readonly string[]): void {
+  for (const secret of secrets) {
+    const runs = runsOf(secret);
+    for (const text of strings) {
+      const index = runs.findIndex((run) => text.includes(run));
+      if (index >= 0) {
+        throw new Error(
+          `A ${MIN_LEAK_RUN}-character run of a token, at offset ${index}, reached a rendered string.`,
+        );
+      }
+    }
+  }
 }

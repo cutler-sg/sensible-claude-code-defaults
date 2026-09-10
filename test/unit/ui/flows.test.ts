@@ -6,12 +6,18 @@ import type { ApplySession, ConfigEnv, JsonObject, Settings } from "../../../src
 import { createSession, MemorySnapshotStore, settingsPath } from "../../../src/config/index.js";
 import { TOKEN_ENV_VAR } from "../../../src/credential/types.js";
 import { TOKEN_SETTINGS_KEY } from "../../../src/credential/writeThrough.js";
+import { LABELS } from "../../../src/health/labels.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import type { Manifest } from "../../../src/manifest/types.js";
 import type { FlowDeps } from "../../../src/ui/flows.js";
 import * as flows from "../../../src/ui/flows.js";
 import { messages, reset, state } from "./commandsHost.js";
-import { bedrockOk, type FakeCredentialDeps, fakeCredentialDeps } from "./credentialDeps.js";
+import {
+  bedrockOk,
+  expectNoTokenLeak,
+  type FakeCredentialDeps,
+  fakeCredentialDeps,
+} from "./credentialDeps.js";
 
 vi.mock("vscode", async () => await import("./commandsHost.js"));
 
@@ -196,6 +202,61 @@ describe("setToken", () => {
   });
 });
 
+/**
+ * F5. A test result vouches for the key it tested, and nothing else.
+ *
+ * `cred.valid` reports the last result until the window closes, so a key that
+ * has since been rotated, cleared or replaced kept a green row from a call
+ * about a credential that no longer exists. The flows are where the store
+ * changes, so they are where the host has to be told.
+ */
+describe("a stored key that changes under a test result", () => {
+  it("reports every store change to the host", async () => {
+    const changes: number[] = [];
+    const withHook = (): FlowDeps => {
+      const base = deps();
+      return {
+        ...base,
+        credential: { ...base.credential, onTokenChanged: () => changes.push(1) },
+      };
+    };
+
+    type(TOKEN);
+    await flows.setToken(withHook());
+    expect(changes).toHaveLength(1);
+
+    type(OTHER);
+    await flows.rotateToken(withHook());
+    expect(changes).toHaveLength(2);
+
+    click("Remove key");
+    await flows.clearToken(withHook());
+    expect(changes).toHaveLength(3);
+  });
+
+  it("stamps a test result with the tested key, so a rotation invalidates it", async () => {
+    type(TOKEN);
+    click("Test connection now");
+    await flows.setToken(deps());
+
+    expect(credential.recordedAt[0]?.tokenSetAt).toBe(NOW.toISOString());
+  });
+
+  it("does not report a change the user cancelled", async () => {
+    const changes: number[] = [];
+    const base = deps();
+    const cancelled: FlowDeps = {
+      ...base,
+      credential: { ...base.credential, onTokenChanged: () => changes.push(1) },
+    };
+
+    await flows.setToken(cancelled);
+    await flows.clearToken(cancelled);
+
+    expect(changes).toEqual([]);
+  });
+});
+
 describe("validateInput", () => {
   it("accepts a plausible key", () => {
     expect(flows.validateInput(TOKEN)).toBeUndefined();
@@ -229,10 +290,7 @@ describe("rotateToken", () => {
       setAt: NOW.toISOString(),
     });
     expect(state.inputBoxes[0]?.options.title).toBe("Update Bedrock API Key");
-    for (const shown of [...messages(), ...logged]) {
-      expect(shown).not.toContain(TOKEN);
-      expect(shown).not.toContain(OTHER);
-    }
+    expectNoTokenLeak([...messages(), ...logged], [TOKEN, OTHER]);
   });
 
   it("restarts the age clock, because that is all we can honestly claim", async () => {
@@ -587,10 +645,10 @@ describe("a settings file whose token key holds something else", () => {
 
     await flows.reapplyToken(deps());
 
-    for (const shown of [...state.warn, ...state.info, ...state.error]) {
-      expect(JSON.stringify(shown)).not.toContain(TOKEN);
-      expect(JSON.stringify(shown)).not.toContain(OTHER);
-    }
+    expectNoTokenLeak(
+      [...state.warn, ...state.info, ...state.error].map((shown) => JSON.stringify(shown)),
+      [TOKEN, OTHER],
+    );
   });
 });
 
@@ -627,10 +685,7 @@ describe("resolveTokenConflict", () => {
         `${(item as { label: string }).label} ${(item as { description: string }).description}`,
     );
     expect(labels).toHaveLength(2);
-    for (const label of labels) {
-      expect(label).not.toContain(TOKEN);
-      expect(label).not.toContain(OTHER);
-    }
+    expectNoTokenLeak(labels, [TOKEN, OTHER]);
   });
 
   it("keeps the file's key when the user picks it", async () => {
@@ -761,6 +816,20 @@ describe("testConnection", () => {
     expect(state.error[0]?.message).toMatch(/aren't turned on/);
   });
 
+  it("names the permissions problem rather than showing no toast at all", async () => {
+    respondWith(
+      403,
+      '{"message":"AccessDeniedException: not authorized to perform bedrock:InvokeModel"}',
+    );
+
+    await flows.testConnection(deps());
+
+    expect(credential.recorded[0]).toMatchObject({ kind: "insufficient-permissions" });
+    // `announce`'s switch returns `Promise<void>`, so a variant it has not been
+    // taught about falls through silently rather than failing to compile.
+    expect(state.error[0]?.message).toBe(LABELS["cred.valid"].insufficientPermissions);
+  });
+
   it("says so when there is no key to test", async () => {
     await credential.store.clear();
 
@@ -833,8 +902,13 @@ describe("a settings file that changes under the write", () => {
 /**
  * Hard rule 4, end to end: a known token is seeded into the keychain, the
  * settings file, and a test result, and every string these flows produce is
- * searched for it. This is the test that would catch a well-meaning "show the
- * last four characters so they can tell them apart" change.
+ * searched for it.
+ *
+ * Searched for in *fragments*, not whole (F11). A `not.toContain(TOKEN)` over
+ * the literal is exactly what a well-meaning "show the last four characters so
+ * they can tell them apart" change slips past — and that change was made
+ * against this suite and went green. `expectNoTokenLeak` looks for any
+ * contiguous run instead; its own behaviour is asserted in `redaction.test.ts`.
  */
 describe("the token never reaches a user-visible string", () => {
   it("stays out of every message, log line and pick label", async () => {
@@ -866,9 +940,6 @@ describe("the token never reaches a user-visible string", () => {
     ];
     // The flows did run — otherwise this asserts over an empty list.
     expect(rendered.length).toBeGreaterThan(20);
-    for (const text of rendered) {
-      expect(text).not.toContain(TOKEN);
-      expect(text).not.toContain(OTHER);
-    }
+    expectNoTokenLeak(rendered, [TOKEN, OTHER]);
   });
 });
