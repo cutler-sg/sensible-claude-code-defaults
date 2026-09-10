@@ -128,7 +128,26 @@ export const LABELS = {
     skipped: "Nothing to check until a Bedrock API key is saved",
   },
   "cred.leak": {
-    skipped: "Checking your project files for a copy of your key arrives in a later update",
+    pass: "Your Bedrock API key isn't sitting in any of your project files",
+    /** The scan is the point of the check, so not running it is information. */
+    notChecked: "Your project files haven't been checked for a copy of your key",
+    untrusted: "Open folder not checked for a copy of your key — you haven't trusted it yet",
+    noFolders: "No project folder is open, so there's nothing to check for a copy of your key",
+    skipped: "Nothing to check until a Bedrock API key is saved",
+    /**
+     * FR-4.8's whole reason for existing. The user is told the file, never the
+     * value, and told plainly that deleting it is not enough when git has seen
+     * it — a user who removes the line and believes they are safe is worse off
+     * than one who was never told.
+     */
+    found: "Your Bedrock API key is written inside one of your project files",
+    foundTracked:
+      "Your Bedrock API key is inside a project file that's saved in version control — replacing the key is the only way to be safe",
+    /**
+     * Never a pass. "We looked at some of your files and found nothing" and
+     * "your key is not in your project" are different claims.
+     */
+    partial: "We ran out of time checking your project files for a copy of your key",
   },
   "plugins.marketplace": {
     none: "No plugin marketplace is recommended yet",

@@ -1194,3 +1194,63 @@ describe("copyDiagnostics (FR-7.1)", () => {
     expect(state.error).toEqual([]);
   });
 });
+
+/**
+ * `cred.leak`'s fix (FR-4.8). Hard rule 1 and plan Q-AD: it opens, and never
+ * edits — the extension does not write inside a workspace folder, and rotation
+ * is the real remedy anyway.
+ */
+describe("openLeakedFile (FR-4.8)", () => {
+  it("opens the file at the offending line", async () => {
+    const leaked = join(dir, "project.env.json");
+    await writeFile(leaked, "x", "utf8");
+
+    await run("sensibleDefaults.openLeakedFile", leaked, 4);
+
+    expect(state.opened).toEqual([leaked]);
+    // Zero-based, and a cursor rather than a selection: a selected credential
+    // is one keystroke from being somewhere else again.
+    expect(state.showOptions).toEqual([
+      { selection: { start: { line: 3, character: 0 }, end: { line: 3, character: 0 } } },
+    ]);
+  });
+
+  it("changes nothing on disk", async () => {
+    const leaked = join(dir, "leak.json");
+    await writeFile(leaked, "the file as it was", "utf8");
+
+    await run("sensibleDefaults.openLeakedFile", leaked, 1);
+
+    expect(await readFile(leaked, "utf8")).toBe("the file as it was");
+  });
+
+  it("falls back to the first line when no line is given", async () => {
+    const leaked = join(dir, "leak.json");
+    await writeFile(leaked, "x", "utf8");
+
+    await run("sensibleDefaults.openLeakedFile", leaked);
+
+    expect(state.showOptions).toEqual([
+      { selection: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } },
+    ]);
+  });
+
+  it("ignores a call with no file rather than throwing", async () => {
+    await run("sensibleDefaults.openLeakedFile", undefined, 1);
+
+    expect(state.opened).toEqual([]);
+    expect(logged.at(-1)).toContain("without a file");
+    expect(state.error).toEqual([]);
+  });
+
+  it("says so gently when the file has already gone", async () => {
+    state.openFailure = new Error("ENOENT");
+
+    await run("sensibleDefaults.openLeakedFile", join(dir, "gone.json"), 2);
+
+    // The good outcome — the user removed the file — so it is information,
+    // not an error.
+    expect(state.info.at(-1)?.message).toContain("isn't there any more");
+    expect(state.error).toEqual([]);
+  });
+});

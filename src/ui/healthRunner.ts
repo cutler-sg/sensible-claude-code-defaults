@@ -15,7 +15,7 @@ import * as vscode from "vscode";
 import type { ConfigEnv } from "../config/types.js";
 import type { TokenEnv } from "../credential/types.js";
 import { ALL_CHECKS } from "../health/catalogue.js";
-import type { CredentialDeps } from "../health/context.js";
+import type { CredentialDeps, LeakScanContextDeps } from "../health/context.js";
 import { buildContext } from "../health/context.js";
 import { runAll, transition } from "../health/runner.js";
 import type { Check, ClaudeCodeDetection, HealthReport } from "../health/types.js";
@@ -67,6 +67,13 @@ export interface HealthRunnerDeps {
    * exporting a key the first had cleared, into every terminal it opened.
    */
   terminal?: TokenEnv;
+  /**
+   * FR-4.8's scan inputs, read afresh on every run for the same reason
+   * `credential` is: trust is granted to a running window, and folders can be
+   * added to one. A copy captured at wiring time would leave the scan disabled
+   * for the life of a window the user has since trusted.
+   */
+  leakScan?: () => LeakScanContextDeps;
   /** Injected only so a test can run a small catalogue. */
   checks?: readonly Check[];
 }
@@ -102,6 +109,7 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
       detect: deps.detect,
       ...(deps.onSelfWrite ? { onSelfWrite: deps.onSelfWrite } : {}),
       ...(deps.credential ? { credential: deps.credential() } : {}),
+      ...(deps.leakScan ? { leakScan: deps.leakScan() } : {}),
     });
     const report = await runAll(checks, ctx);
     await syncTerminals(deps);

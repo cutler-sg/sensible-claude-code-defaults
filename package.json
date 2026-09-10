@@ -150,6 +150,11 @@
         "title": "Fix This",
         "category": "Sensible Defaults",
         "icon": "$(wrench)"
+      },
+      {
+        "command": "sensibleDefaults.openLeakedFile",
+        "title": "Open the file your key was found in",
+        "category": "Sensible Defaults"
       }
     ],
     "configuration": {
@@ -200,6 +205,10 @@
         },
         {
           "command": "sensibleDefaults.resetKey",
+          "when": "false"
+        },
+        {
+          "command": "sensibleDefaults.openLeakedFile",
           "when": "false"
         }
       ]

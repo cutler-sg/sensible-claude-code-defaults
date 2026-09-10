@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ALL_CHECKS } from "../../../src/health/catalogue.js";
 import type { CheckId } from "../../../src/health/types.js";
 import { CHECK_GROUPS } from "../../../src/health/types.js";
-import { makeCtx } from "./fixture.js";
+import { daysAgo, makeCtx, NOW, okCredential } from "./fixture.js";
 
 const EVERY_ID: readonly CheckId[] = [
   "install.extension",
@@ -63,16 +63,46 @@ describe("catalogue", () => {
     }
   });
 
-  it("skips every check whose milestone has not landed", async () => {
-    const ctx = makeCtx();
-    // M5 owns the workspace leak scan; `config.stale` became real in M4.
-    const deferred: CheckId[] = ["cred.leak"];
-    for (const id of deferred) {
-      const check = ALL_CHECKS.find((candidate) => candidate.id === id);
-      expect(check).toBeDefined();
-      const result = await (check as NonNullable<typeof check>).run(ctx);
-      expect(result.level).toBe("skipped");
-      expect(result.fix).toEqual({ kind: "none" });
+  /**
+   * M5 landed `cred.leak`, the last deferred check — so the placeholder
+   * assertion becomes its inverse: nothing in the catalogue is a stub, and a
+   * check added later cannot be left as one silently.
+   *
+   * "Not a stub" is not "never skips". Several checks skip on an unmet
+   * precondition, which is a real answer — `cred.valid` skips until the user
+   * runs a test call, by design (plan Q-T). So the context here has *every*
+   * precondition met: a key that has been tested, and a leak scan that
+   * finished. A skip against that is a check that does nothing.
+   */
+  it("has no check left unimplemented", async () => {
+    const ctx = makeCtx({
+      credential: okCredential({
+        lastTest: {
+          at: NOW.toISOString(),
+          tokenSetAt: daysAgo(1),
+          result: { kind: "ok", model: "us.anthropic.claude-haiku-4-5" },
+        },
+        leakScan: { kind: "clean" },
+      }),
+    });
+
+    const stubs: CheckId[] = [];
+    for (const check of ALL_CHECKS) {
+      const result = await check.run(ctx);
+      if (result.level === "skipped") stubs.push(check.id);
     }
+
+    expect(stubs).toEqual([]);
+  });
+
+  /** The check M5 replaced, named so its regression is a named failure. */
+  it("runs the workspace leak scan rather than deferring it (FR-4.8)", async () => {
+    const ctx = makeCtx({ credential: okCredential({ leakScan: { kind: "clean" } }) });
+    const check = ALL_CHECKS.find((candidate) => candidate.id === "cred.leak");
+
+    expect(check).toBeDefined();
+    const result = await (check as NonNullable<typeof check>).run(ctx);
+
+    expect(result.level).toBe("pass");
   });
 });

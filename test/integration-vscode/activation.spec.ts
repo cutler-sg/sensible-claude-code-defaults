@@ -28,6 +28,7 @@ describe("activation", () => {
       "sensibleDefaults.openSettings",
       "sensibleDefaults.restoreBackup",
       "sensibleDefaults.copyDiagnostics",
+      "sensibleDefaults.openLeakedFile",
       "sensibleDefaults.selectRegion",
       "sensibleDefaults.repairPermissions",
       "sensibleDefaults.resetKey",

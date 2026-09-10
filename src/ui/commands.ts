@@ -116,6 +116,7 @@ const HANDLERS = {
   "sensibleDefaults.repairPermissions": (deps) => repairPermissionsCommand(deps),
   "sensibleDefaults.runFix": (deps, node) => runFix(deps, node),
   "sensibleDefaults.copyDiagnostics": (deps) => copyDiagnostics(deps),
+  "sensibleDefaults.openLeakedFile": (deps, file, line) => openLeakedFile(deps, file, line),
   // FR-4's flows. They take the same injected shape, so `CommandDeps` is a
   // `FlowDeps` and the two files share one dependency graph rather than two.
   "sensibleDefaults.setToken": (deps) => setToken(deps),
@@ -450,6 +451,42 @@ async function copyDiagnostics(deps: CommandDeps): Promise<void> {
 function listOf(items: readonly string[]): string {
   if (items.length <= 1) return items[0] ?? "";
   return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
+/**
+ * `cred.leak`'s fix (FR-4.8): open the file at the line, and change nothing.
+ *
+ * Hard rule 1 and plan Q-AD: the extension never writes inside a workspace
+ * folder, so it cannot take the key out of the user's file — and would not want
+ * to, because rotation is the real remedy and an edit that looks like a fix
+ * discourages one. The file is opened, the user removes the line.
+ */
+async function openLeakedFile(deps: CommandDeps, file: unknown, line: unknown): Promise<void> {
+  if (typeof file !== "string" || file === "") {
+    deps.log.warn("openLeakedFile called without a file; ignoring.");
+    return;
+  }
+  const at = typeof line === "number" && line > 0 ? line : 1;
+  try {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+    // `selection` puts the cursor on the line without selecting its text: a
+    // selected credential is one Ctrl+C from being somewhere else again.
+    const position = new vscode.Position(at - 1, 0);
+    await vscode.window.showTextDocument(document, {
+      selection: new vscode.Range(position, position),
+    });
+  } catch (error) {
+    // The file was moved or removed between the scan and the click — which is
+    // the good outcome, so it is said as information rather than as an error.
+    deps.log.info(`Could not open the file the key was found in: ${messageOf(error)}`);
+    await vscode.window.showInformationMessage(
+      "That file isn't there any more. Run the check again to see if the key is still in your project.",
+    );
+  }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : "an unexpected failure";
 }
 
 /** The wrench button: run whatever command the check nominated as its fix. */

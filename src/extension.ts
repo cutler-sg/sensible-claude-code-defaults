@@ -103,6 +103,9 @@ export function activate(context: vscode.ExtensionContext): void {
     // run, so a window that missed a change made in another one catches up
     // rather than exporting a key that has been cleared or replaced.
     terminal: host.terminal,
+    // FR-4.8 / §13: read per run, so a folder trusted after activation is
+    // scanned rather than reported unchecked for the life of the window.
+    leakScan: host.leakScan,
     onSelfWrite: markWrite,
     present: (report) => {
       lastReport = report;
