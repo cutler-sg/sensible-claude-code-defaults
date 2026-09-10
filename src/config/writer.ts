@@ -11,6 +11,7 @@
  * file we are about to replace" are routinely two different places.
  */
 
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { assertOutsideWorkspace } from "./paths.js";
@@ -66,11 +67,15 @@ export async function writeRawAtomic(
   const dir = path.dirname(target);
   await fs.mkdir(dir, { recursive: true });
 
-  const tmp = path.join(dir, `.settings.json.${process.pid}.${Date.now()}.tmp`);
+  // A UUID, not pid+ms: two windows of the same extension host share a pid
+  // clock, and a collision made one writer delete the other's temp (F8).
+  const tmp = path.join(dir, `.${path.basename(target)}.${randomUUID()}.tmp`);
+  let created = false;
   try {
     // `wx` fails rather than clobbering, so two concurrent writers cannot
     // interleave into one temp file.
     const handle = await fs.open(tmp, "wx", MODE_0600);
+    created = true;
     try {
       await handle.writeFile(text, "utf8");
       // fsync before rename: rename is atomic in the directory entry, but the
@@ -84,8 +89,13 @@ export async function writeRawAtomic(
     // rename preserves the temp file's mode, but the destination may have
     // pre-existed at a looser mode on some filesystems — be explicit (FR-2.8).
     await chmod0600(target, platform);
+    await syncDirectory(dir);
   } catch (error) {
-    await fs.rm(tmp, { force: true }).catch(() => {});
+    // Only ours to remove: before `open` succeeded, `tmp` is either absent or
+    // somebody else's file.
+    if (created) {
+      await fs.rm(tmp, { force: true }).catch(() => {});
+    }
     throw new ConfigError("ATOMIC_WRITE_FAILED", `Failed to write ${target}.`, { cause: error });
   }
 }
@@ -225,6 +235,27 @@ async function chmod0600(target: string, platform: NodeJS.Platform): Promise<voi
   // Windows has no POSIX mode bits; ACL hardening is M6 (plan Q-K).
   if (platform !== "win32") {
     await fs.chmod(target, MODE_0600);
+  }
+}
+
+/**
+ * The rename itself is only durable once the *directory entry* is on disk; a
+ * crash between the two can lose the file the rename just created (F12).
+ *
+ * Best-effort by design. Windows cannot open a directory as a file at all
+ * (EISDIR/EPERM/EBADF depending on the layer), and by the time we get here the
+ * rename has already succeeded — reporting a failed fsync as ATOMIC_WRITE_FAILED
+ * would tell the caller the write did not happen when it did.
+ */
+async function syncDirectory(dir: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+  try {
+    handle = await fs.open(dir, "r");
+    await handle.sync();
+  } catch {
+    // Durability is weaker than we wanted; the file is still in place.
+  } finally {
+    await handle?.close().catch(() => {});
   }
 }
 

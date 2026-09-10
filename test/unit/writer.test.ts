@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * Wrap the real module once and let each test arm a single failure or count
  * calls through this handle instead.
  */
-const hooks = vi.hoisted(() => ({ renameFailure: null as Error | null, chmodCalls: 0 }));
+const hooks = vi.hoisted(() => ({
+  renameFailure: null as Error | null,
+  chmodCalls: 0,
+  dirSyncFailure: null as Error | null,
+  dirSyncs: 0,
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -26,6 +31,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     chmod: (...args: Parameters<typeof actual.chmod>) => {
       hooks.chmodCalls += 1;
       return actual.chmod(...args);
+    },
+    open: async (...args: Parameters<typeof actual.open>) => {
+      // The only read-mode open in the writer is the post-rename directory
+      // fsync, so this hook can both count it and make it fail (F12).
+      if (args[1] === "r") {
+        hooks.dirSyncs += 1;
+        const failure = hooks.dirSyncFailure;
+        if (failure) {
+          hooks.dirSyncFailure = null;
+          throw failure;
+        }
+      }
+      return actual.open(...args);
     },
   };
 });
@@ -58,6 +76,8 @@ beforeEach(async () => {
 afterEach(async () => {
   hooks.renameFailure = null;
   hooks.chmodCalls = 0;
+  hooks.dirSyncFailure = null;
+  hooks.dirSyncs = 0;
   await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -462,5 +482,51 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     await writeRawAtomic(file, '{"ok":true}\n', { workspaceFolders: [workspace] });
 
     expect(await fs.readFile(real, "utf8")).toBe('{"ok":true}\n');
+  });
+});
+
+describe("concurrent writers (F8)", () => {
+  it("three writers to one path all succeed and leave one intact payload", async () => {
+    await fs.writeFile(file, '{"original":true}\n');
+    const payloads = ['{"a":1}\n', '{"b":2}\n', '{"c":3}\n'];
+
+    const results = await Promise.allSettled(
+      payloads.map((text) => writeRawAtomic(file, text, OPTS)),
+    );
+
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "fulfilled"]);
+    expect(payloads).toContain(await fs.readFile(file, "utf8"));
+    expect(await tempFiles()).toEqual([]);
+  });
+
+  it("a failing write does not delete a concurrent writer's temp file", async () => {
+    // The pre-fix cleanup `rm`'d a fixed temp name it did not create, so a
+    // failure in one writer could remove a peer's in-flight temp.
+    const foreign = path.join(dir, `.settings.json.${process.pid}.${Date.now()}.tmp`);
+    await fs.writeFile(foreign, "peer-in-flight");
+    hooks.renameFailure = new Error("EXDEV: simulated");
+
+    await expect(writeRawAtomic(file, "{}\n", OPTS)).rejects.toBeInstanceOf(ConfigError);
+
+    expect(await fs.readFile(foreign, "utf8")).toBe("peer-in-flight");
+  });
+});
+
+describe("durability of the rename itself (F12)", () => {
+  it("fsyncs the directory after the rename", async () => {
+    hooks.dirSyncs = 0;
+    await writeRawAtomic(file, "{}\n", OPTS);
+    expect(hooks.dirSyncs).toBe(1);
+  });
+
+  it("does not fail the write when the directory cannot be fsynced", async () => {
+    // Windows cannot open a directory as a file; the rename already succeeded,
+    // so a failure here is weaker durability, not a failed write.
+    hooks.dirSyncFailure = Object.assign(new Error("EPERM: simulated"), { code: "EPERM" });
+
+    await writeRawAtomic(file, '{"written":true}\n', OPTS);
+
+    expect(await fs.readFile(file, "utf8")).toBe('{"written":true}\n');
+    expect(await tempFiles()).toEqual([]);
   });
 });
