@@ -435,6 +435,24 @@ describe("workspace guard follows symlinks (F1, §10.4 assertion #2)", () => {
     expect(await fs.readdir(real)).toEqual([]);
   });
 
+  it("refuses when the workspace root itself is reached through a symlink", async () => {
+    // The symlink is on the *workspace* side, not ours. VS Code reports the
+    // path the user opened, which on macOS is routinely `/var/...` for a
+    // directory that really lives at `/private/var/...`. Resolving only the
+    // target left the comparison against an unresolved root, and the write
+    // landed inside the workspace. Found by the macOS CI leg.
+    const real = path.join(dir, "real-proj");
+    await fs.mkdir(path.join(real, ".claude"), { recursive: true });
+    const link = path.join(dir, "proj-link");
+    await fs.symlink(real, link);
+    const target = path.join(real, ".claude", "settings.json");
+
+    await expect(
+      writeRawAtomic(target, '{"pwned":true}\n', { workspaceFolders: [link] }),
+    ).rejects.toMatchObject({ code: "WRITE_INSIDE_WORKSPACE" });
+    expect(await fs.readdir(path.join(real, ".claude"))).toEqual([]);
+  });
+
   it("refuses when settings.json itself is a symlink into a workspace", async () => {
     const workspace = path.join(dir, "proj");
     await fs.mkdir(workspace, { recursive: true });

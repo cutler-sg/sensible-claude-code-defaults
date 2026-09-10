@@ -5,6 +5,7 @@
  * the environment and the workspace folders.
  */
 
+import { realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ConfigError } from "./types.js";
@@ -84,14 +85,45 @@ export function assertOutsideWorkspace(
     if (!folder) {
       continue;
     }
-    const root = p.resolve(folder);
-    if (isAtOrInside(resolved, root, p)) {
-      throw new ConfigError(
-        "WRITE_INSIDE_WORKSPACE",
-        `Refusing to write inside a workspace folder: ${resolved} is at or below ${root}`,
-      );
+    // Compare against the folder as given *and* as it exists on disk. Callers
+    // already resolve the target through `realpath` before calling us a second
+    // time, but a workspace root can be a symlink too — VS Code reports the
+    // path the user opened, and on macOS that is routinely `/var/...` for a
+    // `/private/var/...` directory. Resolving only one side means a target
+    // whose real path is inside the workspace compares clean against the root's
+    // unresolved form, and the write lands in the workspace anyway (§10.4
+    // assertion #2). Both sides, or the guard is decorative.
+    for (const root of rootsFor(folder, p)) {
+      if (isAtOrInside(resolved, root, p)) {
+        throw new ConfigError(
+          "WRITE_INSIDE_WORKSPACE",
+          `Refusing to write inside a workspace folder: ${resolved} is at or below ${root}`,
+        );
+      }
     }
   }
+}
+
+/**
+ * The forms of a workspace root a target could be inside: the path as given,
+ * and its resolved form when the root exists and differs.
+ *
+ * Deliberately synchronous. The guard runs immediately before a write, and an
+ * `await` here would reopen the plan-to-commit gap the M1 review closed: a
+ * symlink swapped between the check and the rename. A handful of workspace
+ * folders per write is not a cost worth a race.
+ */
+function rootsFor(folder: string, p: path.PlatformPath): string[] {
+  const given = p.resolve(folder);
+  // A root that does not exist, or that we cannot stat, is not evidence of
+  // safety — fall back to the literal path and let the comparison stand.
+  let real: string;
+  try {
+    real = p.resolve(realpathSync(given));
+  } catch {
+    return [given];
+  }
+  return real === given ? [given] : [given, real];
 }
 
 function isAtOrInside(child: string, parent: string, p: path.PlatformPath): boolean {
