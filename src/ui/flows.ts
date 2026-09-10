@@ -229,8 +229,24 @@ export async function adoptToken(deps: FlowDeps): Promise<void> {
     return;
   }
 
-  await store(deps, fromFile);
-  await takeOwnership(deps, fromFile);
+  // F10: the file's value has had none of `enterToken`'s trimming, and
+  // `/setup-bedrock` or a hand-edit can leave a newline on it — which would
+  // then reach the `Authorization` header and every terminal's environment.
+  const token = normalizeToken(fromFile);
+
+  // F6. This is a palette command as well as a health fix, so it can be run
+  // with a different key already saved — and adopting would then destroy it
+  // with no confirmation and no copy anywhere. Two keys and only the user
+  // knows which is current: that is exactly the question `resolveTokenConflict`
+  // exists to ask, so ask it rather than answering it for them.
+  const stored = await deps.credential.store.get();
+  if (stored !== undefined && stored.token !== token) {
+    await resolveTokenConflict(deps);
+    return;
+  }
+
+  await store(deps, token);
+  if (!(await takeOwnership(deps, token))) return;
   deps.log.info("Adopted the Bedrock API key already in the settings file.");
   await vscode.window.showInformationMessage("Saved that key to this computer's keychain.");
   await deps.runHealth();
@@ -292,11 +308,13 @@ export async function resolveTokenConflict(deps: FlowDeps): Promise<void> {
     return;
   }
 
-  const winner = picked.label === USE_FILE ? inFile : stored.token;
+  // F10: `inFile` has had none of `enterToken`'s trimming, so it is normalised
+  // before it can reach the keychain, a terminal or an `Authorization` header.
+  const winner = picked.label === USE_FILE ? normalizeToken(inFile) : stored.token;
   await store(deps, winner);
   // Either direction is an ownership transfer: the file holds a value we did
   // not write, so a plain sync would report drift and change nothing.
-  await takeOwnership(deps, winner);
+  if (!(await takeOwnership(deps, winner))) return;
   deps.log.info(
     `Resolved the key conflict in favour of the ${picked.label === USE_FILE ? "settings file" : "keychain"}.`,
   );
@@ -485,10 +503,25 @@ async function sync(
  * Claim the token key and write `value` into it. This is the only path that
  * overwrites a token the extension did not write, and both its callers are an
  * explicit choice the user just made.
+ *
+ * The `CommitResult` used to be discarded (F4), which made a lost race silent:
+ * `adoptToken` reported an adoption that had not happened, and
+ * `resolveTokenConflict` — the command whose whole job is to settle which key
+ * wins — showed nothing at all. So it gets `sync`'s retry and `sync`'s warning,
+ * and returns whether the file now holds `value`.
  */
-async function takeOwnership(deps: FlowDeps, value: string): Promise<void> {
+async function takeOwnership(deps: FlowDeps, value: string, attempt = 0): Promise<boolean> {
   deps.markWrite();
-  await adoptTokenFromSettings(deps.env, deps.session, value);
+  const result = await adoptTokenFromSettings(deps.env, deps.session, value);
+  if (result.reason !== "stale") return true;
+
+  deps.log.warn("The settings file changed while writing the key; retrying once.");
+  if (attempt === 0) return takeOwnership(deps, value, attempt + 1);
+
+  await vscode.window.showWarningMessage(
+    "Your settings file kept changing, so the key wasn't copied into it. Try again in a moment.",
+  );
+  return false;
 }
 
 /**

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApplySession, ConfigEnv, JsonObject, Settings } from "../../../src/config/index.js";
 import { createSession, MemorySnapshotStore, settingsPath } from "../../../src/config/index.js";
 import { TOKEN_ENV_VAR } from "../../../src/credential/types.js";
+import { TOKEN_SETTINGS_KEY } from "../../../src/credential/writeThrough.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import type { Manifest } from "../../../src/manifest/types.js";
 import type { FlowDeps } from "../../../src/ui/flows.js";
@@ -377,6 +378,127 @@ describe("adoptToken", () => {
 
     expect(messages()[0]).toMatch(/no Bedrock API key in your settings file/);
     await expect(credential.store.get()).resolves.toBeUndefined();
+  });
+
+  /**
+   * F10. `enterToken` trims precisely so no stray newline reaches the
+   * `Authorization` header; a value that arrives from the file has had no such
+   * treatment, and `/setup-bedrock` or a hand-edit can leave one there.
+   */
+  it("trims the file's value before it reaches the keychain or a terminal", async () => {
+    await seed({ env: { [TOKEN_ENV_VAR]: `  ${TOKEN}\n` } });
+
+    await flows.adoptToken(deps());
+
+    await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+    expect(credential.terminal.applied).toEqual([TOKEN]);
+    expect(await fileToken()).toBe(TOKEN);
+  });
+
+  /**
+   * F6. `adoptToken` is a palette command as well as a health fix, so it can be
+   * run with a different key already saved — and it wrote the file's value
+   * straight over it, unrecoverably, with nothing asked. Two keys and only the
+   * user knows which is current: that is `resolveTokenConflict`'s question, and
+   * it already asks it.
+   */
+  describe("when a different key is already saved", () => {
+    beforeEach(async () => {
+      await credential.store.set({ token: OTHER, setAt: "2026-01-01T00:00:00.000Z" });
+      await seed({ env: { [TOKEN_ENV_VAR]: TOKEN } });
+    });
+
+    it("asks instead of overwriting the saved key", async () => {
+      await flows.adoptToken(deps());
+
+      expect(state.quickPicks).toHaveLength(1);
+      await expect(credential.store.get()).resolves.toMatchObject({ token: OTHER });
+    });
+
+    it("adopts the file's key when the user chooses it", async () => {
+      pick("Use the key in my settings file");
+
+      await flows.adoptToken(deps());
+
+      await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+      expect(await fileToken()).toBe(TOKEN);
+    });
+
+    it("does not ask when the saved key is the same one", async () => {
+      await credential.store.set({ token: TOKEN, setAt: "2026-01-01T00:00:00.000Z" });
+
+      await flows.adoptToken(deps());
+
+      expect(state.quickPicks).toEqual([]);
+      await expect(credential.store.get()).resolves.toMatchObject({ setAt: NOW.toISOString() });
+    });
+  });
+});
+
+/**
+ * F4. `takeOwnership` threw its `CommitResult` away, so a lost race with
+ * whatever else writes this file left both its callers silent: `adoptToken`
+ * said the key was saved to the keychain when the file still held another, and
+ * `resolveTokenConflict` — the command whose entire job is to settle that
+ * disagreement — showed nothing at all.
+ */
+describe("an ownership transfer that loses the race", () => {
+  const KEPT_CHANGING = /kept changing/;
+
+  beforeEach(async () => {
+    await seed({ env: { [TOKEN_ENV_VAR]: TOKEN } });
+  });
+
+  /**
+   * Only the direction that changes bytes can lose the race. Adopting the
+   * file's own value plans no change at all, so `commit` returns `noop` before
+   * it ever compares the file — which is why `adoptTokenFromSettings` persists
+   * the ownership claim itself for that case.
+   */
+  it("retries once and succeeds, like every other write here", async () => {
+    await credential.store.set({ token: OTHER, setAt: "2026-01-01T00:00:00.000Z" });
+    env = { ...env, snapshotStore: racingStore(1) };
+    pick("Use the key I saved");
+
+    await flows.resolveTokenConflict(deps());
+
+    expect(logged).toContainEqual(expect.stringMatching(/retrying once/));
+    expect(await fileToken()).toBe(OTHER);
+    const snapshot = await env.snapshotStore.load();
+    expect(snapshot.values[TOKEN_SETTINGS_KEY]).toBe(OTHER);
+  });
+
+  it("does not report an adoption the file never accepted", async () => {
+    await credential.store.set({ token: OTHER, setAt: "2026-01-01T00:00:00.000Z" });
+    env = { ...env, snapshotStore: racingStore(5) };
+    pick("Use the key I saved");
+
+    await flows.resolveTokenConflict(deps());
+
+    expect(await fileToken()).toBe(TOKEN);
+    expect(healthRuns).toBe(0);
+  });
+
+  it("warns when the conflict resolver cannot write its answer", async () => {
+    await credential.store.set({ token: OTHER, setAt: "2026-01-01T00:00:00.000Z" });
+    env = { ...env, snapshotStore: racingStore(5) };
+    pick("Use the key I saved");
+
+    await flows.resolveTokenConflict(deps());
+
+    expect(messages()).toContainEqual(expect.stringMatching(KEPT_CHANGING));
+  });
+
+  it("trims a file-sourced key the conflict resolver adopts (F10)", async () => {
+    await credential.store.set({ token: OTHER, setAt: "2026-01-01T00:00:00.000Z" });
+    await seed({ env: { [TOKEN_ENV_VAR]: `${TOKEN}\n` } });
+    pick("Use the key in my settings file");
+
+    await flows.resolveTokenConflict(deps());
+
+    await expect(credential.store.get()).resolves.toMatchObject({ token: TOKEN });
+    expect(credential.terminal.applied).toEqual([TOKEN]);
+    expect(await fileToken()).toBe(TOKEN);
   });
 });
 
