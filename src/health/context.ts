@@ -19,6 +19,15 @@ export interface BuildContextInput {
   manifest: Manifest;
   platform: NodeJS.Platform;
   detect: () => Promise<ClaudeCodeDetection>;
+  /**
+   * Called when the silent permission repair actually wrote something. The
+   * repair is a change to a file we are also watching, so without this the
+   * watcher hears its own echo, reruns the checks, and repairs again — a panel
+   * refreshing itself for as long as Claude Code keeps resetting the mode
+   * (which is every `/model`). The host wires this to the watcher's
+   * suppression window.
+   */
+  onSelfWrite?: () => void;
 }
 
 export async function buildContext(input: BuildContextInput): Promise<CheckContext> {
@@ -30,6 +39,10 @@ export async function buildContext(input: BuildContextInput): Promise<CheckConte
   const permissions = await repairPermissions(env).catch(
     (error: unknown): CheckContext["permissions"] => ({ kind: "failed", error: message(error) }),
   );
+  // Only `repaired` touched the file: `ok`, `absent`, `unsupported` and
+  // `failed` all leave it exactly as it was, and suppressing the watcher for
+  // those would drop a real edit that raced with the run.
+  if (permissions.kind === "repaired") input.onSelfWrite?.();
 
   const planned: PlanResult = await plan(env, desiredFromManifest(manifest));
   const [snapshot, detection] = await Promise.all([env.snapshotStore.load(), detect()]);

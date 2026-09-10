@@ -156,6 +156,64 @@ describe("buildContext", () => {
   });
 });
 
+/**
+ * The FR-2.8 repair is a write we make silently, on every run, to a file we are
+ * also watching. Unannounced, its rename wakes the watcher, which runs the
+ * checks, which repairs again — the panel refreshing itself in a loop for as
+ * long as Claude Code keeps resetting the mode (which is every `/model`).
+ */
+describe("self-write notification", () => {
+  it.runIf(POSIX)("announces a repair so the watcher can ignore its own echo", async () => {
+    await writeSettings("{}");
+    await chmod(join(dir, "settings.json"), 0o664);
+    const onSelfWrite = vi.fn();
+    const ctx = await build({ onSelfWrite });
+    expect(ctx.permissions.kind).toBe("repaired");
+    expect(onSelfWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it.runIf(POSIX)("stays quiet when the mode was already right", async () => {
+    await writeSettings("{}");
+    await chmod(join(dir, "settings.json"), 0o600);
+    const onSelfWrite = vi.fn();
+    await build({ onSelfWrite });
+    expect(onSelfWrite).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet when there is no file to repair", async () => {
+    const onSelfWrite = vi.fn();
+    await build({ onSelfWrite });
+    expect(onSelfWrite).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet when the repair failed — nothing was written", async () => {
+    await writeSettings("{}");
+    failRepairIn.add(dir);
+    const onSelfWrite = vi.fn();
+    await build({ onSelfWrite });
+    expect(onSelfWrite).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet on a platform where the repair does not apply", async () => {
+    await writeSettings("{}");
+    const onSelfWrite = vi.fn();
+    await buildContext({
+      env: { ...env, platform: "win32" },
+      manifest: BUNDLED_MANIFEST,
+      platform: "win32",
+      detect: async () => DETECTED,
+      onSelfWrite,
+    });
+    expect(onSelfWrite).not.toHaveBeenCalled();
+  });
+
+  it.runIf(POSIX)("runs without one, since the caller may not be watching", async () => {
+    await writeSettings("{}");
+    await chmod(join(dir, "settings.json"), 0o664);
+    expect((await build()).permissions.kind).toBe("repaired");
+  });
+});
+
 function deps(overrides: Partial<DetectDeps> = {}): DetectDeps {
   return {
     getExtensionVersion: () => "2.1.267",
