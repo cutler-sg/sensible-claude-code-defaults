@@ -51,6 +51,11 @@ export async function writeRawAtomic(
   text: string,
   opts: WriteOptions,
 ): Promise<void> {
+  await writeBytesAtomic(file, Buffer.from(text, "utf8"), opts);
+}
+
+/** `writeRawAtomic` for callers that already hold bytes and must not transcode. */
+async function writeBytesAtomic(file: string, bytes: Buffer, opts: WriteOptions): Promise<void> {
   const platform = opts.platform ?? process.platform;
   // Cheap first pass on the literal path, so an obviously-inside-a-workspace
   // target is refused without touching the filesystem at all.
@@ -64,40 +69,7 @@ export async function writeRawAtomic(
   // into a workspace folder (F1).
   assertOutsideWorkspace(target, opts.workspaceFolders, platform);
 
-  const dir = path.dirname(target);
-  await fs.mkdir(dir, { recursive: true });
-
-  // A UUID, not pid+ms: two windows of the same extension host share a pid
-  // clock, and a collision made one writer delete the other's temp (F8).
-  const tmp = path.join(dir, `.${path.basename(target)}.${randomUUID()}.tmp`);
-  let created = false;
-  try {
-    // `wx` fails rather than clobbering, so two concurrent writers cannot
-    // interleave into one temp file.
-    const handle = await fs.open(tmp, "wx", MODE_0600);
-    created = true;
-    try {
-      await handle.writeFile(text, "utf8");
-      // fsync before rename: rename is atomic in the directory entry, but the
-      // data behind it is not durable until it reaches the disk. Without this
-      // a crash can leave a correctly-named, zero-length settings.json.
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await fs.rename(tmp, target);
-    // rename preserves the temp file's mode, but the destination may have
-    // pre-existed at a looser mode on some filesystems — be explicit (FR-2.8).
-    await chmod0600(target, platform);
-    await syncDirectory(dir);
-  } catch (error) {
-    // Only ours to remove: before `open` succeeded, `tmp` is either absent or
-    // somebody else's file.
-    if (created) {
-      await fs.rm(tmp, { force: true }).catch(() => {});
-    }
-    throw new ConfigError("ATOMIC_WRITE_FAILED", `Failed to write ${target}.`, { cause: error });
-  }
+  await atomicReplace(target, bytes, platform);
 }
 
 /**
@@ -123,6 +95,10 @@ export async function ensureMode0600(
 /**
  * FR-2.4: copy the existing settings file into the backup directory before we
  * touch it. Returns `undefined` when there is nothing to back up.
+ *
+ * The copy is byte-for-byte: a settings file with invalid UTF-8 in it is still
+ * the file the user needs back, and a backup that silently substituted U+FFFD
+ * would be worse than no backup at all (F9).
  */
 export async function backupSettings(
   file: string,
@@ -134,17 +110,17 @@ export async function backupSettings(
   // may sit inside a workspace folder (FR-2.6), before or after following any
   // symlink on the way. Callers that know the workspace pass it; the guard is a
   // no-op when they cannot.
+  const platform = opts?.platform ?? process.platform;
   if (opts) {
-    const platform = opts.platform ?? process.platform;
     assertOutsideWorkspace(file, opts.workspaceFolders, platform);
     assertOutsideWorkspace(backupsDir, opts.workspaceFolders, platform);
     assertOutsideWorkspace(await resolveTarget(file), opts.workspaceFolders, platform);
     assertOutsideWorkspace(await resolveTarget(backupsDir), opts.workspaceFolders, platform);
   }
 
-  let text: string;
+  let bytes: Buffer;
   try {
-    text = await fs.readFile(file, "utf8");
+    bytes = await fs.readFile(file);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;
@@ -154,7 +130,7 @@ export async function backupSettings(
 
   await fs.mkdir(backupsDir, { recursive: true });
   const target = path.join(backupsDir, backupName(now));
-  await fs.writeFile(target, text, { encoding: "utf8", mode: MODE_0600 });
+  await atomicReplace(target, bytes, platform);
   return { path: target, createdAt: now };
 }
 
@@ -203,16 +179,63 @@ export async function restoreBackup(
   assertOutsideWorkspace(backup, opts.workspaceFolders, platform);
   assertOutsideWorkspace(await resolveTarget(backup), opts.workspaceFolders, platform);
 
-  let text: string;
+  let bytes: Buffer;
   try {
-    text = await fs.readFile(backup, "utf8");
+    bytes = await fs.readFile(backup);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new ConfigError("BACKUP_NOT_FOUND", `No such backup: ${backup}`, { cause: error });
     }
     throw error;
   }
-  await writeRawAtomic(file, text, opts);
+  // Bytes, not text: a restore that transcoded would hand back a file that is
+  // not the one the user asked for (F9).
+  await writeBytesAtomic(file, bytes, opts);
+}
+
+/**
+ * temp file → fsync → rename → chmod → fsync(dir). `target` is already
+ * resolved and already guarded; this function does no policy.
+ */
+async function atomicReplace(
+  target: string,
+  bytes: Buffer,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  const dir = path.dirname(target);
+  await fs.mkdir(dir, { recursive: true });
+
+  // A UUID, not pid+ms: two windows of the same extension host share a pid
+  // clock, and a collision made one writer delete the other's temp (F8).
+  const tmp = path.join(dir, `.${path.basename(target)}.${randomUUID()}.tmp`);
+  let created = false;
+  try {
+    // `wx` fails rather than clobbering, so two concurrent writers cannot
+    // interleave into one temp file.
+    const handle = await fs.open(tmp, "wx", MODE_0600);
+    created = true;
+    try {
+      await handle.writeFile(bytes);
+      // fsync before rename: rename is atomic in the directory entry, but the
+      // data behind it is not durable until it reaches the disk. Without this
+      // a crash can leave a correctly-named, zero-length settings.json.
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.rename(tmp, target);
+    // rename preserves the temp file's mode, but the destination may have
+    // pre-existed at a looser mode on some filesystems — be explicit (FR-2.8).
+    await chmod0600(target, platform);
+    await syncDirectory(dir);
+  } catch (error) {
+    // Only ours to remove: before `open` succeeded, `tmp` is either absent or
+    // somebody else's file.
+    if (created) {
+      await fs.rm(tmp, { force: true }).catch(() => {});
+    }
+    throw new ConfigError("ATOMIC_WRITE_FAILED", `Failed to write ${target}.`, { cause: error });
+  }
 }
 
 async function resolveTarget(file: string): Promise<string> {

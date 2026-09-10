@@ -512,6 +512,49 @@ describe("concurrent writers (F8)", () => {
   });
 });
 
+describe("backups are byte-exact and atomic (F9)", () => {
+  it("round-trips bytes that are not valid UTF-8", async () => {
+    const bytes = Buffer.from([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0xff, 0xfe, 0x22, 0x7d, 0x0a]);
+    await fs.writeFile(file, bytes);
+
+    const info = await backupSettings(file, backups);
+
+    expect(info).toBeDefined();
+    expect(await fs.readFile(info?.path ?? "")).toEqual(bytes);
+  });
+
+  it("writes the backup at mode 0600 even over a pre-existing looser file", async () => {
+    await fs.writeFile(file, "{}\n");
+    const at = new Date("2026-09-10T12:34:56.000Z");
+    await fs.mkdir(backups, { recursive: true });
+    const target = path.join(backups, "settings.2026-09-10T12-34-56.000Z.json");
+    await fs.writeFile(target, "stale");
+    await fs.chmod(target, 0o666);
+
+    await backupSettings(file, backups, at);
+
+    expect(await mode(target)).toBe(0o600);
+    expect(await fs.readFile(target, "utf8")).toBe("{}\n");
+  });
+
+  it("leaves no temp file behind in the backups directory", async () => {
+    await fs.writeFile(file, "{}\n");
+    await backupSettings(file, backups);
+    expect(await tempFiles(backups)).toEqual([]);
+  });
+
+  it("restores bytes that are not valid UTF-8 byte-for-byte", async () => {
+    const bytes = Buffer.from([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0xff, 0xfe, 0x22, 0x7d, 0x0a]);
+    await fs.writeFile(file, bytes);
+    const info = await backupSettings(file, backups);
+    await writeSettingsAtomic(file, { replaced: true }, DEFAULT_STYLE, OPTS);
+
+    await restoreBackup(info?.path ?? "", file, OPTS);
+
+    expect(await fs.readFile(file)).toEqual(bytes);
+  });
+});
+
 describe("durability of the rename itself (F12)", () => {
   it("fsyncs the directory after the rename", async () => {
     hooks.dirSyncs = 0;
