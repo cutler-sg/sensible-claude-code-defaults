@@ -4,3 +4,11 @@ out/
 *.vsix
 .vscode-test/
 .DS_Store
+coverage/
+*.tsbuildinfo
+
+# Shared editor config for the Extension Development Host (overrides a global .vscode/ ignore)
+!.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json

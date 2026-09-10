@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "revision": "2026-09-10T00:00:00Z",
+  "minExtensionVersion": "0.1.0",
+  "minimumClaudeCodeVersion": "2.1.0",
+  "defaults": {
+    "env": {
+      "CLAUDE_CODE_USE_BEDROCK": "1",
+      "AWS_REGION": "us-east-1",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL": "us.anthropic.claude-opus-5",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL": "us.anthropic.claude-sonnet-5",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL": "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    },
+    "permissions": {
+      "deny": ["Bash(rm -rf:*)", "Read(./.env)", "Read(./.aws/**)"]
+    },
+    "extraKnownMarketplaces": {},
+    "enabledPlugins": {}
+  },
+  "regions": ["us-east-1", "us-west-2", "eu-central-1", "ap-southeast-1"],
+  "notices": []
+}

@@ -1,0 +1,98 @@
+{
+  "name": "sensible-claude-code-defaults",
+  "displayName": "Sensible Claude Code Defaults",
+  "description": "Health checks and working defaults for Claude Code on AWS Bedrock.",
+  "publisher": "cutler",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cutler-sg/sensible-claude-code-defaults"
+  },
+  "icon": "media/icon.png",
+  "categories": [
+    "Other"
+  ],
+  "engines": {
+    "vscode": "^1.98.0"
+  },
+  "extensionDependencies": [
+    "anthropic.claude-code"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sensibleDefaults",
+          "title": "Sensible Defaults",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sensibleDefaults": [
+        {
+          "id": "sensibleDefaults.health",
+          "name": "Configuration Health"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sensibleDefaults.runHealthCheck",
+        "title": "Check Configuration",
+        "category": "Sensible Defaults"
+      }
+    ],
+    "configuration": {
+      "title": "Sensible Defaults",
+      "properties": {
+        "sensibleDefaults.manifestUrl": {
+          "type": "string",
+          "default": "https://raw.githubusercontent.com/cutler-sg/sensible-claude-code-defaults/main/manifest/defaults.json",
+          "description": "URL of the defaults manifest. Falls back to the cached and then the bundled copy when unreachable."
+        },
+        "sensibleDefaults.autoApply": {
+          "type": "boolean",
+          "default": false,
+          "description": "Apply recommended defaults without asking. The extension proposes and the user accepts by default."
+        },
+        "sensibleDefaults.checkOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run configuration health checks when the window finishes starting up."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "test": "vitest run",
+    "package": "node esbuild.js --production && vsce package --no-dependencies",
+    "vscode:prepublish": "node esbuild.js --production"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.14",
+    "@types/node": "^22.19.0",
+    "@types/vscode": "~1.98.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "@vscode/vsce": "^3.7.0",
+    "esbuild": "^0.25.12",
+    "ovsx": "^0.10.7",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
