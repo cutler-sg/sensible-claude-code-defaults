@@ -58,6 +58,18 @@ const ENV_VALUE_RULES: Record<string, { test: (value: string) => boolean; proble
 /** Claude Code reads this as a boolean; these are the four spellings it takes. */
 const BEDROCK_FLAGS = new Set(["1", "0", "true", "false"]);
 /**
+ * Bounds on the credential age policy.
+ *
+ * `cred.age` is the only check that expires a key, and without a bound the
+ * channel can disable it for every install permanently — `failAfterDays:
+ * 1000000` validated and a 26-year-old key reported pass. 400 days is past any
+ * rotation policy worth stating and still comfortably inside a key's useful
+ * life; 7 days is short of any key a user could reasonably be warned about,
+ * below which the warning is noise the user cannot act on.
+ */
+const MAX_FAIL_AFTER_DAYS = 400;
+const MIN_WARN_AFTER_DAYS = 7;
+/**
  * A dot segment is two legal characters either side of a slash, so the shape
  * above cannot tell `../evil` from `a.b/c` — and a consumer joining it against
  * `https://github.com/` gets `https://github.com/evil`, a different repository
@@ -264,8 +276,12 @@ function validateRegions(value: unknown, fail: Fail): string[] | undefined {
 function validateCredential(value: unknown, fail: Fail): CredentialPolicy | undefined {
   if (!isPlainObject(value)) return fail("credential", "must be an object");
 
-  const warnAfterDays = requirePositiveInt(value.warnAfterDays, "credential.warnAfterDays", fail);
-  const failAfterDays = requirePositiveInt(value.failAfterDays, "credential.failAfterDays", fail);
+  const warnAfterDays = requireDays(value.warnAfterDays, "credential.warnAfterDays", fail, {
+    min: MIN_WARN_AFTER_DAYS,
+  });
+  const failAfterDays = requireDays(value.failAfterDays, "credential.failAfterDays", fail, {
+    max: MAX_FAIL_AFTER_DAYS,
+  });
   const consoleUrl = value.consoleUrl;
 
   if (typeof consoleUrl !== "string" || !isHttpsUrl(consoleUrl)) {
@@ -353,9 +369,27 @@ function requireVersion(value: unknown, path: string, fail: Fail): string | unde
   return value;
 }
 
-function requirePositiveInt(value: unknown, path: string, fail: Fail): number | undefined {
+/**
+ * A whole number of days inside the band the extension will honour. Out of
+ * range fails the field rather than being clamped into it: silently rewriting
+ * a threshold would leave every install running a policy the manifest never
+ * stated, which is exactly the kind of quiet divergence the channel must not
+ * be able to produce.
+ */
+function requireDays(
+  value: unknown,
+  path: string,
+  fail: Fail,
+  bounds: { min?: number; max?: number },
+): number | undefined {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     return fail(path, "must be a positive whole number");
+  }
+  if (bounds.min !== undefined && value < bounds.min) {
+    return fail(path, `must be at least ${bounds.min}`);
+  }
+  if (bounds.max !== undefined && value > bounds.max) {
+    return fail(path, `must be at most ${bounds.max}`);
   }
   return value;
 }

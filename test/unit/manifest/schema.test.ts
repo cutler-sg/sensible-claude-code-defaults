@@ -48,7 +48,7 @@ const MINIMAL: Json = {
     enabledPlugins: {},
   },
   regions: ["us-east-1"],
-  credential: { warnAfterDays: 1, failAfterDays: 2, consoleUrl: "https://example.com/keys" },
+  credential: { warnAfterDays: 7, failAfterDays: 8, consoleUrl: "https://example.com/keys" },
 };
 
 function manifestWith(overrides: Json): Json {
@@ -766,6 +766,71 @@ describe("validateManifest", () => {
     it("accepts a warn threshold one day short of the fail threshold", () => {
       const credential = { ...(VALID.credential as Json), warnAfterDays: 179, failAfterDays: 180 };
       expect(accept(manifestWith({ credential })).credential.warnAfterDays).toBe(179);
+    });
+
+    /**
+     * F3. `cred.age` is the only check that expires a credential, and until now
+     * the channel could switch it off for every install at once and permanently:
+     * `{warnAfterDays: 999999, failAfterDays: 1000000}` validated, and a
+     * 26-year-old key reported pass. The clamp is what makes the policy a knob
+     * rather than a kill switch.
+     */
+    describe("threshold bounds", () => {
+      function withThresholds(warnAfterDays: unknown, failAfterDays: unknown): Json {
+        return manifestWith({
+          credential: { ...(VALID.credential as Json), warnAfterDays, failAfterDays },
+        });
+      }
+
+      it("refuses a failAfterDays that would outlive any key worth expiring", () => {
+        expect(refuse(withThresholds(999_999, 1_000_000))).toContainEqual({
+          path: "credential.failAfterDays",
+          problem: "must be at most 400",
+        });
+      });
+
+      it("accepts a failAfterDays at the cap", () => {
+        expect(accept(withThresholds(399, 400)).credential.failAfterDays).toBe(400);
+      });
+
+      it("refuses a failAfterDays one day past the cap", () => {
+        expect(refuse(withThresholds(7, 401))).toEqual([
+          { path: "credential.failAfterDays", problem: "must be at most 400" },
+        ]);
+      });
+
+      it("refuses a warnAfterDays that would warn about a key minted this week", () => {
+        expect(refuse(withThresholds(1, 180))).toEqual([
+          { path: "credential.warnAfterDays", problem: "must be at least 7" },
+        ]);
+      });
+
+      it("accepts a warnAfterDays at the floor", () => {
+        expect(accept(withThresholds(7, 180)).credential.warnAfterDays).toBe(7);
+      });
+
+      // The clamp and the ordering rule are independent: neither one implies
+      // the other, and a manifest can break both at once.
+      it("still refuses warn at or past fail inside the permitted band", () => {
+        expect(refuse(withThresholds(200, 180))).toContainEqual({
+          path: "credential.warnAfterDays",
+          problem: "must be less than failAfterDays",
+        });
+      });
+
+      it("reports both bound failures rather than stopping at the first", () => {
+        expect(refuse(withThresholds(2, 5_000)).map((problem) => problem.path)).toEqual([
+          "credential.warnAfterDays",
+          "credential.failAfterDays",
+        ]);
+      });
+
+      // Fail the field, do not coerce: silently rewriting 1_000_000 to 400
+      // would leave every install running a policy the manifest never stated.
+      it("refuses rather than clamping the value into range", () => {
+        const result = validateManifest(withThresholds(999_999, 1_000_000));
+        expect(result.ok).toBe(false);
+      });
     });
 
     it("does not compare the thresholds when one of them is unusable", () => {
