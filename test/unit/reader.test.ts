@@ -160,6 +160,64 @@ describe("readSettings — malformed (FR-2.5)", () => {
   }
 });
 
+/**
+ * Hard rule 4. The realistic corruption for this file is a Bedrock bearer token
+ * pasted in unquoted, and V8's own `SyntaxError.message` quotes ~20 characters
+ * of the document around the fault — which is the token. The reader must
+ * therefore never pass the parser's message on.
+ */
+describe("readSettings — the parse error never quotes file content", () => {
+  const TOKEN = "ABSKtest123456789012345678901234567890";
+
+  /** Every 8-character window of the token: one hit is a leak. */
+  function windows(secret: string, size = 8): string[] {
+    return Array.from({ length: secret.length - size + 1 }, (_, at) => secret.slice(at, at + size));
+  }
+
+  it("does not echo an unquoted pasted token back in the error", async () => {
+    await write(`{\n  "env": {\n    "AWS_BEARER_TOKEN_BEDROCK": ${TOKEN}\n  }\n}\n`);
+    const result = await readSettings(file);
+    expect(result.kind).toBe("malformed");
+    if (result.kind !== "malformed") return;
+    for (const window of windows(TOKEN)) {
+      expect(result.error).not.toContain(window);
+    }
+    // The bytes still reach the caller — FR-2.5 needs them to refuse the write.
+    expect(result.raw).toContain(TOKEN);
+  });
+
+  it("does not echo a quoted secret value that trips a later parse fault", async () => {
+    await write(`{\n  "env": {"AWS_BEARER_TOKEN_BEDROCK": "${TOKEN}",}\n}\n`);
+    const result = await readSettings(file);
+    expect(result.kind).toBe("malformed");
+    if (result.kind !== "malformed") return;
+    for (const window of windows(TOKEN)) {
+      expect(result.error).not.toContain(window);
+    }
+  });
+
+  it("reports a position as line/column/character when V8 supplies one", async () => {
+    await write('{\n  "a": 1,\n}\n');
+    const result = await readSettings(file);
+    expect(result.kind === "malformed" && result.error).toMatch(
+      /^settings\.json is not valid JSON — the problem is at line 3, column 1 \(character \d+\)\.$/,
+    );
+  });
+
+  it("falls back to the fixed string when V8 supplies no position", async () => {
+    // "Unexpected end of JSON input" carries no `at position N`.
+    await write("");
+    const result = await readSettings(file);
+    expect(result.kind === "malformed" && result.error).toBe("settings.json is not valid JSON");
+  });
+
+  it("counts the line from the parsed text, so a BOM does not shift it", async () => {
+    await write('\uFEFF{\n  "a": 1,\n}\n');
+    const result = await readSettings(file);
+    expect(result.kind === "malformed" && result.error).toContain("line 3, column 1");
+  });
+});
+
 describe("readSettings — I/O errors propagate", () => {
   it.skipIf(process.getuid?.() === 0)("does not swallow EACCES", async () => {
     await write("{}\n");

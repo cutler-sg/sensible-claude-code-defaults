@@ -39,9 +39,7 @@ export async function readSettings(file: string): Promise<ReadResult> {
     // collapses it, which matches what Claude Code was reading all along (F16).
     parsed = JSON.parse(text);
   } catch (error) {
-    // JSON.parse only ever throws SyntaxError, so the message is always there.
-    const message = (error as SyntaxError).message;
-    return { kind: "malformed", raw, error: `settings.json is not valid JSON: ${message}` };
+    return { kind: "malformed", raw, error: parseErrorMessage(error, text) };
   }
 
   if (!isPlainObject(parsed)) {
@@ -61,6 +59,46 @@ export async function readSettings(file: string): Promise<ReadResult> {
   }
 
   return { kind: "ok", data: parsed as Settings, style: detectStyle(text), raw };
+}
+
+/**
+ * Hard rule 4: describe *where* the file broke, never *what is in it*.
+ *
+ * V8's `SyntaxError.message` quotes roughly twenty characters of the document
+ * around the fault ("Unexpected token 'A', ...\"BEDROCK\": ABSKtest12\"... is
+ * not valid JSON"), and the single most likely way for a user to corrupt this
+ * particular file is pasting a Bedrock bearer token in unquoted — which puts
+ * the token itself inside the quoted window. So the parser's message never
+ * reaches a string we render or log. A character offset is derived from it when
+ * V8 supplies one, because that is a coordinate rather than content.
+ */
+function parseErrorMessage(error: unknown, text: string): string {
+  const position = offsetOf(error);
+  if (position === undefined) {
+    return NOT_VALID_JSON;
+  }
+  const { line, column } = lineAndColumn(text, position);
+  return `${NOT_VALID_JSON} — the problem is at line ${line}, column ${column} (character ${position}).`;
+}
+
+const NOT_VALID_JSON = "settings.json is not valid JSON";
+
+/** V8 appends "at position N" to some, not all, of its parse failures. */
+function offsetOf(error: unknown): number | undefined {
+  const message = error instanceof Error ? error.message : "";
+  const match = /at position (\d+)/.exec(message);
+  if (match?.[1] === undefined) {
+    return undefined;
+  }
+  const position = Number.parseInt(match[1], 10);
+  return Number.isFinite(position) ? position : undefined;
+}
+
+/** 1-based, counting the LF-delimited lines of the text that was parsed. */
+function lineAndColumn(text: string, position: number): { line: number; column: number } {
+  const before = text.slice(0, Math.max(0, Math.min(position, text.length)));
+  const lastBreak = before.lastIndexOf("\n");
+  return { line: before.split("\n").length, column: before.length - lastBreak };
 }
 
 /** Render `data` back out in the style the file was read in. */
