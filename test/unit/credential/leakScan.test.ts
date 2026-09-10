@@ -55,8 +55,19 @@ const TOKEN = "ABSKTGVha1NjYW5UZXN0QmVkcm9ja0tleVZhbHVl";
 let dir: string;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "scd-leak-"));
+  dir = await tempDir("scd-leak-");
 });
+
+/**
+ * A temp directory at its *resolved* path. On macOS `os.tmpdir()` is `/var/...`,
+ * a symlink to `/private/var/...`, and the scan resolves each root before it
+ * walks — so a fixture holding the unresolved path disagrees with every hit the
+ * scan reports, on that platform only. Resolving here keeps the assertions
+ * about what the scan found rather than about how the temp path was spelled.
+ */
+async function tempDir(prefix: string): Promise<string> {
+  return await realpath(await mkdtemp(join(tmpdir(), prefix)));
+}
 
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -244,7 +255,7 @@ describe("what the scan finds", () => {
   });
 
   it("scans every open folder", async () => {
-    const other = await mkdtemp(join(tmpdir(), "scd-leak-2-"));
+    const other = await tempDir("scd-leak-2-");
     try {
       await writeFile(join(other, ".env"), TOKEN, "utf8");
 
@@ -358,7 +369,7 @@ describe("what the scan skips", () => {
    */
   describe("staying inside the folders the user opened (F5)", () => {
     it("reports a hit under a symlinked root at its real path, not through the link", async () => {
-      const target = await mkdtemp(join(tmpdir(), "scd-leak-target-"));
+      const target = await tempDir("scd-leak-target-");
       try {
         await writeFile(join(target, ".env"), TOKEN, "utf8");
         const link = join(dir, "linked-root");
@@ -379,7 +390,7 @@ describe("what the scan skips", () => {
     });
 
     it("normalises a folder path containing .. before reading anything", async () => {
-      const outside = await mkdtemp(join(tmpdir(), "scd-leak-esc-"));
+      const outside = await tempDir("scd-leak-esc-");
       try {
         await writeFile(join(outside, ".env"), TOKEN, "utf8");
         await mkdir(join(dir, "sub"), { recursive: true });
@@ -439,7 +450,7 @@ describe("what the scan skips", () => {
      * resolved root.
      */
     it("never reads a file outside the resolved root, even under a linked subdirectory", async () => {
-      const outside = await mkdtemp(join(tmpdir(), "scd-leak-sub-"));
+      const outside = await tempDir("scd-leak-sub-");
       try {
         await writeFile(join(outside, "leaked.json"), TOKEN, "utf8");
         await symlink(outside, join(dir, "nested"), "dir");
@@ -461,7 +472,7 @@ describe("what the scan skips", () => {
    * open, and a link cycle would take it nowhere at all.
    */
   it("does not follow symlinks", async () => {
-    const outside = await mkdtemp(join(tmpdir(), "scd-leak-out-"));
+    const outside = await tempDir("scd-leak-out-");
     try {
       await writeFile(join(outside, "leaked.json"), TOKEN, "utf8");
       await symlink(outside, join(dir, "linked"), "dir");
