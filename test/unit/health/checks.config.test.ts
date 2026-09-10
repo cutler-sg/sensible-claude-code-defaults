@@ -53,11 +53,41 @@ describe("config.parses", () => {
     expect(configParsesCheck.run(makeCtx({ read: ABSENT })).level).toBe("skipped");
   });
 
-  it("errors with the parser's own words and offers to open the file", () => {
+  it("errors and offers to open the file, without repeating the parser", () => {
     const result = configParsesCheck.run(makeCtx({ read: MALFORMED }));
     expect(result.level).toBe("error");
-    expect(result.detail).toBe(MALFORMED.kind === "malformed" ? MALFORMED.error : "");
+    expect(result.detail).toBe("The file could not be read as JSON.");
     expect(result.fix).toMatchObject({ command: "sensibleDefaults.openSettings" });
+  });
+
+  it("keeps the coordinate when the reader supplies one", () => {
+    const read: ReadResult = {
+      kind: "malformed",
+      raw: "{,}",
+      error: "settings.json is not valid JSON — the problem is at line 2, column 7 (character 41).",
+    };
+    const result = configParsesCheck.run(makeCtx({ read }));
+    expect(result.detail).toBe(
+      "The file could not be read as JSON. The problem is at character 41.",
+    );
+  });
+
+  /**
+   * Hard rule 4. The likeliest way to corrupt this particular file is pasting a
+   * bearer token in unquoted, which lands it inside the ~20 characters V8
+   * quotes back — so the detail is rebuilt from the message, never forwarded.
+   */
+  it("never carries the parser's quoted window into the tooltip", () => {
+    const read: ReadResult = {
+      kind: "malformed",
+      raw: "{}",
+      error:
+        "Unexpected token 'A', ...\"BEDROCK\": ABSKtestSecret123... is not valid JSON at position 41",
+    };
+    const detail = configParsesCheck.run(makeCtx({ read })).detail ?? "";
+    expect(detail).not.toContain("ABSKtestSecret123");
+    expect(detail).not.toContain("BEDROCK");
+    expect(detail).toBe("The file could not be read as JSON.");
   });
 });
 
