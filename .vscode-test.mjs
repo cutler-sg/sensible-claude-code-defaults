@@ -14,5 +14,4 @@ export default defineConfig({
   workspaceFolder: mkdtempSync(join(tmpdir(), "scd-itest-ws-")),
   env: { CLAUDE_CONFIG_DIR: claudeDir },
   mocha: { ui: "bdd", timeout: 60_000 },
-  launchArgs: ["--disable-extensions-except=cutler.sensible-claude-code-defaults"],
 });

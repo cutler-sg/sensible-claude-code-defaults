@@ -39,7 +39,12 @@ export async function readSettings(file: string): Promise<ReadResult> {
     // collapses it, which matches what Claude Code was reading all along (F16).
     parsed = JSON.parse(text);
   } catch (error) {
-    return { kind: "malformed", raw, error: parseErrorMessage(error, text) };
+    // `JSON.parse` only ever throws `SyntaxError`, so the message is always there.
+    return {
+      kind: "malformed",
+      raw,
+      error: parseErrorMessage((error as SyntaxError).message, text),
+    };
   }
 
   if (!isPlainObject(parsed)) {
@@ -72,27 +77,19 @@ export async function readSettings(file: string): Promise<ReadResult> {
  * reaches a string we render or log. A character offset is derived from it when
  * V8 supplies one, because that is a coordinate rather than content.
  */
-function parseErrorMessage(error: unknown, text: string): string {
-  const position = offsetOf(error);
-  if (position === undefined) {
+function parseErrorMessage(parserMessage: string, text: string): string {
+  // V8 appends "at position N" to some, not all, of its parse failures:
+  // "Unexpected end of JSON input" carries no coordinate at all.
+  const offset = /at position (\d+)/.exec(parserMessage)?.[1];
+  if (offset === undefined) {
     return NOT_VALID_JSON;
   }
+  const position = Number.parseInt(offset, 10);
   const { line, column } = lineAndColumn(text, position);
   return `${NOT_VALID_JSON} — the problem is at line ${line}, column ${column} (character ${position}).`;
 }
 
 const NOT_VALID_JSON = "settings.json is not valid JSON";
-
-/** V8 appends "at position N" to some, not all, of its parse failures. */
-function offsetOf(error: unknown): number | undefined {
-  const message = error instanceof Error ? error.message : "";
-  const match = /at position (\d+)/.exec(message);
-  if (match?.[1] === undefined) {
-    return undefined;
-  }
-  const position = Number.parseInt(match[1], 10);
-  return Number.isFinite(position) ? position : undefined;
-}
 
 /** 1-based, counting the LF-delimited lines of the text that was parsed. */
 function lineAndColumn(text: string, position: number): { line: number; column: number } {
