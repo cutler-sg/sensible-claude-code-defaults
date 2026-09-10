@@ -18,6 +18,7 @@ import {
   type BackupInfo,
   type Change,
   type ConfigEnv,
+  ConfigError,
   DEFAULT_STYLE,
   type Desired,
   type Drift,
@@ -105,11 +106,29 @@ async function planWith(
   const current: Settings = read.kind === "ok" ? read.data : {};
   const style = read.kind === "ok" ? read.style : DEFAULT_STYLE;
   const snapshot = await env.snapshotStore.load();
-  const merged = merge(
-    current,
-    adopt === undefined ? snapshot : seed(snapshot, current, adopt),
-    desired,
-  );
+
+  let merged: ReturnType<typeof merge>;
+  try {
+    merged = merge(
+      current,
+      adopt === undefined ? snapshot : seed(snapshot, current, adopt),
+      desired,
+    );
+  } catch (error) {
+    // The reader accepts a file whose `permissions` is a string: it is valid
+    // JSON with an object at the top level. `managedKeys` refuses to guess what
+    // that means, and `plan` is called from a health check that must never
+    // throw, so a structural refusal becomes a blocked plan like any other.
+    if (error instanceof ConfigError && error.code === "MALFORMED_SETTINGS") {
+      return {
+        kind: "blocked",
+        reason: "malformed",
+        error: error.message,
+        raw: read.kind === "ok" ? read.raw : "",
+      };
+    }
+    throw error;
+  }
 
   return { kind: "ready", read, merge: merged, style, noop: merged.changes.length === 0 };
 }

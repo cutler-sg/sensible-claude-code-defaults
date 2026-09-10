@@ -35,12 +35,15 @@ import {
   resetKeyPlan,
   restore,
 } from "../../src/config/apply.js";
+import { getPath } from "../../src/config/managedKeys.js";
 import { backupsDir, settingsPath, snapshotPath } from "../../src/config/paths.js";
 import { FileSnapshotStore } from "../../src/config/snapshot.js";
 import type {
   ConfigEnv,
   Desired,
   JsonObject,
+  JsonValue,
+  ManagedKey,
   PlanResult,
   Settings,
   Snapshot,
@@ -470,5 +473,63 @@ describe("no-op apply", () => {
     expect(result).toEqual({ written: false, backup: undefined, changes: [], drift: [] });
     expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
     expect(await listBackups(backupsDir(claudeDir))).toEqual([]);
+  });
+});
+
+describe("malformed containers inside a well-formed file", () => {
+  // The reader accepts these: the file is valid JSON with an object at the top
+  // level. `managedKeys` refuses to guess what a non-object `permissions` means,
+  // and `plan` has to turn that into a blocked plan rather than an exception —
+  // it is called from a health check that must never crash the panel.
+  it.each([
+    ['"permissions": "none"', '{\n  "permissions": "none"\n}\n'],
+    ['"permissions": null', '{\n  "permissions": null\n}\n'],
+    ['"permissions": []', '{\n  "permissions": []\n}\n'],
+  ])("blocks the plan when %s", async (_label, text) => {
+    await seedSettings(text);
+
+    const result = await plan(env, desiredFixture());
+
+    expect(result).toMatchObject({ kind: "blocked", reason: "malformed" });
+    if (result.kind !== "blocked") {
+      throw new Error("unreachable");
+    }
+    expect(result.error).toMatch(/"permissions" must be a JSON object/);
+    expect(result.raw).toBe(text);
+    expect(await readText()).toBe(text);
+    expect(await exists(snapshotPath(claudeDir))).toBe(false);
+  });
+
+  it("blocks a reset of the offending key too", async () => {
+    await seedSettings('{\n  "permissions": "none"\n}\n');
+
+    expect(await resetKeyPlan(env, desiredFixture(), "permissions.deny")).toMatchObject({
+      kind: "blocked",
+      reason: "malformed",
+    });
+  });
+
+  /**
+   * A wrong-typed *element-owned* key is not the same class of problem as a
+   * wrong-typed parent: the value is entirely the user's, so it is preserved
+   * and reported as drift, and the rest of the apply still goes through.
+   */
+  it.each<[ManagedKey, string, JsonValue]>([
+    ["extraKnownMarketplaces", '{\n  "extraKnownMarketplaces": 3\n}\n', 3],
+    ["enabledPlugins", '{\n  "enabledPlugins": "x"\n}\n', "x"],
+    ["permissions.deny", '{\n  "permissions": { "deny": "Read(./.env)" }\n}\n', "Read(./.env)"],
+  ])("preserves a wrong-typed %s as drift and applies the rest", async (key, text, kept) => {
+    await seedSettings(text);
+
+    const planned = ready(await plan(env, desiredFixture()));
+
+    expect(planned.merge.drift.map((entry) => entry.key)).toEqual([key]);
+    expect(planned.merge.changes.map((change) => change.key)).not.toContain(key);
+
+    await commit(env, session, planned);
+
+    expect(getPath(await readJson(), key)).toEqual(kept);
+    expect((await readSnapshotFile()).values[key]).toBeUndefined();
+    expect(await envValue("AWS_REGION")).toBe("us-east-1");
   });
 });
