@@ -151,7 +151,66 @@ describe("validateManifest", () => {
     ])("refuses a revision that is %s", (_name, revision) => {
       expect(refuse(manifestWith({ revision }))).toContainEqual({
         path: "revision",
-        problem: "must be a non-empty string",
+        problem: "must be an opaque revision id",
+      });
+    });
+
+    /**
+     * F11. The revision is not just displayed: it is a `globalState` key
+     * (`sensibleDefaults.notified.<revision>`) and it is interpolated into the
+     * output channel, where `redact()` is still the identity function. So an
+     * unbounded, unsanitised revision is both a 200,000-character key and a way
+     * to forge log lines that FR-7's diagnostics will then contain.
+     */
+    describe("revision", () => {
+      it.each([
+        ["an ISO timestamp, as the bundled copy uses", "2026-09-10T00:00:00Z"],
+        ["a git sha", "9f2c1ab4de5f6071829304a5b6c7d8e9f0a1b2c3"],
+        ["a semver-ish tag", "v1.4.2+build.7"],
+        ["a bare counter", "17"],
+        ["exactly the cap", "a".repeat(128)],
+      ])("accepts a revision that is %s", (_name, revision) => {
+        expect(accept(manifestWith({ revision })).revision).toBe(revision);
+      });
+
+      // The reviewer's value: `[error]` at the start of a line in the output
+      // channel is indistinguishable from one the extension wrote.
+      it("refuses a revision that would forge a line in the output channel", () => {
+        expect(
+          refuse(
+            manifestWith({
+              revision: "1\n[error] Your key has been compromised, call +1-555-0100",
+            }),
+          ),
+        ).toContainEqual({ path: "revision", problem: "must be an opaque revision id" });
+      });
+
+      it.each([
+        ["a newline", "1\n[error] call +1-555-0100"],
+        ["a carriage return", "1\r[error] call us"],
+        ["an escape sequence", "1\u001B[2K[error]"],
+        ["a NUL", "1\u0000"],
+        ["a space", "revision 1"],
+        ["a slash", "2026/09/10"],
+        ["one character past the cap", "a".repeat(129)],
+        ["200,000 characters", "a".repeat(200_000)],
+      ])("refuses a revision containing %s", (_name, revision) => {
+        expect(refuse(manifestWith({ revision }))).toContainEqual({
+          path: "revision",
+          problem: "must be an opaque revision id",
+        });
+      });
+
+      it("never repeats a refused revision back in the problem", () => {
+        const problems = refuse(manifestWith({ revision: "1\n[error] sk_do_not_log_me" }));
+        expect(JSON.stringify(problems)).not.toContain("sk_do_not_log_me");
+      });
+
+      // It is a globalState key, so a repaired revision would be a different
+      // key than the one the manifest named — and every notification
+      // bookkeeping entry keyed by it would silently miss.
+      it("refuses rather than stripping the offending characters", () => {
+        expect(validateManifest(manifestWith({ revision: "1\n2" })).ok).toBe(false);
       });
     });
 

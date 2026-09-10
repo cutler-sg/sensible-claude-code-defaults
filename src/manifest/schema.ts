@@ -114,6 +114,17 @@ const MAX_NOTICE_ENTRIES = 16;
  */
 const DOT_SEGMENTS = new Set([".", ".."]);
 const VERSION_SHAPE = /^\d+(\.\d+){0,2}(-[A-Za-z0-9.-]+)?$/;
+/**
+ * The revision is opaque to us but not inert. It is a `globalState` key
+ * (`sensibleDefaults.notified.<revision>`), so an unbounded one is a
+ * 200,000-character key; and it is interpolated into the output channel, where
+ * `redact()` is still the identity function, so a newline in it forges log
+ * lines that FR-7's diagnostics will contain verbatim. The class below covers
+ * every form a revision is actually written in — a timestamp, a git sha, a
+ * semver tag, a counter — and excludes whitespace and control characters by
+ * construction.
+ */
+const REVISION_SHAPE = /^[A-Za-z0-9._:+-]{1,128}$/;
 /** AWS region labels: `us-east-1`, `ap-southeast-2`, `us-gov-west-1`. */
 const REGION_SHAPE = /^[a-z]{2}(-[a-z]+)+-\d+$/;
 /** `2026-10-01`, optionally with a time and zone. */
@@ -143,7 +154,7 @@ export function validateManifest(input: unknown): ValidationResult {
     return { ok: false, problems: [{ path: "schemaVersion", problem: "must be 1" }] };
   }
 
-  const revision = requireString(input.revision, "revision", fail);
+  const revision = requireRevision(input.revision, fail);
   const minExtensionVersion = requireVersion(
     input.minExtensionVersion,
     "minExtensionVersion",
@@ -429,8 +440,15 @@ function tooMany(entries: readonly unknown[], max: number, path: string, fail: F
   return true;
 }
 
-function requireString(value: unknown, path: string, fail: Fail): string | undefined {
-  if (typeof value !== "string" || value === "") return fail(path, "must be a non-empty string");
+/**
+ * Refused rather than repaired, because it is a key: a stripped revision names
+ * a different `globalState` entry than the one the manifest declared, so every
+ * FR-5.5 "said this once already" record keyed by it would silently miss.
+ */
+function requireRevision(value: unknown, fail: Fail): string | undefined {
+  if (typeof value !== "string" || !REVISION_SHAPE.test(value)) {
+    return fail("revision", "must be an opaque revision id");
+  }
   return value;
 }
 
