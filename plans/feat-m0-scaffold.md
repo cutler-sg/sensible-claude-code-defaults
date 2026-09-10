@@ -33,18 +33,18 @@ Re-checked §17 before planning. Deltas from the PRD:
 
 ## M0 — scaffold + CI (0.5 day)
 
-- [ ] Initial commit on `main`: existing `CLAUDE.md`, `docs/PRD.md`, `.gitignore`, this plan. (Needs consent: creates the remote + first push to `main`, Q-B.)
-- [ ] Branch `feat/m0-scaffold`.
-- [ ] `package.json` per §7: `publisher` placeholder until Q4; `engines.vscode ^1.98.0`; `extensionDependencies: ["anthropic.claude-code"]`; `activationEvents: ["onStartupFinished"]`; **no** `extensionKind`; `capabilities.untrustedWorkspaces.supported: true`; view container `sensibleDefaults` + view `sensibleDefaults.health`; one command `sensibleDefaults.runHealthCheck` (stub); the three `configuration` properties.
-- [ ] `tsconfig.json`, `esbuild.js`, `biome.json`, `vitest.config.ts`, `.vscodeignore`, `.vscode/launch.json` + `tasks.json`.
-- [ ] `src/extension.ts`: create output channel `Sensible Claude Code Defaults`, log activation, register the stub command. Nothing else.
-- [ ] `src/util/log.ts` (thin wrapper around `LogOutputChannel`; redaction boundary lands in M5 but the single choke point exists from day one).
-- [ ] `README.md` stub containing the D8 non-affiliation statement and the "files written / token location" section headings. `CHANGELOG.md`, `LICENSE` (MIT).
-- [ ] `media/icon.png` + `icon.svg`: non-orange, non-starburst placeholder that is *not* the default glyph (§5A). Final icon is M7.
-- [ ] `test/unit/packageJson.test.ts`: asserts no `extensionKind`, exact `extensionDependencies`, exact `activationEvents`, `main` path, `untrustedWorkspaces` — FR-1.3's explicit test.
-- [ ] `.github/workflows/ci.yml`: PR + push → bun install → biome → tsc → vitest → `vsce package --no-dependencies` → upload `.vsix` artifact.
-- [ ] `.github/workflows/release.yml`: on `v*` tag → same gates → `azure/login` (OIDC) → `vsce publish --azure-credential --pre-release` → `ovsx publish -p $OVSX_PAT`. Publish steps skipped when secrets absent so the workflow dry-runs before Q4.
-- [ ] DoD: `bun run package` produces a `.vsix` that installs with `code --install-extension` and logs activation; CI green; release workflow dry-runs. Actual first publish waits on Q4 + Entra (Q-C).
+- [x] Initial commit on `main`: existing `CLAUDE.md`, `docs/PRD.md`, `.gitignore`, this plan. (Needs consent: creates the remote + first push to `main`, Q-B.)
+- [x] Branch `feat/m0-scaffold`.
+- [x] `package.json` per §7: `publisher` placeholder until Q4; `engines.vscode ^1.98.0`; `extensionDependencies: ["anthropic.claude-code"]`; `activationEvents: ["onStartupFinished"]`; **no** `extensionKind`; `capabilities.untrustedWorkspaces.supported: true`; view container `sensibleDefaults` + view `sensibleDefaults.health`; one command `sensibleDefaults.runHealthCheck` (stub); the three `configuration` properties.
+- [x] `tsconfig.json`, `esbuild.js`, `biome.json`, `vitest.config.ts`, `.vscodeignore`, `.vscode/launch.json` + `tasks.json`.
+- [x] `src/extension.ts`: create output channel `Sensible Claude Code Defaults`, log activation, register the stub command. Nothing else.
+- [x] `src/util/log.ts` (thin wrapper around `LogOutputChannel`; redaction boundary lands in M5 but the single choke point exists from day one).
+- [x] `README.md` stub containing the D8 non-affiliation statement and the "files written / token location" section headings. `CHANGELOG.md`, `LICENSE` (MIT).
+- [x] `media/icon.png` + `icon.svg`: non-orange, non-starburst placeholder that is *not* the default glyph (§5A). Final icon is M7.
+- [x] `test/unit/packageJson.test.ts`: asserts no `extensionKind`, exact `extensionDependencies`, exact `activationEvents`, `main` path, `untrustedWorkspaces` — FR-1.3's explicit test.
+- [x] `.github/workflows/ci.yml`: PR + push → bun install → biome → tsc → vitest → `vsce package --no-dependencies` → upload `.vsix` artifact.
+- [x] `.github/workflows/release.yml`: on `v*` tag → same gates → `azure/login` (OIDC) → `vsce publish --azure-credential --pre-release` → `ovsx publish -p $OVSX_PAT`. Publish steps skipped when secrets absent so the workflow dry-runs before Q4.
+- [ ] DoD: `bun run package` produces a `.vsix` that installs with `code --install-extension` and logs activation; CI green; release workflow dry-runs. Actual first publish waits on Q4 + Entra (Q-C). *(2026-09-10: `.vsix` builds clean — 10 files, no `node_modules`; lint, `tsc --noEmit`, and vitest green locally. Install-and-activate and the first CI run remain outstanding — nothing pushed yet.)*
 
 ## M1 — config engine (2 days)
 
