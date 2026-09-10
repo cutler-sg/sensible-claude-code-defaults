@@ -2,7 +2,7 @@
 
 Source of truth: `docs/PRD.md` FR-1.4/1.6, FR-2.5, FR-2.7, FR-2.8, FR-5, FR-6 (subset), §13. Depends on M1 (`src/config/*`).
 Branch: `feat/m2-health-panel` (from `feat/m0-scaffold` once merged, else stacked).
-Status: **implemented 2026-09-10 on the stated assumptions (Q-M..Q-R); adversarial review in flight.**
+Status: **implemented 2026-09-10 on the stated assumptions (Q-M..Q-R). Adversarial review found 18 issues (token leak via V8 parse-error snippet, unconfirmed/unbacked-up resetKey and selectRegion writes, unbounded stale retry, unhandled first-run rejection, watcher never re-arming on fresh install, dead viewsWelcome, 0% coverage on commands); all fixed with regression tests, 646 tests, extension-host smoke green in CI. Manual walkthrough still outstanding.**
 
 ## Scope
 
