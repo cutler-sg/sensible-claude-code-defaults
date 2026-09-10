@@ -10,8 +10,8 @@
  * Invariant: nothing here imports `vscode`; the host injects `ConfigEnv`.
  */
 
-import { getPath } from "./managedKeys.js";
-import { merge } from "./merge.js";
+import { getPath, isElementOwned, isJsonObject } from "./managedKeys.js";
+import { deepEqual, merge } from "./merge.js";
 import { assertOutsideWorkspace, backupsDir, settingsPath } from "./paths.js";
 import { readSettings } from "./reader.js";
 import {
@@ -22,6 +22,9 @@ import {
   DEFAULT_STYLE,
   type Desired,
   type Drift,
+  type ElementOwnedKey,
+  type JsonObject,
+  type JsonValue,
   type ManagedKey,
   type PlanResult,
   type Settings,
@@ -111,7 +114,7 @@ async function planWith(
   try {
     merged = merge(
       current,
-      adopt === undefined ? snapshot : seed(snapshot, current, adopt),
+      adopt === undefined ? snapshot : seed(snapshot, current, adopt, desired),
       desired,
     );
   } catch (error) {
@@ -134,12 +137,46 @@ async function planWith(
 }
 
 /** Claim `key`'s current value as ours. A key that is absent has nothing to claim. */
-function seed(snapshot: Snapshot, current: Settings, key: ManagedKey): Snapshot {
+function seed(snapshot: Snapshot, current: Settings, key: ManagedKey, desired: Desired): Snapshot {
   const value = getPath(current, key);
   if (value === undefined) {
     return snapshot;
   }
-  return { ...snapshot, values: { ...snapshot.values, [key]: value } };
+  const claimed = isElementOwned(key) ? claimElements(key, value, desired[key]) : value;
+  if (claimed === undefined) {
+    return snapshot;
+  }
+  return { ...snapshot, values: { ...snapshot.values, [key]: claimed } };
+}
+
+/**
+ * For an element-owned key the snapshot holds *the elements we wrote*, never
+ * the whole container. Claiming the container would adopt the user's plugins
+ * and deny rules along with ours — and the very next apply would then delete
+ * them, because a manifest that no longer lists an element we "own" removes it.
+ *
+ * So a reset claims exactly the elements of `desired` that are already present:
+ * by value for the list, by id for the maps. Elements the user added stay
+ * unowned, which is what keeps them.
+ */
+function claimElements(
+  key: ElementOwnedKey,
+  current: JsonValue,
+  desired: JsonValue | undefined,
+): JsonValue | undefined {
+  if (key === "permissions.deny") {
+    if (!Array.isArray(current) || !Array.isArray(desired)) return undefined;
+    const claimed = desired.filter((element) =>
+      current.some((candidate) => deepEqual(candidate, element)),
+    );
+    return claimed.length > 0 ? claimed : undefined;
+  }
+  if (!isJsonObject(current) || !isJsonObject(desired)) return undefined;
+  const claimed: JsonObject = {};
+  for (const id of Object.keys(desired)) {
+    if (Object.hasOwn(current, id)) claimed[id] = current[id] as JsonValue;
+  }
+  return Object.keys(claimed).length > 0 ? claimed : undefined;
 }
 
 /**

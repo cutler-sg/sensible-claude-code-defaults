@@ -533,3 +533,113 @@ describe("malformed containers inside a well-formed file", () => {
     expect(await envValue("AWS_REGION")).toBe("us-east-1");
   });
 });
+
+describe("resetting an element-owned key", () => {
+  const USER_DENY = "Bash(sudo:*)";
+
+  it("adopts only the deny rules we recommend, never the user's", async () => {
+    await seedSettings(
+      `${JSON.stringify({ permissions: { deny: [USER_DENY, "Bash(rm -rf:*)"] } }, null, 2)}\n`,
+    );
+
+    const planned = ready(await resetKeyPlan(env, desiredFixture(), "permissions.deny"));
+    await commit(env, session, planned);
+
+    // "Read(./.env)" is missing and gets added; the user's rule is untouched.
+    expect(getPath(await readJson(), "permissions.deny")).toEqual([
+      USER_DENY,
+      "Bash(rm -rf:*)",
+      "Read(./.env)",
+    ]);
+    expect((await readSnapshotFile()).values["permissions.deny"]).toEqual([
+      "Bash(rm -rf:*)",
+      "Read(./.env)",
+    ]);
+
+    // The next apply must not treat the adopted set as licence to remove the
+    // user's rule, and must not report it as drift.
+    const next = ready(await plan(env, desiredFixture()));
+    expect(next.merge.changes.map((change) => change.key)).not.toContain("permissions.deny");
+    expect(next.merge.drift).toEqual([]);
+    expect(getPath(next.merge.next, "permissions.deny")).toEqual([
+      USER_DENY,
+      "Bash(rm -rf:*)",
+      "Read(./.env)",
+    ]);
+  });
+
+  it("takes over the plugins we recommend and leaves the user's enabled", async () => {
+    await seedSettings(
+      `${JSON.stringify(
+        { enabledPlugins: { "user@theirs": true, "health@sensible-defaults": false } },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const planned = ready(await resetKeyPlan(env, desiredFixture(), "enabledPlugins"));
+    await commit(env, session, planned);
+
+    expect(getPath(await readJson(), "enabledPlugins")).toEqual({
+      "user@theirs": true,
+      "health@sensible-defaults": true,
+    });
+    expect((await readSnapshotFile()).values.enabledPlugins).toEqual({
+      "health@sensible-defaults": true,
+    });
+
+    const next = ready(await plan(env, desiredFixture()));
+    expect(next.merge.drift).toEqual([]);
+    expect(getPath(next.merge.next, "enabledPlugins")).toEqual({
+      "user@theirs": true,
+      "health@sensible-defaults": true,
+    });
+  });
+
+  it("takes over one marketplace without adopting the user's", async () => {
+    const theirs = { source: { source: "github", repo: "someone/else" } };
+    await seedSettings(
+      `${JSON.stringify(
+        {
+          extraKnownMarketplaces: {
+            theirs,
+            "sensible-defaults": { source: { source: "github", repo: "stale/repo" } },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const planned = ready(await resetKeyPlan(env, desiredFixture(), "extraKnownMarketplaces"));
+    await commit(env, session, planned);
+
+    const written = getPath(await readJson(), "extraKnownMarketplaces") as JsonObject;
+    expect(written.theirs).toEqual(theirs);
+    expect(written["sensible-defaults"]).toEqual({
+      source: { source: "github", repo: "cutler-sg/marketplace" },
+    });
+    expect(
+      Object.keys((await readSnapshotFile()).values.extraKnownMarketplaces as JsonObject),
+    ).toEqual(["sensible-defaults"]);
+
+    // A later manifest that drops the marketplace removes ours and only ours.
+    session = createSession();
+    const shrunk = ready(await plan(env, desiredFixture({ extraKnownMarketplaces: {} })));
+    await commit(env, session, shrunk);
+    expect(getPath(await readJson(), "extraKnownMarketplaces")).toEqual({ theirs });
+  });
+
+  it("never adopts an element the manifest does not ask for", async () => {
+    await seedSettings(`${JSON.stringify({ enabledPlugins: { "user@theirs": true } }, null, 2)}\n`);
+
+    const planned = ready(await resetKeyPlan(env, desiredFixture(), "enabledPlugins"));
+    await commit(env, session, planned);
+
+    // Ownership covers our plugin only, so a manifest that later wants nothing
+    // enabled cannot take the user's plugin down with it.
+    session = createSession();
+    await commit(env, session, ready(await plan(env, desiredFixture({ enabledPlugins: {} }))));
+    expect(getPath(await readJson(), "enabledPlugins")).toEqual({ "user@theirs": true });
+  });
+});
