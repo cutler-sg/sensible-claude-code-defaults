@@ -35,6 +35,7 @@ import {
   resetKeyPlan,
   settingsPath,
 } from "../config/index.js";
+import { register } from "../util/redact.js";
 
 /** The `settings.json` home of `AWS_BEARER_TOKEN_BEDROCK`. */
 export const TOKEN_SETTINGS_KEY: ManagedKey = "env.AWS_BEARER_TOKEN_BEDROCK";
@@ -139,7 +140,13 @@ export async function readTokenFromSettings(env: ConfigEnv): Promise<string | un
   // `getPath` throws only when `env` is present and not an object, and a `kind:
   // "ok"` read already guarantees it is one — the reader refuses that file.
   const value = getPath(read.data, TOKEN_SETTINGS_KEY);
-  return typeof value === "string" && value !== "" ? value : undefined;
+  if (typeof value !== "string" || value === "") return undefined;
+  // FR-4.9: the file is the second door a token value comes through, and the
+  // one behind `/setup-bedrock` and every hand-edit — i.e. values the keychain
+  // has never held. Registering here is what lets `redact` scrub a key this
+  // extension did not choose, in a diagnostics report that quotes the file.
+  register(value);
+  return value;
 }
 
 /**

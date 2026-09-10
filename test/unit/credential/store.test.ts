@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { settingsPath } from "../../../src/config/paths.js";
+import { MemorySnapshotStore } from "../../../src/config/snapshot.js";
 import {
   ageInDays,
   ageLevel,
@@ -11,7 +16,9 @@ import {
   type StoredToken,
   TOKEN_SECRET_KEY,
 } from "../../../src/credential/types.js";
+import { readTokenFromSettings } from "../../../src/credential/writeThrough.js";
 import type { CredentialPolicy } from "../../../src/manifest/types.js";
+import { forgetAll, REDACTED, redact, registeredCount } from "../../../src/util/redact.js";
 
 const TOKEN = "ABSKQmVkcm9ja0FQSUtleUV4YW1wbGVWYWx1ZQ";
 
@@ -50,6 +57,13 @@ let store: SecretTokenStore;
 beforeEach(() => {
   secrets = new FakeSecrets();
   store = new SecretTokenStore(secrets, { now: () => NOW });
+  forgetAll();
+});
+
+// The registry is module-level state, so a value left behind by one test would
+// scrub another's fixtures and make an assertion pass for the wrong reason.
+afterEach(() => {
+  forgetAll();
 });
 
 describe("SecretTokenStore", () => {
@@ -242,6 +256,141 @@ describe("SecretTokenStore", () => {
     const before = Date.now();
     const stamped = new SecretTokenStore(secrets).stamp(TOKEN);
     expect(Date.parse(stamped.setAt)).toBeGreaterThanOrEqual(before);
+  });
+});
+
+/**
+ * FR-4.9 wiring. The store is the door every token value comes through, so it
+ * is where the redaction registry is fed — registering at each call site
+ * instead would mean each new call site is a chance to forget.
+ */
+describe("the redaction registry (FR-4.9)", () => {
+  /**
+   * Values no pattern in `redact.ts` recognises, so every assertion below is
+   * about the registry rather than about the pattern net catching an `ABSK`
+   * prefix on its own. That is the half that carries the guarantee: AWS does
+   * not document the key format, so a pattern only ever knows the shapes we
+   * happened to have seen.
+   */
+  const NEW_KEY = "Zq7Xk2Mv9Tb4Rn6Wc8Jd3Fp5Hs1Ly0Gu";
+  const OLD_KEY = "Pw4Nb8Kt2Vx6Lm0Cq5Ry9Df3Jh7Sz1Ae";
+
+  it("registers a token as it is stored", async () => {
+    await store.set({ token: NEW_KEY, setAt: NOW.toISOString() });
+
+    expect(redact(`writing ${NEW_KEY} to the file`)).toBe(`writing ${REDACTED} to the file`);
+  });
+
+  it("registers a token as it is read", async () => {
+    secrets.values.set(TOKEN_SECRET_KEY, JSON.stringify({ token: NEW_KEY, setAt: "" }));
+    forgetAll();
+
+    await store.get();
+
+    expect(redact(NEW_KEY)).toBe(REDACTED);
+  });
+
+  it("registers a legacy bare string as it is migrated", async () => {
+    secrets.values.set(TOKEN_SECRET_KEY, NEW_KEY);
+    forgetAll();
+
+    await store.get();
+
+    expect(redact(NEW_KEY)).toBe(REDACTED);
+  });
+
+  /**
+   * The rotation case, which is the one a registry keyed only on the current
+   * value gets wrong: the replaced key stays loggable for the rest of the
+   * window, and it is exactly the value most likely to be sitting in a stale
+   * log line or a settings file we are about to quote back.
+   */
+  it("leaves neither the old nor the new value loggable after a rotation", async () => {
+    await store.set({ token: OLD_KEY, setAt: "2026-01-01T00:00:00.000Z" });
+    // Cleared so the assertion cannot pass on the registration `set` made for
+    // the *old* key on its own way in — only the rotation can put it back.
+    forgetAll();
+    expect(redact(OLD_KEY)).toBe(OLD_KEY);
+
+    await store.set({ token: NEW_KEY, setAt: NOW.toISOString() });
+
+    expect(redact(`old=${OLD_KEY} new=${NEW_KEY}`)).toBe(`old=${REDACTED} new=${REDACTED}`);
+  });
+
+  it("registers a previous value stored in the legacy bare-string shape", async () => {
+    secrets.values.set(TOKEN_SECRET_KEY, JSON.stringify(OLD_KEY));
+    forgetAll();
+
+    await store.set({ token: NEW_KEY, setAt: NOW.toISOString() });
+
+    expect(redact(`old=${OLD_KEY}`)).toBe(`old=${REDACTED}`);
+  });
+
+  it("still stores the new value when the previous one cannot be read", async () => {
+    // A keychain that refuses the read must not block a rotation: what is lost
+    // is the ability to scrub a value we never saw, which is the same position
+    // we are in on a machine where the key was pasted in by hand.
+    const failing: SecretStorageLike = {
+      get: () => Promise.reject(new Error("keychain locked")),
+      store: (key, value) => {
+        secrets.values.set(key, value);
+        return Promise.resolve();
+      },
+      delete: () => Promise.resolve(),
+    };
+
+    await new SecretTokenStore(failing).set({ token: NEW_KEY, setAt: NOW.toISOString() });
+
+    expect(secrets.values.get(TOKEN_SECRET_KEY)).toContain(NEW_KEY);
+    expect(redact(NEW_KEY)).toBe(REDACTED);
+  });
+
+  it("registers nothing for a secret that holds no token", async () => {
+    secrets.values.set(TOKEN_SECRET_KEY, JSON.stringify({ notes: "nothing here" }));
+    forgetAll();
+
+    await store.get();
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  /**
+   * The in-memory double registers exactly as the real store does. Without
+   * that, a leak test using it would pass because the registry happened to be
+   * empty — the one way these tests can be wrong.
+   */
+  it("is fed by the in-memory store too, previous value included", async () => {
+    const memory = new MemoryTokenStore({ token: OLD_KEY, setAt: NOW.toISOString() });
+    forgetAll();
+
+    await memory.set({ token: NEW_KEY, setAt: NOW.toISOString() });
+
+    expect(redact(`old=${OLD_KEY} new=${NEW_KEY}`)).toBe(`old=${REDACTED} new=${REDACTED}`);
+  });
+
+  it("is fed by a read of the token in the settings file", async () => {
+    // The file is the other door, and the one behind `/setup-bedrock` and every
+    // hand-edit — values the keychain has never held.
+    const dir = await mkdtemp(join(tmpdir(), "scd-store-"));
+    try {
+      await writeFile(
+        settingsPath(dir),
+        JSON.stringify({ env: { AWS_BEARER_TOKEN_BEDROCK: NEW_KEY } }),
+        "utf8",
+      );
+      forgetAll();
+
+      await readTokenFromSettings({
+        claudeDir: dir,
+        workspaceFolders: [],
+        snapshotStore: new MemorySnapshotStore(),
+        platform: process.platform,
+      });
+
+      expect(redact(NEW_KEY)).toBe(REDACTED);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

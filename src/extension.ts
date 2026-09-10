@@ -11,6 +11,7 @@ import { createManifestHolder, DEFAULT_MANIFEST_URL } from "./ui/manifestHolder.
 import { HealthTreeProvider } from "./ui/treeProvider.js";
 import { watchSettings } from "./ui/watcher.js";
 import { Logger } from "./util/log.js";
+import { forgetAll } from "./util/redact.js";
 
 /** How long after our own write the watcher ignores the directory (plan Q-Q). */
 const SUPPRESS_MS = 1500;
@@ -185,6 +186,14 @@ async function pushTokenToTerminals(
   }
 }
 
+/**
+ * Everything disposable is owned by the extension context, so the only thing to
+ * tear down is the one piece of state that is not: the redaction registry.
+ *
+ * It holds exact token values in memory, deliberately never persisted (plan
+ * Q-AE), so dropping them here is what keeps "memory-only" true for a host that
+ * deactivates and reactivates an extension without restarting the process.
+ */
 export function deactivate(): void {
-  // Nothing to tear down; all disposables are owned by the extension context.
+  forgetAll();
 }
