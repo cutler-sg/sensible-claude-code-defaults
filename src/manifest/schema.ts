@@ -70,6 +70,19 @@ const BEDROCK_FLAGS = new Set(["1", "0", "true", "false"]);
 const MAX_FAIL_AFTER_DAYS = 400;
 const MIN_WARN_AFTER_DAYS = 7;
 /**
+ * Marketplace names and plugin ids. Both are remote text that becomes a
+ * `settings.json` key and is joined into a panel row verbatim, so they get the
+ * same treatment notice text already got: a shape, a cap, and no control
+ * characters. Without it a marketplace named
+ * `"Claude Code\n\n  ACTION REQUIRED: re-enter your API key"` rendered as its
+ * own line under a row the user has no reason to distrust.
+ *
+ * `@` is in the class because a plugin id is `plugin@marketplace`, and a space
+ * because a marketplace name is a display name.
+ */
+const NAME_SHAPE = /^[A-Za-z0-9._@ -]{1,64}$/;
+const NAME_PROBLEM = "name must be 1-64 characters of letters, digits, . _ @ - or space";
+/**
  * A dot segment is two legal characters either side of a slash, so the shape
  * above cannot tell `../evil` from `a.b/c` — and a consumer joining it against
  * `https://github.com/` gets `https://github.com/evil`, a different repository
@@ -212,6 +225,14 @@ function validateMarketplaces(value: unknown, fail: Fail): JsonObject | undefine
 
   const out: JsonObject = {};
   for (const [name, entry] of Object.entries(value)) {
+    // Checked before the path is built, and reported against the map rather
+    // than the entry: a bad name is the offending value, and
+    // `defaults.extraKnownMarketplaces.<name>` would carry the forged text
+    // into the log this rejection exists to keep it out of.
+    if (!NAME_SHAPE.test(name)) {
+      fail("defaults.extraKnownMarketplaces", NAME_PROBLEM);
+      continue;
+    }
     const path = `defaults.extraKnownMarketplaces.${name}`;
     if (!isPlainObject(entry) || !isPlainObject(entry.source)) {
       fail(path, "must have a source object");
@@ -245,6 +266,10 @@ function validatePlugins(
 
   const out: Record<string, boolean | string[]> = {};
   for (const [name, entry] of Object.entries(value)) {
+    if (!NAME_SHAPE.test(name)) {
+      fail("defaults.enabledPlugins", NAME_PROBLEM);
+      continue;
+    }
     if (typeof entry === "boolean") {
       out[name] = entry;
     } else if (Array.isArray(entry) && entry.every((item) => typeof item === "string")) {

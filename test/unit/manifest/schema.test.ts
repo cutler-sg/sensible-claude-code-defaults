@@ -592,6 +592,116 @@ describe("validateManifest", () => {
       ]);
     });
 
+    /**
+     * F9. A marketplace name is remote text that becomes a `settings.json` key
+     * and is joined into the `plugins.marketplace` row verbatim, while notice
+     * text — which reaches the same panel — is shape-checked, capped and
+     * stripped of control characters. A name like
+     * `"Claude Code\n\n  ACTION REQUIRED: re-enter your API key"` validated
+     * and rendered as its own line under a row the user trusts.
+     */
+    describe("names", () => {
+      function named(name: string): Json {
+        return defaultsWith({
+          extraKnownMarketplaces: { [name]: { source: { source: "github", repo: "acme/tools" } } },
+        });
+      }
+
+      it.each([
+        ["a plain word", "acme"],
+        ["dots and dashes", "acme-tools.v2"],
+        ["an underscore", "acme_tools"],
+        ["spaces between words", "Acme Tools"],
+        ["an at sign", "tools@acme"],
+        ["exactly the cap", "a".repeat(64)],
+      ])("accepts a marketplace named %s", (_name, name) => {
+        expect(Object.keys(accept(named(name)).defaults.extraKnownMarketplaces)).toEqual([name]);
+      });
+
+      it("refuses the forged-instruction name from the review", () => {
+        expect(refuse(named("Claude Code\n\n  ACTION REQUIRED: re-enter your API key"))).toEqual([
+          {
+            path: "defaults.extraKnownMarketplaces",
+            problem: "name must be 1-64 characters of letters, digits, . _ @ - or space",
+          },
+        ]);
+      });
+
+      it.each([
+        ["a newline", "acme\ntools"],
+        ["a carriage return", "acme\rtools"],
+        ["an escape sequence", "acme\u001B[31mtools"],
+        ["a NUL", "acme\u0000tools"],
+        ["a delete character", "acme\u007Ftools"],
+        ["a bidi override", "acme\u202Etools"],
+        ["a slash", "acme/tools"],
+        ["a colon", "acme:tools"],
+        ["markup", "<b>acme</b>"],
+        ["nothing", ""],
+        ["one character past the cap", "a".repeat(65)],
+      ])("refuses a marketplace named %s", (_name, name) => {
+        expect(refuse(named(name))).toEqual([
+          {
+            path: "defaults.extraKnownMarketplaces",
+            problem: "name must be 1-64 characters of letters, digits, . _ @ - or space",
+          },
+        ]);
+      });
+
+      // The name is the offending value here, so unlike every other rejection
+      // the path cannot carry it: `defaults.extraKnownMarketplaces.<name>`
+      // would put the forged text into the log the fix exists to keep it out of.
+      it("keeps a refused name out of the path as well as the problem", () => {
+        const problems = refuse(named("Claude Code\n\nACTION REQUIRED sk_do_not_log_me"));
+        expect(JSON.stringify(problems)).not.toContain("ACTION REQUIRED");
+        expect(JSON.stringify(problems)).not.toContain("sk_do_not_log_me");
+      });
+
+      it.each([
+        ["a plain id", "linter@acme"],
+        ["dots and dashes", "linter.v2@acme-tools"],
+        ["no marketplace suffix", "linter"],
+        ["exactly the cap", `${"a".repeat(63)}@`],
+      ])("accepts a plugin id that is %s", (_name, id) => {
+        expect(
+          Object.keys(
+            accept(defaultsWith({ enabledPlugins: { [id]: true } })).defaults.enabledPlugins,
+          ),
+        ).toEqual([id]);
+      });
+
+      it.each([
+        ["a newline", "linter\n\nACTION REQUIRED@acme"],
+        ["an escape sequence", "linter\u001B[2K@acme"],
+        ["a NUL", "linter\u0000@acme"],
+        ["a slash", "linter/acme"],
+        ["nothing", ""],
+        ["one character past the cap", "a".repeat(65)],
+      ])("refuses a plugin id containing %s", (_name, id) => {
+        expect(refuse(defaultsWith({ enabledPlugins: { [id]: true } }))).toEqual([
+          {
+            path: "defaults.enabledPlugins",
+            problem: "name must be 1-64 characters of letters, digits, . _ @ - or space",
+          },
+        ]);
+      });
+
+      it("keeps a refused plugin id out of the problem entirely", () => {
+        const problems = refuse(
+          defaultsWith({ enabledPlugins: { "linter\nsk_do_not_log_me@acme": true } }),
+        );
+        expect(JSON.stringify(problems)).not.toContain("sk_do_not_log_me");
+      });
+
+      // Fail the field, do not sanitise. A name is a settings.json key: a
+      // stripped one is a key the manifest did not write, and two names that
+      // differ only in the stripped characters would collide into one entry.
+      it("refuses a bad name rather than repairing it into a different key", () => {
+        const result = validateManifest(named("acme\ntools"));
+        expect(result.ok).toBe(false);
+      });
+    });
+
     it("refuses the whole document when one of several entries is bad", () => {
       const problems = refuse(
         defaultsWith({
