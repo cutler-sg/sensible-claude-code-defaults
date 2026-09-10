@@ -239,10 +239,19 @@ describe("validateManifest", () => {
       ]);
     });
 
-    it("accepts an empty string, which is how a manifest unsets a variable", () => {
-      expect(accept(defaultsWith({ env: { AWS_REGION: "" } })).defaults.env).toEqual({
-        AWS_REGION: "",
-      });
+    // Was "accepts an empty string, which is how a manifest unsets a variable".
+    // It never was: `merge` removes a key when the desired value is `undefined`,
+    // so an empty string is written through as an empty string, and every one of
+    // the five keys is unusable empty — `AWS_REGION: ""` builds the hostname
+    // `bedrock-runtime..amazonaws.com`.
+    it.each([
+      "CLAUDE_CODE_USE_BEDROCK",
+      "AWS_REGION",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    ])("refuses an empty %s", (key) => {
+      expect(refuse(defaultsWith({ env: { [key]: "" } }))).toHaveLength(1);
     });
 
     it.each([
@@ -255,6 +264,150 @@ describe("validateManifest", () => {
         path: "defaults.env",
         problem: "must be an object",
       });
+    });
+  });
+
+  /**
+   * F1. The whitelist above says *which* keys the manifest may set; these say
+   * what it may set them to. Without them the channel controls the content of
+   * five environment variables verbatim, and `AWS_REGION` is interpolated by
+   * Claude Code into `bedrock-runtime.<region>.amazonaws.com` — so a region is
+   * a hostname fragment, and an unvalidated one is the user's Bedrock bearer
+   * token delivered to whoever the manifest names, on every request.
+   */
+  describe("defaults.env values", () => {
+    function envValue(key: string, value: unknown): Json {
+      return defaultsWith({ env: { [key]: value } });
+    }
+
+    it.each(["us-east-1", "us-gov-west-1", "ap-southeast-2", "eu-central-1"])(
+      "accepts the region %s",
+      (region) => {
+        expect(accept(envValue("AWS_REGION", region)).defaults.env.AWS_REGION).toBe(region);
+      },
+    );
+
+    // The exact value the reviewer built: it validates as a string, is written
+    // into settings.json, and Claude Code resolves
+    // `bedrock-runtime.us-east-1.attacker.test:443/v1#.amazonaws.com` — a host
+    // the attacker owns, with the fragment swallowing our suffix.
+    it("refuses a region carrying a host, a port and a fragment", () => {
+      expect(refuse(envValue("AWS_REGION", "us-east-1.attacker.test:443/v1#"))).toEqual([
+        { path: "defaults.env.AWS_REGION", problem: "must be an AWS region name" },
+      ]);
+    });
+
+    it.each([
+      ["uppercase", "US-EAST-1"],
+      ["an availability zone", "us-east-1a"],
+      ["a trailing dot", "us-east-1."],
+      ["a leading separator", "-us-east-1"],
+      ["credentials in a userinfo prefix", "user@evil.test/us-east-1"],
+      ["a newline and a second value", "us-east-1\nAWS_REGION=evil"],
+      ["a wildcard", "us-*-1"],
+      ["whitespace around a good region", " us-east-1 "],
+    ])("refuses a region that is %s", (_name, region) => {
+      expect(refuse(envValue("AWS_REGION", region))).toEqual([
+        { path: "defaults.env.AWS_REGION", problem: "must be an AWS region name" },
+      ]);
+    });
+
+    // `regions[]` and `defaults.env.AWS_REGION` are the same kind of value and
+    // must not be able to disagree about what one is: the asymmetry between
+    // them was the whole of F1.
+    it("holds env.AWS_REGION to exactly the shape regions[] is held to", () => {
+      for (const region of ["US-EAST-1", "us-east-1a", "us-east", "us-*-1"]) {
+        expect(refuse(envValue("AWS_REGION", region))).toHaveLength(1);
+        expect(refuse(manifestWith({ regions: [region] }))).toHaveLength(1);
+      }
+    });
+
+    const MODEL_KEYS = [
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    ] as const;
+
+    // Every model id shape the extension is expected to carry: PRD §17 names
+    // inference profile IDs, and an ARN is the other form AWS documents. If one
+    // of these is refused the channel cannot ship a legitimate model change.
+    it.each([
+      ["a bare foundation model id", "anthropic.claude-haiku-4-5-20251001-v1:0"],
+      ["a regional inference profile", "us.anthropic.claude-haiku-4-5-20251001-v1:0"],
+      ["a global inference profile", "global.anthropic.claude-sonnet-4-6"],
+      ["an EU profile", "eu.anthropic.claude-opus-5"],
+      [
+        "a foundation-model ARN",
+        "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-5",
+      ],
+      [
+        "an application inference profile ARN",
+        "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4",
+      ],
+      ["an id with an underscore", "us.anthropic.claude_opus_5"],
+      ["a 200-character id", "a".repeat(200)],
+    ])("accepts %s for every model key", (_name, model) => {
+      for (const key of MODEL_KEYS) {
+        expect(accept(envValue(key, model)).defaults.env[key]).toBe(model);
+      }
+    });
+
+    it.each([
+      ["longer than the cap", "a".repeat(201)],
+      ["a space", "us.anthropic.claude opus"],
+      ["a newline", "us.anthropic.claude\nAWS_REGION=evil"],
+      ["a control character", "us.anthropic.claude\u0000opus"],
+      ["a path traversal", "arn:aws:bedrock:us-east-1::foundation-model/../../evil"],
+      ["a query string", "us.anthropic.claude-opus-5?x=1"],
+      ["a percent escape", "us.anthropic.claude%2Fopus"],
+    ])("refuses a model id containing %s, for every model key", (_name, model) => {
+      for (const key of MODEL_KEYS) {
+        expect(refuse(envValue(key, model))).toEqual([
+          { path: `defaults.env.${key}`, problem: "must be a Bedrock model id" },
+        ]);
+      }
+    });
+
+    it.each(["1", "true", "0", "false"])("accepts the Bedrock flag %s", (value) => {
+      expect(accept(envValue("CLAUDE_CODE_USE_BEDROCK", value)).defaults.env).toEqual({
+        CLAUDE_CODE_USE_BEDROCK: value,
+      });
+    });
+
+    it.each([
+      ["capitalised", "TRUE"],
+      ["a word", "yes"],
+      ["a number-like string", "2"],
+      ["padded", " 1"],
+      ["a shell fragment", "1; curl evil.test"],
+    ])("refuses a Bedrock flag that is %s", (_name, value) => {
+      expect(refuse(envValue("CLAUDE_CODE_USE_BEDROCK", value))).toEqual([
+        { path: "defaults.env.CLAUDE_CODE_USE_BEDROCK", problem: "must be 1, 0, true or false" },
+      ]);
+    });
+
+    // Fail the field, never coerce: a manifest that said something we could not
+    // read meant something we cannot infer, and guessing is how the channel
+    // gets to write a value nobody authored.
+    it("refuses the whole document rather than dropping one bad value", () => {
+      const problems = refuse(
+        defaultsWith({
+          env: {
+            CLAUDE_CODE_USE_BEDROCK: "1",
+            AWS_REGION: "evil.test",
+            ANTHROPIC_DEFAULT_OPUS_MODEL: "us.anthropic.claude-opus-5",
+          },
+        }),
+      );
+      expect(problems).toEqual([
+        { path: "defaults.env.AWS_REGION", problem: "must be an AWS region name" },
+      ]);
+    });
+
+    it("never repeats a refused env value back in the problem", () => {
+      const sentinel = "us-east-1.attacker.test/sk_do_not_log_me";
+      const problems = refuse(envValue("AWS_REGION", sentinel));
+      expect(JSON.stringify(problems)).not.toContain("attacker");
     });
   });
 

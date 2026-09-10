@@ -30,16 +30,33 @@ export type ValidationResult =
 const MAX_NOTICE_LENGTH = 200;
 /** Two is enough to say something; more is a channel for nagging every user. */
 export const MAX_NOTICES = 2;
-/** Bedrock env values Claude Code reads. Anything else is not ours to write. */
-const ALLOWED_ENV_KEYS = new Set([
-  "CLAUDE_CODE_USE_BEDROCK",
-  "AWS_REGION",
-  "ANTHROPIC_DEFAULT_OPUS_MODEL",
-  "ANTHROPIC_DEFAULT_SONNET_MODEL",
-  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-]);
 /** `owner/name`, the only shape `extraKnownMarketplaces` github sources take. */
 const REPO_SHAPE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+/**
+ * Bedrock model identifiers, in every form PRD §17 and AWS document: a bare
+ * foundation-model id (`anthropic.claude-…-v1:0`), an inference profile with a
+ * geography prefix (`us.`, `eu.`, `global.`), and the ARN forms of both — which
+ * is why `:` and `/` are in the class. Capped at 200 characters: the longest
+ * real one is an application-inference-profile ARN at well under half that.
+ *
+ * The exclusions are what matter. No whitespace and no control characters, so a
+ * value cannot carry a second line into a rendered panel row; no `%`, `?` or
+ * `#`, so it cannot reinterpret the URL path Claude Code builds around it.
+ */
+const MODEL_ID_SHAPE = /^[A-Za-z0-9._:/-]{1,200}$/;
+/** The five keys, and the only values each may take. */
+const ENV_VALUE_RULES: Record<string, { test: (value: string) => boolean; problem: string }> = {
+  CLAUDE_CODE_USE_BEDROCK: {
+    test: (value) => BEDROCK_FLAGS.has(value),
+    problem: "must be 1, 0, true or false",
+  },
+  AWS_REGION: { test: (value) => REGION_SHAPE.test(value), problem: "must be an AWS region name" },
+  ANTHROPIC_DEFAULT_OPUS_MODEL: { test: isModelId, problem: "must be a Bedrock model id" },
+  ANTHROPIC_DEFAULT_SONNET_MODEL: { test: isModelId, problem: "must be a Bedrock model id" },
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: { test: isModelId, problem: "must be a Bedrock model id" },
+};
+/** Claude Code reads this as a boolean; these are the four spellings it takes. */
+const BEDROCK_FLAGS = new Set(["1", "0", "true", "false"]);
 /**
  * A dot segment is two legal characters either side of a slash, so the shape
  * above cannot tell `../evil` from `a.b/c` — and a consumer joining it against
@@ -137,11 +154,20 @@ function validateDefaults(value: unknown, fail: Fail): Manifest["defaults"] | un
       // otherwise reject the whole document for every older install and pin
       // them silently to their cache — the exact forward-compatibility failure
       // dropping unknown keys exists to avoid.
-      if (!ALLOWED_ENV_KEYS.has(key)) continue;
+      const rule = Object.hasOwn(ENV_VALUE_RULES, key) ? ENV_VALUE_RULES[key] : undefined;
+      if (rule === undefined) continue;
       // Claude Code reads these as environment variables, so a JSON boolean or
       // number would be written as a value it cannot use. Reject rather than
       // coerce: a manifest saying `true` meant something we cannot infer.
       if (typeof entry !== "string") fail(`defaults.env.${key}`, "must be a string");
+      // Whitelisting the key says only *which* variable the channel may set.
+      // Every one of these values is used structurally by Claude Code — the
+      // region becomes a hostname label in `bedrock-runtime.<region>.amazonaws.com`,
+      // the model ids become URL path segments — so a value that merely is a
+      // string is a host the manifest chose to send the user's Bedrock bearer
+      // token to. Same rigour as `regions[]`, which was already checked here
+      // and was the asymmetry this closes.
+      else if (!rule.test(entry)) fail(`defaults.env.${key}`, rule.problem);
       else env[key] = entry;
     }
   }
@@ -353,7 +379,20 @@ function isIsoDate(value: string): boolean {
 }
 
 function isSafeRepo(repo: string): boolean {
-  return REPO_SHAPE.test(repo) && !repo.split("/").some((part) => DOT_SEGMENTS.has(part));
+  return REPO_SHAPE.test(repo) && !hasDotSegment(repo);
+}
+
+/**
+ * Model ids reach a URL path, so the same dot-segment rule the marketplace repo
+ * gets applies: `foundation-model/../../evil` is a shape-legal ARN naming a
+ * path the manifest did not write.
+ */
+function isModelId(value: string): boolean {
+  return MODEL_ID_SHAPE.test(value) && !hasDotSegment(value);
+}
+
+function hasDotSegment(value: string): boolean {
+  return value.split("/").some((part) => DOT_SEGMENTS.has(part));
 }
 
 function isPlainObject(value: unknown): value is Record<string, JsonValue> {
