@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LABELS } from "../../../src/health/labels.js";
-import { noticeResults } from "../../../src/health/notices.js";
+import { noticeId, noticeResults } from "../../../src/health/notices.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import type { Manifest, ManifestNotice } from "../../../src/manifest/types.js";
 
@@ -21,7 +21,7 @@ describe("manifest notices as panel rows", () => {
       NOW,
     );
     expect(row).toEqual({
-      id: "notice.0",
+      id: noticeId("Bedrock is moving region on the 3rd."),
       group: "Configuration",
       level: "info",
       label: "Bedrock is moving region on the 3rd.",
@@ -38,7 +38,57 @@ describe("manifest notices as panel rows", () => {
       ]),
       NOW,
     );
-    expect(rows.map((row) => row.id)).toEqual(["notice.0", "notice.1"]);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(2);
+  });
+
+  /**
+   * F16. The ids used to be positional, so a row's identity outlived its
+   * content: `notice.0` was one message before an expiry and a different one
+   * after. VS Code keys expansion and selection state on `TreeItem.id`, so the
+   * panel would carry the first notice's state onto the second notice's text —
+   * the mirror image of the bug M2's review found in the check rows.
+   */
+  it("keeps a notice's id with its text, not with its position (F16)", () => {
+    const first = noticeResults(
+      withNotices([
+        { level: "info", message: "expiring soon", expiresAt: "2026-09-12T00:00:00Z" },
+        { level: "info", message: "the long-lived one" },
+      ]),
+      NOW,
+    );
+    // A day later the first notice has expired and the second has slid into
+    // position 0. Its id must have come with it.
+    const later = noticeResults(
+      withNotices([
+        { level: "info", message: "expiring soon", expiresAt: "2026-09-12T00:00:00Z" },
+        { level: "info", message: "the long-lived one" },
+      ]),
+      new Date("2026-09-13T12:00:00.000Z"),
+    );
+
+    expect(later.map((row) => row.label)).toEqual(["the long-lived one"]);
+    expect(later[0]?.id).toBe(first[1]?.id);
+    expect(later[0]?.id).not.toBe(first[0]?.id);
+  });
+
+  it("gives different text different ids, so a replaced notice is a new row", () => {
+    expect(noticeId("one thing")).not.toBe(noticeId("another thing"));
+  });
+
+  /**
+   * Two identical messages cannot be two rows: they would share an id, and VS
+   * Code renders one tree node per id — the second would vanish or, worse,
+   * fight the first for its state. Identical text is one message anyway.
+   */
+  it("collapses two identical messages into one row", () => {
+    const rows = noticeResults(
+      withNotices([
+        { level: "info", message: "the same thing twice" },
+        { level: "warning", message: "the same thing twice" },
+      ]),
+      NOW,
+    );
+    expect(rows).toHaveLength(1);
   });
 
   /**

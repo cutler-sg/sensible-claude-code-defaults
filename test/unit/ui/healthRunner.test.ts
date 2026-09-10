@@ -382,7 +382,7 @@ describe("reading the resolved manifest afresh on every run", () => {
 
     await runner({ manifest: () => withNotice })();
 
-    const notice = reports[0]?.results.find((result) => result.id === "notice.0");
+    const notice = reports[0]?.results.find((result) => result.id.startsWith("notice."));
     // Q-AA: a declared `warning` still renders as info, and carries no command.
     expect(notice).toMatchObject({
       level: "info",
