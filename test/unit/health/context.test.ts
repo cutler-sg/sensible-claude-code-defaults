@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemorySnapshotStore } from "../../../src/config/snapshot.js";
 import type { ConfigEnv } from "../../../src/config/types.js";
-import type { DetectDeps } from "../../../src/health/context.js";
+import { MemoryTokenStore } from "../../../src/credential/store.js";
+import type { CredentialDeps, DetectDeps } from "../../../src/health/context.js";
 import { buildContext, detectClaudeCode } from "../../../src/health/context.js";
 import type { ClaudeCodeDetection } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
@@ -153,6 +154,132 @@ describe("buildContext", () => {
     failRepairIn.add(dir);
     repairRejection = "chmod said no";
     expect((await build()).permissions).toEqual({ kind: "failed", error: "chmod said no" });
+  });
+});
+
+/**
+ * The credential slice is the one part of the context that reads a secret, so
+ * every assertion here is as much about what it does *not* carry as what it
+ * does. `CheckContext` has no field a token fits in; these tests prove the
+ * builder does not smuggle one into the fields it does have.
+ */
+describe("buildContext credential", () => {
+  const TOKEN = "ABSKQmVkcm9ja0FQSUtleUV4YW1wbGVWYWx1ZQ";
+  const OTHER = "ABSKQW5vdGhlckJlZHJvY2tBUElLZXlWYWx1ZQ";
+  const SET_AT = "2026-06-01T00:00:00.000Z";
+  const NOW = new Date("2026-09-10T12:00:00.000Z");
+
+  function credentialDeps(over: Partial<CredentialDeps> = {}): CredentialDeps {
+    return {
+      store: new MemoryTokenStore(),
+      readFromSettings: async () => undefined,
+      now: () => NOW,
+      ...over,
+    };
+  }
+
+  it("reports nothing configured when the host injects no credential deps", async () => {
+    const ctx = await build();
+    expect(ctx.credential.presence).toEqual({ source: "none", mismatch: false });
+    expect(ctx.credential.stored).toBeUndefined();
+    expect(ctx.credential.policy).toBe(BUNDLED_MANIFEST.credential);
+    expect(ctx.credential.keychainError).toBeUndefined();
+  });
+
+  it("carries the token's age but never the token", async () => {
+    const ctx = await build({
+      credential: credentialDeps({
+        store: new MemoryTokenStore({ token: TOKEN, setAt: SET_AT }),
+        readFromSettings: async () => TOKEN,
+      }),
+    });
+    expect(ctx.credential.presence).toEqual({ source: "both", mismatch: false, setAt: SET_AT });
+    expect(ctx.credential.stored).toEqual({ setAt: SET_AT });
+    expect(JSON.stringify(ctx.credential)).not.toContain(TOKEN);
+  });
+
+  it("reports the keychain alone when the file has no token", async () => {
+    const ctx = await build({
+      credential: credentialDeps({ store: new MemoryTokenStore({ token: TOKEN, setAt: SET_AT }) }),
+    });
+    expect(ctx.credential.presence.source).toBe("keychain");
+    expect(ctx.credential.presence.mismatch).toBe(false);
+  });
+
+  it("reports the file alone — the state /setup-bedrock leaves behind", async () => {
+    const ctx = await build({
+      credential: credentialDeps({ readFromSettings: async () => TOKEN }),
+    });
+    expect(ctx.credential.presence).toEqual({ source: "settings-file", mismatch: false });
+    expect(ctx.credential.stored).toBeUndefined();
+  });
+
+  it("flags a mismatch when the two hold different values", async () => {
+    const ctx = await build({
+      credential: credentialDeps({
+        store: new MemoryTokenStore({ token: TOKEN, setAt: SET_AT }),
+        readFromSettings: async () => OTHER,
+      }),
+    });
+    expect(ctx.credential.presence.source).toBe("both");
+    expect(ctx.credential.presence.mismatch).toBe(true);
+    expect(JSON.stringify(ctx.credential)).not.toContain(OTHER);
+  });
+
+  it("records an unreachable keychain instead of failing the run (Q-X)", async () => {
+    const store = {
+      get: () => Promise.reject(new Error("Cannot autolaunch D-Bus without X11 $DISPLAY")),
+      set: () => Promise.resolve(),
+      clear: () => Promise.resolve(),
+    };
+    const ctx = await build({
+      credential: credentialDeps({ store, readFromSettings: async () => TOKEN }),
+    });
+    expect(ctx.credential.keychainError).toContain("D-Bus");
+    // The file's copy is still visible, so `cred.mirrored` has something to say.
+    expect(ctx.credential.presence.source).toBe("settings-file");
+    expect(ctx.credential.stored).toBeUndefined();
+    // The rest of the context is intact.
+    expect(ctx.plan.kind).toBe("ready");
+  });
+
+  it("stringifies a non-Error keychain rejection", async () => {
+    const store = {
+      get: () => Promise.reject("libsecret is not installed"),
+      set: () => Promise.resolve(),
+      clear: () => Promise.resolve(),
+    };
+    const ctx = await build({ credential: credentialDeps({ store }) });
+    expect(ctx.credential.keychainError).toBe("libsecret is not installed");
+    expect(ctx.credential.presence.source).toBe("none");
+  });
+
+  it("treats an unreadable settings file as no token in the file", async () => {
+    const ctx = await build({
+      credential: credentialDeps({
+        store: new MemoryTokenStore({ token: TOKEN, setAt: SET_AT }),
+        readFromSettings: () => Promise.reject(new Error("EACCES")),
+      }),
+    });
+    expect(ctx.credential.presence.source).toBe("keychain");
+  });
+
+  it("passes the last test result and the clock through untouched", async () => {
+    const lastTest = {
+      at: "2026-09-10T11:00:00.000Z",
+      result: { kind: "ok", model: "haiku" },
+    } satisfies NonNullable<CredentialDeps["lastTest"]>;
+    const ctx = await build({ credential: credentialDeps({ lastTest }) });
+    expect(ctx.credential.lastTest).toEqual(lastTest);
+    expect(ctx.credential.now).toEqual(NOW);
+  });
+
+  it("defaults the clock to now when the host injects none", async () => {
+    const before = Date.now();
+    const ctx = await build({
+      credential: { store: new MemoryTokenStore(), readFromSettings: async () => undefined },
+    });
+    expect(ctx.credential.now.getTime()).toBeGreaterThanOrEqual(before);
   });
 });
 

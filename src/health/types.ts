@@ -6,7 +6,8 @@
  */
 
 import type { Drift, ManagedKey, PlanResult, ReadResult, Snapshot } from "../config/types.js";
-import type { Manifest } from "../manifest/types.js";
+import type { ConnectionResult, TokenPresence } from "../credential/types.js";
+import type { CredentialPolicy, Manifest } from "../manifest/types.js";
 
 export type CheckGroup = "Installation" | "Configuration" | "Credential" | "Plugins";
 
@@ -76,6 +77,44 @@ export interface ClaudeCodeDetection {
   cli: { found: false } | { found: true; version: string };
 }
 
+/**
+ * What the checks are allowed to know about the stored token: when it was set,
+ * and nothing else.
+ *
+ * `StoredToken` carries the value, so it deliberately does not appear anywhere
+ * in this file. Hard rule 4 is a property of the type here rather than a rule
+ * every check body has to remember: a `CheckContext` has no field a token could
+ * be assigned to, so no label, tooltip or detail can render one by accident.
+ */
+export interface StoredTokenMeta {
+  /** ISO 8601, as stored. Rendered as an approximate age, never as a date. */
+  setAt: string;
+}
+
+export interface CredentialContext {
+  presence: TokenPresence;
+  /** Present only when the keychain holds a token. */
+  stored?: StoredTokenMeta;
+  /** FR-4.6 thresholds, from the manifest. */
+  policy: CredentialPolicy;
+  /**
+   * The last user-initiated test call, if one has been made in this window.
+   * `cred.valid` reports it and never triggers one (plan Q-T).
+   */
+  lastTest?: { at: string; result: ConnectionResult };
+  /**
+   * Set when `SecretStorage` threw — Linux without libsecret, most often. The
+   * token's presence is then unknowable rather than false (plan Q-X).
+   */
+  keychainError?: string;
+  /**
+   * The clock `cred.age` measures against. Carried on the context rather than
+   * read inside the check so the check stays a pure function of its input, like
+   * every other one.
+   */
+  now: Date;
+}
+
 export interface CheckContext {
   claudeDir: string;
   settingsFile: string;
@@ -87,6 +126,7 @@ export interface CheckContext {
   plan: PlanResult;
   drift: Drift[];
   detection: ClaudeCodeDetection;
+  credential: CredentialContext;
   /** Outcome of the silent FR-2.8 repair run before the checks (plan Q-N). */
   permissions:
     | { kind: "repaired"; before: number }

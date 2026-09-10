@@ -10,9 +10,10 @@
 
 import { plan, repairPermissions, settingsPath } from "../config/index.js";
 import type { ConfigEnv, Drift, PlanResult } from "../config/types.js";
+import type { ConnectionResult, TokenPresence, TokenStore } from "../credential/types.js";
 import type { Manifest } from "../manifest/types.js";
 import { desiredFromManifest } from "../manifest/types.js";
-import type { CheckContext, ClaudeCodeDetection } from "./types.js";
+import type { CheckContext, ClaudeCodeDetection, CredentialContext } from "./types.js";
 
 export interface BuildContextInput {
   env: ConfigEnv;
@@ -28,6 +29,21 @@ export interface BuildContextInput {
    * suppression window.
    */
   onSelfWrite?: () => void;
+  /**
+   * The credential sources, injected. Optional because the context predates the
+   * credential checks: without it every `cred.*` check sees "nothing
+   * configured", which is the truth for a host that has not wired a keychain.
+   */
+  credential?: CredentialDeps;
+}
+
+export interface CredentialDeps {
+  store: TokenStore;
+  /** `readTokenFromSettings(env)`, injected so the context stays testable. */
+  readFromSettings: () => Promise<string | undefined>;
+  /** The last user-initiated test call this window, held in memory by the host. */
+  lastTest?: { at: string; result: ConnectionResult };
+  now?: () => Date;
 }
 
 export async function buildContext(input: BuildContextInput): Promise<CheckContext> {
@@ -45,7 +61,11 @@ export async function buildContext(input: BuildContextInput): Promise<CheckConte
   if (permissions.kind === "repaired") input.onSelfWrite?.();
 
   const planned: PlanResult = await plan(env, desiredFromManifest(manifest));
-  const [snapshot, detection] = await Promise.all([env.snapshotStore.load(), detect()]);
+  const [snapshot, detection, credential] = await Promise.all([
+    env.snapshotStore.load(),
+    detect(),
+    buildCredential(manifest, input.credential),
+  ]);
 
   return {
     claudeDir: env.claudeDir,
@@ -60,7 +80,73 @@ export async function buildContext(input: BuildContextInput): Promise<CheckConte
     plan: planned,
     drift: driftOf(planned),
     detection,
+    credential,
     permissions,
+  };
+}
+
+/**
+ * Reads both token locations and reduces them to presence, age and policy.
+ *
+ * The values themselves stop here: they are compared to produce `mismatch` and
+ * then dropped, so nothing downstream of this function can render one (hard
+ * rule 4, enforced by `CheckContext` having nowhere to put a token).
+ *
+ * A keychain that throws — Linux without libsecret — is recorded rather than
+ * propagated. Letting it out would fail the whole run and blank the panel over
+ * a condition that has its own check and its own message (plan Q-X).
+ */
+async function buildCredential(
+  manifest: Manifest,
+  deps: CredentialDeps | undefined,
+): Promise<CredentialContext> {
+  const now = (deps?.now ?? (() => new Date()))();
+  const base = {
+    policy: manifest.credential,
+    now,
+    ...(deps?.lastTest === undefined ? {} : { lastTest: deps.lastTest }),
+  };
+  if (deps === undefined) {
+    return { ...base, presence: { source: "none", mismatch: false } };
+  }
+
+  const inFile = await deps.readFromSettings().catch(() => undefined);
+
+  let stored: Awaited<ReturnType<TokenStore["get"]>>;
+  try {
+    stored = await deps.store.get();
+  } catch (error) {
+    return {
+      ...base,
+      presence: { source: inFile === undefined ? "none" : "settings-file", mismatch: false },
+      keychainError: message(error),
+    };
+  }
+
+  return {
+    ...base,
+    presence: presenceOf(stored?.token, inFile, stored?.setAt),
+    ...(stored === undefined ? {} : { stored: { setAt: stored.setAt } }),
+  };
+}
+
+function presenceOf(
+  keychain: string | undefined,
+  file: string | undefined,
+  setAt: string | undefined,
+): TokenPresence {
+  const source =
+    keychain === undefined
+      ? file === undefined
+        ? "none"
+        : "settings-file"
+      : file === undefined
+        ? "keychain"
+        : "both";
+  return {
+    source,
+    mismatch: keychain !== undefined && file !== undefined && keychain !== file,
+    ...(setAt === undefined ? {} : { setAt }),
   };
 }
 
