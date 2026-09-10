@@ -41,8 +41,10 @@ const log = {
  */
 let currentManifest: Manifest;
 let forcedRefreshes: number;
-/** What `refreshManifest` reports back: did the held manifest change? */
+/** What `refreshManifest` reports back: does the panel need repainting? */
 let refreshChanged: boolean;
+/** The manifest the refresh puts in force, if it changes one. */
+let refreshResolves: Manifest | undefined;
 
 function register(manifest: Manifest = BUNDLED_MANIFEST): void {
   currentManifest = manifest;
@@ -50,9 +52,12 @@ function register(manifest: Manifest = BUNDLED_MANIFEST): void {
     env,
     session,
     manifest: () => currentManifest,
+    // Models the real holder: a refresh may swap the manifest in force, and
+    // its boolean answers "repaint?" rather than "is this a new revision?".
     refreshManifest: async (options) => {
       expect(options).toEqual({ force: true });
       forcedRefreshes += 1;
+      if (refreshResolves !== undefined) currentManifest = refreshResolves;
       return refreshChanged;
     },
     settingsFile: settingsPath(dir),
@@ -80,6 +85,7 @@ beforeEach(async () => {
   healthRuns = 0;
   forcedRefreshes = 0;
   refreshChanged = false;
+  refreshResolves = undefined;
   reset();
   register();
 });
@@ -636,11 +642,43 @@ describe("runFix", () => {
 describe("checkForUpdates (FR-3.3)", () => {
   it("bypasses the throttle and re-runs the checks", async () => {
     refreshChanged = true;
+    refreshResolves = { ...BUNDLED_MANIFEST, revision: "remote-2" };
 
     await run("sensibleDefaults.checkForUpdates");
 
     expect(forcedRefreshes).toBe(1);
     expect(healthRuns).toBe(1);
+    expect(messages()).toEqual(["Updated to the latest recommended settings."]);
+  });
+
+  /**
+   * F15. The message reported `refreshManifest`'s boolean, which answers "does
+   * the panel need repainting?" — and the provenance is part of that. So the
+   * first successful fetch after a run on the bundled copy said "Updated to the
+   * latest recommended settings" for a manifest byte-identical to the one
+   * already in force: bundled → cached is a status change and not an update.
+   *
+   * The report is now about the revision, which is the manifest's own answer to
+   * "am I a different set of recommendations?".
+   */
+  it("does not claim an update when only the provenance moved (F15)", async () => {
+    // The holder repainted — bundled to cached — but the revision is the one
+    // already in force.
+    refreshChanged = true;
+
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(messages()).toEqual(["You already have the latest recommended settings."]);
+  });
+
+  it("claims an update when the revision actually changed (F15)", async () => {
+    // A revision change the holder reports no repaint for is the F8 case: the
+    // user is still being held to different recommendations, and should be told.
+    refreshChanged = false;
+    refreshResolves = { ...BUNDLED_MANIFEST, revision: "remote-2" };
+
+    await run("sensibleDefaults.checkForUpdates");
+
     expect(messages()).toEqual(["Updated to the latest recommended settings."]);
   });
 

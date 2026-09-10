@@ -207,16 +207,24 @@ async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> 
  *
  * It always re-runs the checks, even when nothing changed: the user pressed a
  * button, and a command that appears to do nothing is indistinguishable from a
- * broken one. It never reports a failed fetch (FR-3.2) — a network that is not
+ * broken one. What it *says* is decided by the revision, though — see below. It never reports a failed fetch (FR-3.2) — a network that is not
  * there produces "using the recommendations saved on this computer" in the
  * panel and a line in the log, which is the honest answer and the only one this
  * audience can act on.
  */
 async function checkForUpdates(deps: CommandDeps): Promise<void> {
-  const changed = (await deps.refreshManifest?.({ force: true })) ?? false;
+  // Compared by revision, not by the holder's boolean (F15). That boolean
+  // answers "does the panel need repainting?", and the provenance is part of
+  // it — so the first successful fetch after a run on the bundled copy
+  // reported "Updated to the latest recommended settings" for a manifest
+  // byte-identical to the one already in force. The revision is the manifest's
+  // own answer to "am I a different set of recommendations?".
+  const before = deps.manifest().revision;
+  await deps.refreshManifest?.({ force: true });
+  const updated = deps.manifest().revision !== before;
   await deps.runHealth();
   await vscode.window.showInformationMessage(
-    changed
+    updated
       ? "Updated to the latest recommended settings."
       : "You already have the latest recommended settings.",
   );
