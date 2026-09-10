@@ -1,12 +1,108 @@
 /**
- * Single choke point for scrubbing secrets out of anything the extension emits:
- * log lines, error messages, diagnostics output.
+ * The single choke point for scrubbing secrets out of anything the extension
+ * emits: log lines, error messages, the diagnostics report (FR-4.9, FR-7.1).
  *
- * M0 ships the identity function deliberately — the boundary has to exist from the
- * first log statement so nothing is ever written that bypasses it. M5 (FR-7,
- * §10.4) fills in the actual patterns: the Bedrock bearer token, AWS access keys,
- * and anything else the leak scan learns to recognise.
+ * Registry first, patterns second, and the order matters. AWS does not document
+ * the Bedrock API key format, so a pattern set can only ever recognise the
+ * shapes we happen to know. What we always know is the exact value we are
+ * holding — so the credential store registers it here on every change, and that
+ * exact-value match is what actually carries the guarantee. The patterns are a
+ * second net for values we never held: a key pasted into a settings file we are
+ * quoting back, an `Authorization` header in a stack trace.
+ *
+ * Memory-only, cleared on deactivate. A persisted list of known secrets would be
+ * a worse artefact than the leak it prevents.
  */
+
+export const REDACTED = "«redacted»";
+
+/**
+ * Below this, an exact-value match is more likely to be coincidence than a
+ * disclosure — and redacting a common substring would corrupt every log line
+ * that happened to contain it.
+ */
+const MIN_REGISTERED_LENGTH = 8;
+
+const registry = new Set<string>();
+
+/**
+ * Patterns for secrets we never held. Deliberately narrow: a pattern that is too
+ * eager turns diagnostics into a wall of `«redacted»` and the reader stops
+ * trusting any of it. Each is anchored on a prefix or a key name that does not
+ * occur by accident.
+ */
+const PATTERNS: readonly RegExp[] = [
+  // AWS access key id, then its secret — the pair a confused user is most
+  // likely to paste when they mean to paste a Bedrock key.
+  /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
+  // Long-term Bedrock API keys observed in the wild.
+  /\bABSK[A-Za-z0-9+/=_-]{16,}/g,
+  // Short-term keys minted by the token generator.
+  /\bbedrock-api-key-[A-Za-z0-9+/=._-]{8,}/g,
+  // Any bearer credential in a quoted header or a stack trace.
+  /\b(?:Authorization|authorization)\s*:\s*Bearer\s+\S+/g,
+  // The token key as it appears in a settings file we are quoting back.
+  /"AWS_BEARER_TOKEN_BEDROCK"\s*:\s*"[^"]*"/g,
+];
+
+/**
+ * Start scrubbing this exact value. Called by the credential store whenever the
+ * stored token changes, including the value being replaced: a rotation should
+ * not leave the previous key loggable for the rest of the window.
+ */
+export function register(secret: string | undefined): void {
+  if (secret === undefined) return;
+  const trimmed = secret.trim();
+  if (trimmed.length < MIN_REGISTERED_LENGTH) return;
+  registry.add(trimmed);
+}
+
+/** Drop every registered value. Called on deactivate. */
+export function forgetAll(): void {
+  registry.clear();
+}
+
+/** How many values are registered. For tests and diagnostics counts only. */
+export function registeredCount(): number {
+  return registry.size;
+}
+
 export function redact(message: string): string {
-  return message;
+  let out = message;
+
+  // Longest first: a shorter secret that is a substring of a longer one must not
+  // cut it in half and leave the remainder readable.
+  for (const secret of [...registry].sort((a, b) => b.length - a.length)) {
+    if (out.includes(secret)) out = out.replaceAll(secret, REDACTED);
+  }
+
+  for (const pattern of PATTERNS) {
+    // Each pattern is a module-level literal with the `g` flag, so `lastIndex`
+    // persists between calls; `replaceAll` resets it, but being explicit here
+    // means adding a non-global pattern later cannot silently break the others.
+    pattern.lastIndex = 0;
+    out = out.replace(pattern, REDACTED);
+  }
+
+  return out;
+}
+
+/**
+ * Redact a whole JSON-shaped value, by key as well as by value.
+ *
+ * Key-based redaction is the half that still works when the pattern set is
+ * wrong and the registry is empty — which is exactly the situation on a machine
+ * where the user pasted a key by hand and the extension has never held it.
+ */
+export function redactValue(value: unknown, secretKeys: ReadonlySet<string>): unknown {
+  if (typeof value === "string") return redact(value);
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, secretKeys));
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      out[key] = secretKeys.has(key) ? REDACTED : redactValue(entry, secretKeys);
+    }
+    return out;
+  }
+  return value;
 }
