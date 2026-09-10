@@ -35,11 +35,19 @@ import {
   resetKeyPlan,
   settingsPath,
 } from "../config/index.js";
-import { register } from "../util/redact.js";
+import { register, registerSecretsInText } from "../util/redact.js";
 
 /** The `settings.json` home of `AWS_BEARER_TOKEN_BEDROCK`. */
 export const TOKEN_SETTINGS_KEY: ManagedKey = "env.AWS_BEARER_TOKEN_BEDROCK";
 const BEDROCK_SETTINGS_KEY: ManagedKey = "env.CLAUDE_CODE_USE_BEDROCK";
+
+/**
+ * The token key as it appears in the file's text: `registerSecretsInText` reads
+ * raw bytes, where there are no dotted paths, only the name on the line.
+ */
+const TOKEN_LEAVES: ReadonlySet<string> = new Set([
+  TOKEN_SETTINGS_KEY.slice(TOKEN_SETTINGS_KEY.lastIndexOf(".") + 1),
+]);
 
 /**
  * Write the token through to the file, or remove it when `token` is undefined
@@ -131,10 +139,25 @@ export async function removeTokenFromSettings(
  * Absent, malformed, or a non-string value all read as "no token": this feeds
  * `cred.mirrored`, which must never throw, and a file that will not parse is
  * already reported by `config.parses` with its own fix.
+ *
+ * "Reads as no token" is not the same as "registers nothing", though, and
+ * conflating the two was F1 — see the malformed branch.
  */
 export async function readTokenFromSettings(env: ConfigEnv): Promise<string | undefined> {
   const read = await readSettings(settingsPath(env.claudeDir));
   if (read.kind !== "ok") {
+    if (read.kind === "malformed") {
+      // Register what we can before giving up (F1). The answer stays
+      // `undefined` — a regex over a file that did not parse is a guess, and
+      // `cred.mirrored` must not claim a token is mirrored on that strength.
+      // But returning without registering left the registry empty in exactly
+      // the state where the diagnostics report has nothing else: a file with no
+      // keys has no key rule, so the one file state that depends on the
+      // registry alone was the one state guaranteeing it was empty. The bytes
+      // are still there, so they are read for scrubbing even though they are
+      // not trusted as an answer.
+      registerSecretsInText(read.raw, TOKEN_LEAVES);
+    }
     return undefined;
   }
   // `getPath` throws only when `env` is present and not an object, and a `kind:

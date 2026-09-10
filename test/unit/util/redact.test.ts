@@ -7,6 +7,8 @@ import {
   redactValue,
   register,
   registeredCount,
+  registerSecretsIn,
+  registerSecretsInText,
 } from "../../../src/util/redact.js";
 
 /**
@@ -376,5 +378,110 @@ describe("re-encoded forms of a registered secret", () => {
     const encoded = Buffer.from(UNRECOGNISED, "utf8").toString("base64");
 
     expect(redact(encoded)).toBe(encoded);
+  });
+});
+
+/**
+ * Arming the registry from a document we are about to render.
+ *
+ * The registry is fed by the credential store, so it is populated only once
+ * something has read a token this window. A report built before that — or from
+ * a file that never parsed, where nothing could read one — had nothing in it,
+ * and those are precisely the states where the key rule cannot help either.
+ */
+describe("registerSecretsIn", () => {
+  const LEAVES: ReadonlySet<string> = new Set(["AWS_BEARER_TOKEN_BEDROCK"]);
+
+  it("registers a value sitting under a secret key", () => {
+    registerSecretsIn({ env: { AWS_BEARER_TOKEN_BEDROCK: UNRECOGNISED } }, LEAVES);
+
+    expect(redact(`a copy: ${UNRECOGNISED}`)).toBe(`a copy: ${REDACTED}`);
+  });
+
+  it("registers through arrays", () => {
+    registerSecretsIn([{ AWS_BEARER_TOKEN_BEDROCK: UNRECOGNISED }], LEAVES);
+
+    expect(registeredCount()).toBe(1);
+  });
+
+  it("registers nothing for a document with no secret key in it", () => {
+    registerSecretsIn({ model: "sonnet", env: { AWS_REGION: "us-east-1" } }, LEAVES);
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  it("ignores a non-string value under a secret key", () => {
+    registerSecretsIn({ AWS_BEARER_TOKEN_BEDROCK: { nested: 1 } }, LEAVES);
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  it("ignores a primitive handed to it directly", () => {
+    registerSecretsIn("just a string", LEAVES);
+    registerSecretsIn(42, LEAVES);
+
+    expect(registeredCount()).toBe(0);
+  });
+});
+
+/**
+ * The same arming, for a file that did not parse — which is the state that most
+ * needs it. There are no keys to apply a key rule to, so the registry is the
+ * only thing standing between the raw bytes and a public issue, and nothing
+ * else can put a value in it: every reader of the file returns early on a
+ * malformed read. The bytes are still there, so they are what we read.
+ */
+describe("registerSecretsInText", () => {
+  const LEAVES: ReadonlySet<string> = new Set(["AWS_BEARER_TOKEN_BEDROCK"]);
+
+  it("registers a quoted value out of text that never parsed", () => {
+    registerSecretsInText(`{ "env": { "AWS_BEARER_TOKEN_BEDROCK": "${UNRECOGNISED}" },`, LEAVES);
+
+    expect(redact(`elsewhere: ${UNRECOGNISED}`)).toBe(`elsewhere: ${REDACTED}`);
+  });
+
+  /**
+   * The corruption `reader.ts` names as the most likely one for this file: a
+   * key pasted in without quotes. It is also the shape that breaks the parse,
+   * so it is guaranteed to arrive by this door and no other.
+   */
+  it("registers an unquoted pasted value", () => {
+    registerSecretsInText(`  "AWS_BEARER_TOKEN_BEDROCK": ${UNRECOGNISED},\n`, LEAVES);
+
+    expect(redact(`elsewhere: ${UNRECOGNISED}`)).toBe(`elsewhere: ${REDACTED}`);
+  });
+
+  it("registers a value whose key lost its own quotes", () => {
+    registerSecretsInText(`AWS_BEARER_TOKEN_BEDROCK: ${UNRECOGNISED}`, LEAVES);
+
+    expect(registeredCount()).toBe(1);
+  });
+
+  /**
+   * A guess, not a value the store accepted — so it has to be long enough that
+   * a match is a disclosure rather than a coincidence. Registering `1` here
+   * would replace every `1` in the report with «redacted».
+   */
+  it("refuses a guess too short to be anything but a coincidence", () => {
+    registerSecretsInText('"AWS_BEARER_TOKEN_BEDROCK": 1,', LEAVES);
+
+    expect(registeredCount()).toBe(0);
+    expect(redact("line 1 column 1")).toBe("line 1 column 1");
+  });
+
+  it("registers nothing when the text names no secret key", () => {
+    registerSecretsInText(`{ "notes": "${UNRECOGNISED}"`, LEAVES);
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  it("registers every occurrence, not just the first", () => {
+    const second = "Pw4Nb8Kt2Vx6Lm0Cq5Ry9Df3Jh7Sz1Ae";
+    registerSecretsInText(
+      `"AWS_BEARER_TOKEN_BEDROCK": ${UNRECOGNISED},\n"AWS_BEARER_TOKEN_BEDROCK": "${second}"`,
+      LEAVES,
+    );
+
+    expect(registeredCount()).toBe(2);
   });
 });

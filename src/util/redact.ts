@@ -163,6 +163,84 @@ export function redactValue(value: unknown, secretKeys: ReadonlySet<string>): un
 }
 
 /**
+ * Below this, a *guessed* value is more likely to be coincidence than a
+ * disclosure. It applies only to values we inferred from a document rather than
+ * received from the store: registering `1` because a settings file says
+ * `"AWS_BEARER_TOKEN_BEDROCK": 1` would replace every `1` in the report.
+ */
+const MIN_GUESSED_LENGTH = 8;
+
+/**
+ * Arm the registry from a parsed document, by key.
+ *
+ * The registry is fed by the credential store, so it holds something only once
+ * this window has read a token. A diagnostics report built before any of that —
+ * `copyDiagnostics` as the first action of a window triggers no health run — is
+ * rendered against an empty registry, and a value the user pasted by hand into
+ * a second key then prints in full while the managed key beside it is redacted.
+ * The document we are about to render is itself the best available source for
+ * what to scrub, so we read it before rendering it.
+ */
+export function registerSecretsIn(value: unknown, secretKeys: ReadonlySet<string>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) registerSecretsIn(item, secretKeys);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, entry] of Object.entries(value)) {
+    if (isSecret(key, secretKeys)) {
+      if (typeof entry === "string") register(entry);
+      continue;
+    }
+    registerSecretsIn(entry, secretKeys);
+  }
+}
+
+/**
+ * The same arming for text that did not parse — the state that needs it most.
+ *
+ * A malformed file has no keys, so the key rule cannot apply and the registry is
+ * the only thing between the raw bytes and a public issue. It is also the one
+ * state guaranteed to leave the registry empty: every reader of the file
+ * returns before registering anything when the read is not `ok`. So the one
+ * file state relying on the registry alone was the one state guaranteeing it
+ * held nothing.
+ *
+ * A regex over raw text is a guess, and legitimately so here: the file did not
+ * parse, but the bytes are still there, and the corruption `reader.ts` names as
+ * most likely — a key pasted in unquoted — puts the token on the same line as
+ * the key name in plain sight. Both quoted and bare values are taken, because
+ * an unquoted paste is exactly the case that broke the parse.
+ */
+export function registerSecretsInText(raw: string, secretKeys: ReadonlySet<string>): void {
+  for (const candidate of secretKeys) {
+    const leaf = leafOf(candidate);
+    // `"KEY"` or bare `KEY`, then `:`, then either a quoted string or a run of
+    // non-delimiter characters — whatever the hand-edit left behind.
+    const pattern = new RegExp(`"?${escapeForRegExp(leaf)}"?\\s*:\\s*(?:"[^"]*"|[^,\\s}]+)`, "g");
+    for (const [found] of raw.matchAll(pattern)) {
+      // No capture group: the pattern requires a colon, so cutting at the first
+      // one after the key name is what isolates the value, with no branch that
+      // can only be reached by a match the pattern cannot produce.
+      const value = found
+        .slice(found.indexOf(":") + 1)
+        .trim()
+        .replace(QUOTED, "$1");
+      // A guess, not a value the store accepted, so it carries its own floor.
+      if (value.length >= MIN_GUESSED_LENGTH) register(value);
+    }
+  }
+}
+
+/** A value that kept its quotes, so they come off in one pass. */
+const QUOTED = /^"(.*)"$/s;
+
+/** A leaf name is user-adjacent config, so it is quoted before it is a pattern. */
+function escapeForRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
+/**
  * A key is secret when the caller named it directly or named a dotted path
  * ending in it. Comparing leaf-to-leaf rather than requiring the caller to
  * flatten means `SECRET_KEYS` works handed over unchanged.
