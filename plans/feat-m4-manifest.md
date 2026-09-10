@@ -1,0 +1,53 @@
+# Plan — M4 (defaults manifest: fetch, cache, fallback, validate)
+
+Source of truth: `docs/PRD.md` FR-3, FR-5.6 `config.stale`, §13 (privacy: exactly two outbound request categories), §15 ("bad manifest bricks all users").
+Depends on M2 (`config.stale` placeholder, `BUNDLED_MANIFEST`) and M3 (`credential` policy block already in the schema).
+Branch: `feat/m4-manifest`. Status: **draft, written 2026-09-10 while M3 was in flight.**
+
+## Why this is the highest-blast-radius milestone after the merge engine
+
+The manifest is the update channel. A malformed or hostile manifest reaches every user at once and, unlike the VSIX, is not gated by a Marketplace scan. Every rule below exists to make "the manifest is wrong" a no-op rather than an outage.
+
+## Architecture
+
+```
+src/manifest/
+  types.ts      Manifest + CredentialPolicy (exists)
+  bundled.ts    the VSIX copy (exists) — the floor of the fallback chain
+  schema.ts     validate(unknown) → {ok, manifest} | {ok:false, problems[]}
+                Hand-written, no dependency: ~120 lines, and a dependency here
+                is a supply-chain edge on the update channel itself.
+  fetch.ts      fetchManifest({url, timeoutMs, fetch}) → Result
+  cache.ts      CacheStore over a Memento: {manifest, revision, fetchedAt, url}
+  resolve.ts    resolveManifest(deps) → { manifest, source, fetchedAt, problems }
+                fetched → cached → bundled, first that validates
+```
+
+## Rules (FR-3, each one a test)
+
+- [ ] **FR-3.1** Bundled copy is the floor; it is validated at build time by a test, so a bad bundle fails CI rather than a user's window.
+- [ ] **FR-3.2** 5 s timeout. Any failure — offline, DNS, 5xx, TLS, abort — falls back **silently**. Never a toast, never an error; it becomes an info-level `config.stale`-adjacent note ("Using saved defaults from <date>").
+- [ ] **FR-3.3** Cache in `globalState` with `fetchedAt`. Re-fetch at most once per hour per window; a manual "Check for updates" bypasses the throttle.
+- [ ] **FR-3.4** Validate **before** use. A manifest that fails the schema is discarded in favour of the cache, and the problems are logged (not shown). Validation must reject: wrong `schemaVersion`, missing/mistyped `defaults.env` values (all must be strings — Claude Code reads them as env vars), non-string entries in `permissions.deny`, `regions` not a non-empty string array, `credential.warnAfterDays >= failAfterDays`, a `consoleUrl` that is not `https:`, and any `extraKnownMarketplaces` source that is not `{source:'github',repo:'owner/name'}` or `{source:'url',url:'https://…'}`.
+- [ ] **FR-3.5** `minExtensionVersion` gate: if the manifest demands a newer extension, keep the previous defaults and raise a warn-level check prompting an update. Reuse `compareVersions`.
+- [ ] **Size and shape guards** (not in the PRD, but the update channel needs them): refuse a body over 256 KiB; require `content-type` to be JSON-ish or absent; refuse a redirect to a different origin.
+- [ ] **`notices`**: render at most the first 2 unexpired notices as info checks. An `expiresAt` in the past is dropped. Notice text is untrusted remote content — it is displayed, never executed, never used as a command id or URL. Cap length at 200 chars and strip control characters.
+
+## Tasks
+
+- [ ] `schema.ts` + tests: one test per rejection above, plus a round-trip of the bundled manifest, plus a fuzz-ish table of wrong-typed fields at every path.
+- [ ] `fetch.ts` + tests with an injected `fetch`: 200 valid, 200 invalid JSON, 200 valid JSON that fails the schema, 304, 404, 500, timeout, DNS error, TLS error, cross-origin redirect, oversized body, non-JSON content-type. **None of these may throw.**
+- [ ] `cache.ts` + tests: round-trip, corrupt cache entry → treated as absent, cache from a different `url` → ignored (the setting can change).
+- [ ] `resolve.ts` + tests: the whole chain, including "fetched is invalid → cached wins", "cached is invalid → bundled wins", "fetched requires a newer extension → previous wins + warning", throttle honoured, manual refresh bypasses it.
+- [ ] `config.stale` check: info when the applied snapshot's `manifestRevision` is behind the resolved manifest's; fix = `applyDefaults`. Also an info check for "using saved/bundled defaults" naming the date (FR-3.2), and warn for the `minExtensionVersion` gate (FR-3.5). PRD §16 Q5 asks whether a >30-day-stale manifest should escalate above info: **assume no** — it is not the user's fault and there is nothing they can do about it.
+- [ ] New command `sensibleDefaults.checkForUpdates` (title "Check for Updated Recommendations") that bypasses the throttle, re-resolves, reruns health.
+- [ ] Wire into `extension.ts`: resolve once on activation (fire-and-forget, panel renders from cache immediately per §13), re-resolve on the hourly boundary when a health run happens, pass the resolved manifest into the runner instead of `BUNDLED_MANIFEST`.
+- [ ] Publish the manifest itself: `manifest/defaults.json` is served from the repo's `main` via `raw.githubusercontent.com` (PRD §16 Q1 leans this way). Add a CI job that validates `manifest/defaults.json` against `schema.ts` on every push so a bad manifest cannot reach `main`.
+- [ ] README "Network requests" section updated with the manifest URL and the fact that it carries no identifiers.
+
+## Decisions taken (assumption in bold, all reversible)
+
+- **Q-Y** GitHub raw hosting for v1 (PRD Q1). Free, versioned, auditable, and the rate limit is irrelevant at one fetch per hour per window. Revisit if install counts make it a problem.
+- **Q-Z** No conditional requests (`If-None-Match`) in v1. `raw.githubusercontent.com` sends an ETag, but honouring it adds a code path for a saving that does not matter at this volume. Cache by time only.
+- **Q-AA** Notices are capped at 2 and are info-level only. A remote channel that can raise an error-level item in every user's panel is a bigger lever than this project needs.
+- **Q-AB** §16 Q5: a stale manifest never escalates above info.
