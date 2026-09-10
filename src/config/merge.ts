@@ -33,7 +33,9 @@ export function deepEqual(a: JsonValue | undefined, b: JsonValue | undefined): b
   if (typeof a !== "object" || typeof b !== "object") return false;
   const keys = Object.keys(a);
   if (keys.length !== Object.keys(b).length) return false;
-  return keys.every((key) => key in b && deepEqual(a[key], b[key]));
+  // `Object.hasOwn`, never `in`: a key named `toString` would otherwise match
+  // against `Object.prototype` and compare equal to a function.
+  return keys.every((key) => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
 }
 
 /** What the caller wants for one slot: a value, or its removal (Q-G). */
@@ -118,7 +120,7 @@ export function merge(current: Settings, snapshot: Snapshot, desired: Desired): 
   const changes: Change[] = [];
   const drift: Drift[] = [];
   // Start from the whole snapshot: keys we are not asked about this round are
-  // still ours, and so are keys dropped from MANAGED_KEYS by a later version.
+  // still ours, and unknown keys are carried through untouched.
   const snapshotValues: Snapshot["values"] = { ...snapshot.values };
 
   for (const key of MANAGED_KEYS) {
@@ -252,6 +254,30 @@ function asMap(value: JsonValue | undefined): JsonObject {
   return isJsonObject(value) ? value : {};
 }
 
+/**
+ * Element ids are user data, and `Object.prototype` has real values at
+ * `toString`, `constructor` and `valueOf`. Reading `map[id]` there would invent
+ * provenance the snapshot never recorded and put a function into the document,
+ * which `JSON.stringify` then drops — a silent deletion of the user's entry.
+ */
+function own(map: JsonObject, id: string): JsonValue | undefined {
+  return Object.hasOwn(map, id) ? map[id] : undefined;
+}
+
+/** An accumulator that can hold any id, `__proto__` included. */
+function emptyMap(): JsonObject {
+  return Object.create(null) as JsonObject;
+}
+
+/**
+ * Back to an ordinary object for the document. Spreading *defines* each key, so
+ * an entry named `__proto__` stays an own property instead of reassigning the
+ * prototype and vanishing.
+ */
+function plainMap(map: JsonObject): JsonObject {
+  return { ...map };
+}
+
 function has(list: readonly JsonValue[], element: JsonValue): boolean {
   return list.some((candidate) => deepEqual(candidate, element));
 }
@@ -299,17 +325,18 @@ function mergeList(
 }
 
 function mergeMap(current: JsonObject, lastApplied: JsonObject, desired: JsonObject): ElementMerge {
-  const next: JsonObject = {};
-  const owned: JsonObject = {};
-  const contestedCurrent: JsonObject = {};
-  const contestedLastApplied: JsonObject = {};
-  const contestedRecommended: JsonObject = {};
+  const next = emptyMap();
+  const owned = emptyMap();
+  const contestedCurrent = emptyMap();
+  const contestedLastApplied = emptyMap();
+  const contestedRecommended = emptyMap();
   let contestedCount = 0;
   let changed = false;
 
-  for (const [id, value] of Object.entries(current)) {
-    const mine = lastApplied[id];
-    const want = wantedOf(desired[id]);
+  for (const id of Object.keys(current)) {
+    const value = current[id] as JsonValue;
+    const mine = own(lastApplied, id);
+    const want = wantedOf(own(desired, id));
     const outcome = resolve(value, mine, want);
 
     if (outcome.drift) {
@@ -335,25 +362,26 @@ function mergeMap(current: JsonObject, lastApplied: JsonObject, desired: JsonObj
     if (mine !== undefined) owned[id] = mine;
   }
 
-  for (const [id, value] of Object.entries(desired)) {
-    if (id in current) continue;
+  for (const id of Object.keys(desired)) {
+    if (Object.hasOwn(current, id)) continue;
     // Table row `absent` + wanted: add it, and record it as ours.
+    const value = desired[id] as JsonValue;
     next[id] = value;
     owned[id] = value;
     changed = true;
   }
 
   return {
-    value: next,
+    value: plainMap(next),
     changed,
-    owned: Object.keys(owned).length > 0 ? owned : undefined,
+    owned: Object.keys(owned).length > 0 ? plainMap(owned) : undefined,
     contested:
       contestedCount === 0
         ? undefined
         : {
-            current: contestedCurrent,
-            lastApplied: contestedLastApplied,
-            recommended: contestedRecommended,
+            current: plainMap(contestedCurrent),
+            lastApplied: plainMap(contestedLastApplied),
+            recommended: plainMap(contestedRecommended),
           },
   };
 }

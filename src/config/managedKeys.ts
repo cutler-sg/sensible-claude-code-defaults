@@ -42,7 +42,7 @@ function parseKey(key: ManagedKey): { parent: string | undefined; leaf: string }
  * refuse rather than clobbering whatever the user has there.
  */
 function parentObject(settings: Settings, parent: string): JsonObject | undefined {
-  const node = settings[parent];
+  const node = own(settings, parent);
   if (node === undefined) return undefined;
   if (!isJsonObject(node)) {
     throw new ConfigError(
@@ -58,17 +58,33 @@ function describe(value: JsonValue): string {
   return Array.isArray(value) ? "an array" : `a ${typeof value}`;
 }
 
+/**
+ * Own properties only. A key segment is data from the user's file, and
+ * `Object.prototype` answers to `toString`, `constructor` and `__proto__` —
+ * reading through the chain would report a function as the value there.
+ */
+function own(node: JsonObject, name: string): JsonValue | undefined {
+  return Object.hasOwn(node, name) ? node[name] : undefined;
+}
+
 function omit(node: JsonObject, leaf: string): JsonObject {
   return Object.fromEntries(Object.entries(node).filter(([name]) => name !== leaf));
 }
 
 export function getPath(settings: Settings, key: ManagedKey): JsonValue | undefined {
   const { parent, leaf } = parseKey(key);
-  if (parent === undefined) return settings[leaf];
-  return parentObject(settings, parent)?.[leaf];
+  if (parent === undefined) return own(settings, leaf);
+  const node = parentObject(settings, parent);
+  return node === undefined ? undefined : own(node, leaf);
 }
 
-/** Returns a new document with `key` set; creates the parent container if absent. */
+/**
+ * Returns a new document with `key` set; creates the parent container if absent.
+ *
+ * The computed keys below *define* properties rather than assigning them, so a
+ * leaf named `__proto__` becomes an own key instead of reassigning a prototype
+ * and disappearing from the serialised file.
+ */
 export function setPath(settings: Settings, key: ManagedKey, value: JsonValue): Settings {
   const { parent, leaf } = parseKey(key);
   if (parent === undefined) return { ...settings, [leaf]: value };
@@ -84,9 +100,9 @@ export function setPath(settings: Settings, key: ManagedKey, value: JsonValue): 
 export function deletePath(settings: Settings, key: ManagedKey): Settings {
   const { parent, leaf } = parseKey(key);
   if (parent === undefined) {
-    return leaf in settings ? omit(settings, leaf) : settings;
+    return Object.hasOwn(settings, leaf) ? omit(settings, leaf) : settings;
   }
   const node = parentObject(settings, parent);
-  if (node === undefined || !(leaf in node)) return settings;
+  if (node === undefined || !Object.hasOwn(node, leaf)) return settings;
   return { ...settings, [parent]: omit(node, leaf) };
 }

@@ -6,7 +6,7 @@ import {
   isJsonObject,
   setPath,
 } from "../../src/config/managedKeys.js";
-import { ConfigError, type Settings } from "../../src/config/types.js";
+import { ConfigError, type ManagedKey, type Settings } from "../../src/config/types.js";
 
 const baseEnv = { AWS_REGION: "us-east-1", MY_OWN: "keep me" };
 
@@ -158,5 +158,64 @@ describe("deletePath", () => {
 
   it("throws when the parent is not an object", () => {
     expect(() => deletePath({ env: 3 }, "env.AWS_REGION")).toThrow(ConfigError);
+  });
+});
+
+describe("keys that collide with Object.prototype", () => {
+  /**
+   * No managed key's segments collide with `Object.prototype` today, so these
+   * are guards against a future key rather than a live bug: the accessors must
+   * read own properties only, and must never let a segment named `__proto__`
+   * reach an assignment that would reassign a prototype.
+   */
+  const PROTO = "env.__proto__" as ManagedKey;
+
+  it("rejects a prototype-named key at compile time", () => {
+    // @ts-expect-error `env.__proto__` is not in MANAGED_KEYS.
+    const key: ManagedKey = "env.__proto__";
+    expect(key).toBe("env.__proto__");
+  });
+
+  it("does not read a leaf through the prototype chain", () => {
+    expect(getPath({ env: {} }, PROTO)).toBeUndefined();
+    expect(getPath({ env: {} }, "toString" as ManagedKey)).toBeUndefined();
+  });
+
+  it("does not read a parent through the prototype chain", () => {
+    // `constructor` resolves to a function on any ordinary object; treating it
+    // as a container would throw MALFORMED_SETTINGS on a perfectly good file.
+    expect(getPath({}, "constructor.AWS_REGION" as ManagedKey)).toBeUndefined();
+  });
+
+  it("sets a prototype-named leaf as an own property", () => {
+    const next = setPath({ env: { A: "1" } }, PROTO, "value");
+    const env = next.env as object;
+
+    expect(Object.hasOwn(env, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(env)).toBe(Object.prototype);
+    // Written as a literal, `{ __proto__: ... }` would set a prototype rather
+    // than a key, so compare the serialised bytes the writer would emit.
+    expect(JSON.stringify(next)).toBe('{"env":{"A":"1","__proto__":"value"}}');
+  });
+
+  it("sets a prototype-named root key as an own property", () => {
+    const next = setPath({ model: "opus" }, "__proto__" as ManagedKey, "value");
+
+    expect(Object.hasOwn(next, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(next)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("deletes a prototype-named leaf without disturbing siblings", () => {
+    const settings = JSON.parse('{"env":{"__proto__":"x","A":"1"}}') as Settings;
+    const next = deletePath(settings, PROTO);
+
+    expect(JSON.stringify(next)).toBe('{"env":{"A":"1"}}');
+  });
+
+  it("is a no-op when a prototype-named leaf is absent", () => {
+    const settings: Settings = { env: { A: "1" } };
+    expect(deletePath(settings, PROTO)).toBe(settings);
+    expect(deletePath(settings, "toString" as ManagedKey)).toBe(settings);
   });
 });

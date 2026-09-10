@@ -694,3 +694,111 @@ describe("scenarios", () => {
     expect(desired).toBeDefined();
   });
 });
+
+describe("element ids that collide with Object.prototype", () => {
+  // An element id is user data. `Object.prototype` has real values at
+  // `toString`, `constructor` and friends, so any lookup that walks the
+  // prototype chain invents provenance the snapshot never recorded.
+  const OWNED_ID_CASES: ReadonlyArray<[string, string]> = [
+    ["toString", PLUGINS],
+    ["constructor", MARKETPLACES],
+    ["hasOwnProperty", PLUGINS],
+    ["valueOf", PLUGINS],
+  ];
+
+  it.each(OWNED_ID_CASES)("never adopts an unowned entry named %s", (id, key) => {
+    const result = run({ [key]: { [id]: true } }, snapshotOf({}), { [key]: {} });
+    // Unowned + unwanted is KEEP: the entry survives and nothing is written.
+    expect(result.next).toEqual({ [key]: { [id]: true } });
+    expect(result.changes).toEqual([]);
+    expect(result.snapshotValues).toEqual({});
+  });
+
+  it.each(OWNED_ID_CASES)("adds a desired entry named %s", (id, key) => {
+    const result = run({}, snapshotOf({}), { [key]: { [id]: true } });
+    expect(result.next).toEqual({ [key]: { [id]: true } });
+    expect(JSON.parse(JSON.stringify(result.next))).toEqual({ [key]: { [id]: true } });
+    expect(result.changes).toEqual([
+      { key, kind: "add", before: undefined, after: { [id]: true } },
+    ]);
+    expect(result.snapshotValues).toEqual({ [key]: { [id]: true } });
+  });
+
+  it("updates an owned entry named toString instead of dropping it", () => {
+    const result = run(
+      { enabledPlugins: { toString: true, "keep@m": true } },
+      snapshotOf({ [PLUGINS]: { toString: true } }),
+      { [PLUGINS]: { toString: ["sub"] } },
+    );
+    expect(result.next).toEqual({ enabledPlugins: { toString: ["sub"], "keep@m": true } });
+    // A Function reaching `next` would vanish here: JSON.stringify drops it.
+    expect(JSON.parse(JSON.stringify(result.next))).toEqual({
+      enabledPlugins: { toString: ["sub"], "keep@m": true },
+    });
+    expect(result.drift).toEqual([]);
+    expect(result.snapshotValues).toEqual({ [PLUGINS]: { toString: ["sub"] } });
+  });
+
+  it("removes an owned entry named toString and keeps the user's", () => {
+    const result = run(
+      { enabledPlugins: { toString: true, "user@m": true } },
+      snapshotOf({ [PLUGINS]: { toString: true } }),
+      { [PLUGINS]: {} },
+    );
+    expect(result.next).toEqual({ enabledPlugins: { "user@m": true } });
+    expect(result.snapshotValues).toEqual({});
+  });
+
+  it("reports drift on a contested entry named constructor", () => {
+    const result = run(
+      { extraKnownMarketplaces: { constructor: { source: { source: "git" } } } },
+      snapshotOf({ [MARKETPLACES]: { constructor: MARKETPLACE } }),
+      { [MARKETPLACES]: { constructor: MARKETPLACE } },
+    );
+    expect(result.next).toEqual({
+      extraKnownMarketplaces: { constructor: { source: { source: "git" } } },
+    });
+    expect(result.drift).toEqual([
+      {
+        key: MARKETPLACES,
+        current: { constructor: { source: { source: "git" } } },
+        lastApplied: { constructor: MARKETPLACE },
+        recommended: { constructor: MARKETPLACE },
+      },
+    ]);
+  });
+
+  it("keeps an entry named __proto__ as an own key through a merge", () => {
+    // `JSON.parse` produces `__proto__` as an own property; a plain assignment
+    // into an accumulator would set the prototype instead and lose the entry.
+    const current = JSON.parse('{"enabledPlugins":{"__proto__":true,"keep@m":true}}') as Settings;
+    const result = merge(current, snapshotOf({}), { [PLUGINS]: { "new@m": true } });
+    const plugins = result.next.enabledPlugins as object;
+
+    expect(Object.hasOwn(plugins, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(plugins)).toBe(Object.prototype);
+    expect(Object.keys(plugins)).toEqual(["__proto__", "keep@m", "new@m"]);
+    expect(JSON.stringify(result.next)).toContain('"__proto__":true');
+  });
+
+  it("adds a desired entry named __proto__ without touching any prototype", () => {
+    const result = run({}, snapshotOf({}), {
+      [PLUGINS]: JSON.parse('{"__proto__":true}') as JsonValue,
+    });
+    const plugins = result.next.enabledPlugins as object;
+
+    expect(Object.hasOwn(plugins, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(plugins)).toBe(Object.prototype);
+    // The entry survives a serialise/parse round trip as an own key, and no
+    // object anywhere gained a prototype from it.
+    const roundTripped = JSON.parse(JSON.stringify(result.next)) as Settings;
+    expect(Object.keys(roundTripped.enabledPlugins as object)).toEqual(["__proto__"]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("does not treat a prototype method name as a wanted deny rule", () => {
+    const result = run({ permissions: { deny: ["toString"] } }, snapshotOf({}), { [DENY]: [] });
+    expect(result.next).toEqual({ permissions: { deny: ["toString"] } });
+    expect(result.changes).toEqual([]);
+  });
+});
