@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import manifest from "../../package.json";
 
@@ -85,5 +87,21 @@ describe("package.json", () => {
   it("contributes the sensibleDefaults activity bar container", () => {
     const containers = manifest.contributes.viewsContainers.activitybar;
     expect(containers.map((c) => c.id)).toContain("sensibleDefaults");
+  });
+
+  it("every contributed icon path exists on disk", () => {
+    // The activity-bar glyph was deleted as dead weight in #17 because nothing
+    // greps for it: `contributes.viewsContainers[].icon` is a path VS Code
+    // resolves at runtime, not an import. The listing shipped with an empty
+    // sidebar entry. This is the test that would have caught it. Resolved from
+    // the repo root, which is where vitest runs.
+    const root = join(process.cwd());
+    const paths = [
+      manifest.icon,
+      ...manifest.contributes.viewsContainers.activitybar.map((c) => c.icon),
+    ];
+    for (const rel of paths) {
+      expect(existsSync(join(root, rel)), `${rel} is referenced but missing`).toBe(true);
+    }
   });
 });
