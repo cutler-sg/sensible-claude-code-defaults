@@ -11,6 +11,11 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # The federated credential on the publishing identity trusts this
+    # environment, not a branch or tag: a tag-scoped credential matches one
+    # exact tag and breaks on the next release, since Entra does no pattern
+    # matching on the subject. The environment's own policy limits it to `v*`.
+    environment: marketplace-publish
     # Secrets cannot be referenced directly in `if:`, so surface them as job-level env.
     env:
       HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' }}
@@ -45,13 +50,17 @@ jobs:
 
       # Azure DevOps retires global PATs on 2026-12-01; publish via Entra workload
       # identity federation from the outset (PRD §8).
+      # The identity is a user-assigned managed identity holding no role on any
+      # subscription: it exists only to be a Marketplace publisher member, and
+      # `vsce` asks it for an Azure DevOps token, never an ARM one. Without
+      # `allow-no-subscriptions` the login step would fail looking for one.
       - name: Azure login (OIDC)
         if: ${{ env.HAS_AZURE == 'true' }}
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
 
       - name: Publish to VS Code Marketplace
         if: ${{ env.HAS_AZURE == 'true' }}
