@@ -3,7 +3,7 @@
   "displayName": "Sensible Claude Code Defaults",
   "description": "Set up and health-check Claude Code on AWS Bedrock: sensible defaults, guided Bedrock API key setup, and a panel that says what is wrong. An independent tool, not affiliated with Anthropic, PBC.",
   "publisher": "cutler-sg",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -68,8 +68,14 @@
     "views": {
       "sensibleDefaults": [
         {
+          "type": "webview",
           "id": "sensibleDefaults.health",
-          "name": "Configuration Health"
+          "name": "Claude Code on Bedrock"
+        },
+        {
+          "id": "sensibleDefaults.details",
+          "name": "Details",
+          "when": "sensibleDefaults.detailsOpen"
         }
       ]
     },
@@ -189,24 +195,24 @@
       "view/title": [
         {
           "command": "sensibleDefaults.runHealthCheck",
-          "when": "view == sensibleDefaults.health",
+          "when": "view == sensibleDefaults.details",
           "group": "navigation"
         },
         {
           "command": "sensibleDefaults.applyDefaults",
-          "when": "view == sensibleDefaults.health",
+          "when": "view == sensibleDefaults.details",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
           "command": "sensibleDefaults.runFix",
-          "when": "view == sensibleDefaults.health && viewItem == check:command",
+          "when": "view == sensibleDefaults.details && viewItem == check:command",
           "group": "inline"
         },
         {
           "command": "sensibleDefaults.resetKey",
-          "when": "view == sensibleDefaults.health && viewItem == drift",
+          "when": "view == sensibleDefaults.details && viewItem == drift",
           "group": "inline"
         }
       ],
@@ -227,14 +233,14 @@
     },
     "viewsWelcome": [
       {
-        "view": "sensibleDefaults.health",
-        "contents": "Checking your Claude Code configuration…",
+        "view": "sensibleDefaults.details",
+        "contents": "Checking your Claude Code configuration\u2026",
         "when": "sensibleDefaults.hasReport == false"
       },
       {
-        "view": "sensibleDefaults.health",
-        "contents": "Claude Code isn't set up for AWS Bedrock yet.\n[Apply recommended configuration](command:sensibleDefaults.applyDefaults)",
-        "when": "view == sensibleDefaults.health && sensibleDefaults.needsSetup"
+        "view": "sensibleDefaults.details",
+        "contents": "Nothing to show until Claude Code is set up.",
+        "when": "view == sensibleDefaults.details && sensibleDefaults.needsSetup"
       }
     ]
   },

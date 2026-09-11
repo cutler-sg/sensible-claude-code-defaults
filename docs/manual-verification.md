@@ -34,6 +34,30 @@ Two conventions used below:
 
 ---
 
+## 00. Guided setup panel (M8, added 2026-09-11)
+
+The sidebar's primary view is now a webview. The extension-host suite can see
+its message stream but not its pixels, so the following is by eye.
+
+- [ ] Fresh profile, no `~/.claude/settings.json`: the panel shows one
+      sentence and *Set up now*. Nothing else.
+- [ ] *Set up now* → step 1. The key field has focus. *Continue* is greyed
+      until something plausible is pasted; an AWS access key ID is named as
+      the wrong kind of key.
+- [ ] *Create a key* expands inline; *Open console* opens the Bedrock API keys
+      page in the browser and the instructions stay on screen.
+- [ ] Paste a real key → *Continue* → a spinner, then "Your Bedrock API key
+      works" and *Done*. Time it from *Set up now*. Target: under a minute.
+- [ ] *Done* → "Everything is working", with *Test connection*, *Replace key*,
+      *Change region*, and a collapsed *Details (18 checks)*.
+- [ ] *Details* opens the check tree as a second view below the panel; the
+      inline fix buttons on its rows still work.
+- [ ] Wrong key: "Amazon wouldn't accept your Bedrock API key" and *Try a
+      different key*, which returns to step 1.
+- [ ] Themes: Dark Modern, Light Modern, and a high-contrast theme. No
+      hard-coded colour anywhere; the primary button matches the theme's.
+- [ ] Screenshot each state for the README (`media/panel.png` placeholder).
+
 ## 0. Connection test, any platform (added 2026-09-11 after the first real-hardware run)
 
 The first real test of *Test Bedrock Connection* came back as "an answer we

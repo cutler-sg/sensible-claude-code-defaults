@@ -15,6 +15,7 @@
 
 import * as vscode from "vscode";
 import type { ManagedKey } from "../config/types.js";
+import { needsSetup as needsSetupFn } from "../health/setup.js";
 import {
   CHECK_GROUPS,
   type CheckGroup,
@@ -56,15 +57,7 @@ export type Node = GroupNode | CheckNode | DriftNode;
  * itself missing, "apply the recommended configuration" configures a tool that
  * is not there, and the tree of checks says something truer.
  */
-export function needsSetup(report: HealthReport): boolean {
-  const level = (id: string): string | undefined =>
-    report.results.find((result) => result.id === id)?.level;
-  return level("install.extension") === "pass" && isUnconfigured(level("config.exists"));
-}
-
-function isUnconfigured(level: string | undefined): boolean {
-  return level !== undefined && level !== "pass";
-}
+export { needsSetup } from "../health/setup.js";
 
 export class HealthTreeProvider implements vscode.TreeDataProvider<Node> {
   private report: HealthReport | undefined;
@@ -113,7 +106,7 @@ export class HealthTreeProvider implements vscode.TreeDataProvider<Node> {
     this.children = new Map();
     this.parents = new Map();
 
-    if (needsSetup(report)) {
+    if (needsSetupFn(report)) {
       this.roots = [];
       return;
     }
