@@ -21,6 +21,7 @@ import { runAll, transition } from "../health/runner.js";
 import type { Check, ClaudeCodeDetection, HealthReport } from "../health/types.js";
 import type { Manifest } from "../manifest/types.js";
 import type { Logger } from "../util/log.js";
+import type { ResolvedManifest } from "./manifestHolder.js";
 import { APPLY_ACTION, decideNotification, type NotificationKind } from "./notify.js";
 import { needsSetup } from "./treeProvider.js";
 
@@ -35,7 +36,14 @@ export interface NotifiedStore {
 
 export interface HealthRunnerDeps {
   env: ConfigEnv;
-  manifest: Manifest;
+  /**
+   * The manifest in force, read afresh on every run — a function, not a value,
+   * for the same reason `credential` is one. The host re-resolves it on the
+   * hourly boundary and on "Check for Updated Recommendations", and a copy
+   * captured at wiring time would pin the panel to whatever the first run
+   * resolved (usually the bundled floor) for the life of the window.
+   */
+  manifest: () => ResolvedManifest;
   platform: NodeJS.Platform;
   detect: () => Promise<ClaudeCodeDetection>;
   log: Logger;
@@ -85,9 +93,11 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
   let reportedFailure = false;
 
   const run = async (): Promise<void> => {
+    const resolved = deps.manifest();
     const ctx = await buildContext({
       env: deps.env,
-      manifest: deps.manifest,
+      manifest: resolved.manifest,
+      manifestStatus: resolved.status,
       platform: deps.platform,
       detect: deps.detect,
       ...(deps.onSelfWrite ? { onSelfWrite: deps.onSelfWrite } : {}),
@@ -106,7 +116,7 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
 
     const kind = transition(previous, report);
     previous = report;
-    await notify(deps, kind, report);
+    await notify(deps, kind, report, resolved.manifest);
   };
 
   return async (): Promise<void> => {
@@ -158,13 +168,14 @@ async function notify(
   deps: HealthRunnerDeps,
   kind: NotificationKind,
   report: HealthReport,
+  manifest: Manifest,
 ): Promise<void> {
   // FR-5.5: no toast at all when the user has opted out of the startup check.
   // The opt-out also skips the startup run itself (see `extension.ts`); this is
   // the same preference applied to the runs a file change triggers.
   if (!vscode.workspace.getConfiguration().get("sensibleDefaults.checkOnStartup", true)) return;
 
-  const key = notifiedKey(deps.manifest.revision);
+  const key = notifiedKey(manifest.revision);
   const fired = deps.notified.get<string[]>(key, []);
   if (fired.includes(kind)) return;
 

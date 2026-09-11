@@ -1,6 +1,6 @@
 import type { ReadResult, Settings } from "../../../src/config/types.js";
 import { DEFAULT_STYLE, EMPTY_SNAPSHOT } from "../../../src/config/types.js";
-import type { CheckContext, CredentialContext } from "../../../src/health/types.js";
+import type { CheckContext, CredentialContext, ManifestStatus } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 
 export const NOW = new Date("2026-09-10T12:00:00.000Z");
@@ -23,6 +23,17 @@ export function okCredential(overrides: Partial<CredentialContext> = {}): Creden
     ...overrides,
   };
 }
+
+/**
+ * The healthy manifest state: fetched a moment ago, matching what was applied.
+ * `config.stale`'s pass branch, so a fixture-based test of any other check does
+ * not pick up an unrelated info row.
+ */
+export const FETCHED_STATUS: ManifestStatus = {
+  revision: BUNDLED_MANIFEST.revision,
+  source: "fetched",
+  fetchedAt: NOW.toISOString(),
+};
 
 export const CLAUDE_DIR = "/home/tester/.claude";
 export const SETTINGS_FILE = `${CLAUDE_DIR}/settings.json`;
@@ -60,6 +71,7 @@ export function makeCtx(overrides: Partial<CheckContext> = {}): CheckContext {
     read: okRead(),
     snapshot: EMPTY_SNAPSHOT,
     manifest: BUNDLED_MANIFEST,
+    manifestStatus: FETCHED_STATUS,
     plan: {
       kind: "ready",
       read: okRead(),

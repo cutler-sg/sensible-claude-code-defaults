@@ -63,8 +63,40 @@ export const LABELS = {
     drifted: "Some settings have been changed since the recommended setup",
     skipped: "Nothing to check until Claude Code has been set up",
   },
+  /**
+   * One check, four stories, because to the reader they are one story: "are the
+   * recommendations I am being held to the current ones?". The FR-3.5 gate wins
+   * over staleness — the update is the thing that unblocks everything else —
+   * and "using saved defaults" is never an error (FR-3.2), because the user did
+   * not cause it and cannot fix it.
+   */
   "config.stale": {
-    skipped: "Checking for newer recommended settings arrives in a later update",
+    pass: "Your settings match the latest recommendations",
+    behind: "There are newer recommended settings to apply",
+    offline: "Using the recommendations saved on this computer",
+    bundled: "Using the recommendations that came with this extension",
+    needsUpdate: "An update to this extension is available with newer recommendations",
+  },
+  notice: {
+    /**
+     * Prefixes the row itself, not the tooltip (F4). A notice renders with the
+     * same codicon, font, indent and group as our own advice, so without this
+     * the only thing separating remote text from the extension's own voice is
+     * a tooltip — invisible until hover, and absent entirely for a screen
+     * reader, whose label is built from this string.
+     *
+     * It goes first because a tree row truncates at the end: the provenance is
+     * the part the reader always sees, and the remote text is the part that
+     * gets cut off.
+     */
+    prefix: "Message from the people who look after these settings",
+    /**
+     * The tooltip's second line. The declared level is shown as a word rather
+     * than honoured as a level (Q-AA), so the reader can see that a publisher
+     * called something urgent without the publisher getting a red dot in every
+     * installation.
+     */
+    sentAs: "They marked it as",
   },
   "cred.present": {
     pass: "Your Bedrock API key is saved in this computer's keychain",

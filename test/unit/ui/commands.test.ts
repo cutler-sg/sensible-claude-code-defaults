@@ -33,11 +33,33 @@ const log = {
   error: (message: string) => logged.push(`error ${message}`),
 };
 
+/**
+ * The manifest the registered commands see. A `let` rather than a parameter
+ * because the point of `CommandDeps.manifest` being a function is that the host
+ * can swap it *after* registration, and a test that cannot swap it proves
+ * nothing about that.
+ */
+let currentManifest: Manifest;
+let forcedRefreshes: number;
+/** What `refreshManifest` reports back: does the panel need repainting? */
+let refreshChanged: boolean;
+/** The manifest the refresh puts in force, if it changes one. */
+let refreshResolves: Manifest | undefined;
+
 function register(manifest: Manifest = BUNDLED_MANIFEST): void {
+  currentManifest = manifest;
   disposable = registerCommands({
     env,
     session,
-    manifest,
+    manifest: () => currentManifest,
+    // Models the real holder: a refresh may swap the manifest in force, and
+    // its boolean answers "repaint?" rather than "is this a new revision?".
+    refreshManifest: async (options) => {
+      expect(options).toEqual({ force: true });
+      forcedRefreshes += 1;
+      if (refreshResolves !== undefined) currentManifest = refreshResolves;
+      return refreshChanged;
+    },
     settingsFile: settingsPath(dir),
     backupsDir: backupsDir(dir),
     log: log as never,
@@ -61,6 +83,9 @@ beforeEach(async () => {
   session = { backedUp: false };
   logged = [];
   healthRuns = 0;
+  forcedRefreshes = 0;
+  refreshChanged = false;
+  refreshResolves = undefined;
   reset();
   register();
 });
@@ -211,7 +236,128 @@ describe("applyDefaults", () => {
 
     expect(messages()).toContain("There are no saved copies to restore yet.");
   });
+});
 
+/**
+ * F2, the critical one. `permissions.deny` is element-owned, so an element we
+ * wrote is ours to remove: a manifest revision that simply stops listing
+ * `Read(./.env)` and `Read(./.aws/**)` removes them from every install at once.
+ * `drift` stays empty (nothing was contested), nothing reports it, and
+ * `config.stale` says only "there are newer recommended settings to apply" —
+ * which the user presses. Claude Code can then read `.env` and `.aws/**`.
+ *
+ * The removal is technically in the preview already, as a before-set and an
+ * after-set joined by commas. Reading that means diffing two comma-separated
+ * lists by eye, which is the exact task this extension exists because its
+ * audience cannot do. A protection being dropped has to be a sentence.
+ */
+describe("a manifest that narrows the blocked commands list (F2)", () => {
+  const DENY = ["Bash(rm -rf:*)", "Read(./.env)", "Read(./.aws/**)"];
+
+  function narrowedTo(deny: string[]): Manifest {
+    return {
+      ...BUNDLED_MANIFEST,
+      revision: "remote-2",
+      defaults: { ...BUNDLED_MANIFEST.defaults, permissions: { deny } },
+    };
+  }
+
+  /** Put the full list in the file, owned by us, so a narrower manifest removes from it. */
+  async function seedApplied(): Promise<void> {
+    currentManifest = narrowedTo(DENY);
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+    await run("sensibleDefaults.applyDefaults");
+    reset();
+    register();
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+  }
+
+  it("says which protections stop being blocked, in its own row", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect(quickPickLabels()).toContain("Stops blocking: Read(./.env)");
+    expect(quickPickLabels()).toContain("Stops blocking: Read(./.aws/**)");
+  });
+
+  /**
+   * Above the change rows and above the confirm item, so it is on screen before
+   * the user has scrolled or decided — a QuickPick shows only its first few
+   * items, and this is the one item nobody may miss.
+   */
+  it("puts the losses above the confirmation, not below the diff", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const labels = quickPickLabels();
+    const firstLoss = labels.findIndex((label) => label.startsWith("Stops blocking:"));
+    const confirm = labels.findIndex((label) => label.startsWith("Apply all"));
+    expect(firstLoss).toBeGreaterThan(-1);
+    expect(firstLoss).toBeLessThan(confirm);
+  });
+
+  it("says so in the title, so the dialog itself is not neutral about it", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const options = state.quickPicks[0]?.options as { title?: string } | undefined;
+    expect(options?.title).toContain("stop being blocked");
+  });
+
+  it("adds no such row to an ordinary apply that drops nothing", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect(quickPickLabels().some((label) => label.startsWith("Stops blocking:"))).toBe(false);
+    const options = state.quickPicks[0]?.options as { title?: string } | undefined;
+    expect(options?.title).not.toContain("stop being blocked");
+  });
+
+  it("still writes what the user accepted, so the row informs rather than blocks", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toEqual(["Bash(rm -rf:*)"]);
+  });
+
+  it("keeps Cancel first, so the loud dialog still cannot be Entered through", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+    state.quickPickAnswer = (call) => call.items[0];
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect(quickPickLabels()[0]).toBe("Cancel");
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toEqual(DENY);
+  });
+
+  /** A "Stops blocking:" row is text to read, not a decision — like every change row. */
+  it("treats picking a loss row as reading, not as consent", async () => {
+    await seedApplied();
+    currentManifest = narrowedTo(["Bash(rm -rf:*)"]);
+    state.quickPickAnswer = (call) =>
+      call.items.find((item) => labelOf(item).startsWith("Stops blocking:"));
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toEqual(DENY);
+  });
+});
+
+describe("applyDefaults, continued", () => {
   it("retries a stale plan exactly once", async () => {
     await seed({ env: { AWS_REGION: "eu-west-1" } });
     // Every `plan` loads the snapshot; nudging the file there makes every
@@ -357,6 +503,51 @@ describe("resetKey", () => {
     await run("sensibleDefaults.resetKey", "env.AWS_REGION");
 
     expect(state.error[0]?.message).toContain("can't be read");
+  });
+});
+
+/**
+ * F2's other write path, and why it is not one. `resetKey` on the blocked
+ * commands list restores the manifest's list over the user's — but
+ * `claimElements` claims only the rules the manifest still lists, so rules the
+ * user added stay unowned and the merge engine preserves them (hard rule 3).
+ *
+ * That makes a reset structurally incapable of narrowing the list, which is
+ * worth pinning: it is the reason F2's fix lives on the apply path, and a
+ * future change to `claimElements` that claimed the container would reopen the
+ * hole silently.
+ */
+describe("resetting the blocked commands list cannot narrow it (F2)", () => {
+  const denying = (deny: string[]): Manifest => ({
+    ...BUNDLED_MANIFEST,
+    defaults: { ...BUNDLED_MANIFEST.defaults, permissions: { deny } },
+  });
+
+  it("keeps a rule the manifest no longer lists, rather than removing it", async () => {
+    await seed({ permissions: { deny: ["Bash(rm -rf:*)", "Read(./.env)"] } });
+    register(denying(["Bash(rm -rf:*)"]));
+    state.answer = (shown) => (shown.items.includes("Replace") ? "Replace" : undefined);
+
+    await run("sensibleDefaults.resetKey", "permissions.deny");
+
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toContain("Read(./.env)");
+  });
+
+  /**
+   * And the confirmation is wired to report a loss if one ever did occur — the
+   * belt to `claimElements`' braces, on the shared modal every single-key write
+   * goes through.
+   */
+  it("says nothing about losses when there are none to report", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-9" } });
+    state.answer = (shown) => (shown.items.includes("Replace") ? "Replace" : undefined);
+
+    await run("sensibleDefaults.resetKey", "env.AWS_REGION");
+
+    const detail = (state.warn[0]?.options as { detail?: string } | undefined)?.detail ?? "";
+    expect(detail).not.toContain("Stops blocking:");
+    expect(detail).toContain("Amazon region");
   });
 });
 
@@ -614,6 +805,205 @@ describe("runFix", () => {
   });
 });
 
+describe("checkForUpdates (FR-3.3)", () => {
+  it("bypasses the throttle and re-runs the checks", async () => {
+    refreshChanged = true;
+    refreshResolves = { ...BUNDLED_MANIFEST, revision: "remote-2" };
+
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(forcedRefreshes).toBe(1);
+    expect(healthRuns).toBe(1);
+    expect(messages()).toEqual(["Updated to the latest recommended settings."]);
+  });
+
+  /**
+   * F15. The message reported `refreshManifest`'s boolean, which answers "does
+   * the panel need repainting?" — and the provenance is part of that. So the
+   * first successful fetch after a run on the bundled copy said "Updated to the
+   * latest recommended settings" for a manifest byte-identical to the one
+   * already in force: bundled → cached is a status change and not an update.
+   *
+   * The report is now about the revision, which is the manifest's own answer to
+   * "am I a different set of recommendations?".
+   */
+  it("does not claim an update when only the provenance moved (F15)", async () => {
+    // The holder repainted — bundled to cached — but the revision is the one
+    // already in force.
+    refreshChanged = true;
+
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(messages()).toEqual(["You already have the latest recommended settings."]);
+  });
+
+  it("claims an update when the revision actually changed (F15)", async () => {
+    // A revision change the holder reports no repaint for is the F8 case: the
+    // user is still being held to different recommendations, and should be told.
+    refreshChanged = false;
+    refreshResolves = { ...BUNDLED_MANIFEST, revision: "remote-2" };
+
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(messages()).toEqual(["Updated to the latest recommended settings."]);
+  });
+
+  it("says so, rather than nothing, when there was no update", async () => {
+    // A command that appears to do nothing is indistinguishable from a broken
+    // one, and this one is only ever reached by a deliberate press.
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(messages()).toEqual(["You already have the latest recommended settings."]);
+    expect(healthRuns).toBe(1);
+  });
+
+  /**
+   * FR-3.2: a failed fetch is never user-visible. The holder swallows it and
+   * reports "nothing changed", so from here an unreachable network and an
+   * unchanged manifest are the same sentence — which is the point.
+   */
+  it("reports no failure when the fetch could not happen at all", async () => {
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(state.error).toEqual([]);
+    expect(state.warn).toEqual([]);
+  });
+
+  it("still re-runs the checks in a host with no resolver wired", async () => {
+    disposable.dispose();
+    reset();
+    disposable = registerCommands({
+      env,
+      session,
+      manifest: () => BUNDLED_MANIFEST,
+      settingsFile: settingsPath(dir),
+      backupsDir: backupsDir(dir),
+      log: log as never,
+      runHealth: async () => {
+        healthRuns += 1;
+      },
+      markWrite: () => {},
+      credential: fakeCredentialDeps(),
+    });
+
+    await run("sensibleDefaults.checkForUpdates");
+
+    expect(healthRuns).toBe(1);
+  });
+});
+
+/**
+ * The trap M4 was wired around: the manifest used to be captured at
+ * registration, so a window that fetched newer recommendations went on
+ * offering — and writing — the ones that shipped in the VSIX.
+ */
+describe("reading the manifest afresh on every invocation", () => {
+  it("offers the regions of the manifest in force now, not at registration", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    currentManifest = { ...BUNDLED_MANIFEST, regions: ["eu-west-1", "eu-west-2"] };
+
+    await run("sensibleDefaults.selectRegion");
+
+    expect(quickPickLabels()).toEqual(["eu-west-1", "eu-west-2"]);
+  });
+
+  it("applies the values of the manifest in force now", async () => {
+    // No region in the file: an existing one is the user's, and hard rule 3
+    // would rightly preserve it as drift whatever the manifest says.
+    await seed({ env: { CLAUDE_CODE_USE_BEDROCK: "1" } });
+    currentManifest = {
+      ...BUNDLED_MANIFEST,
+      defaults: {
+        ...BUNDLED_MANIFEST.defaults,
+        env: { ...BUNDLED_MANIFEST.defaults.env, AWS_REGION: "ap-southeast-1" },
+      },
+    };
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect(await readEnv("AWS_REGION")).toBe("ap-southeast-1");
+  });
+
+  /**
+   * F7. `desiredFromManifest(deps.manifest())` was read at the top and
+   * `deps.manifest().revision` read again after the QuickPick resolved. The
+   * QuickPick is modal to the *user*, not to the event loop, so an hourly
+   * refresh lands between the two reads perfectly happily — and the file then
+   * holds one revision's values while the snapshot records another's.
+   *
+   * The consequence is permanent and silent: `config.stale` compares the
+   * snapshot's revision against the manifest in force, sees them equal, and
+   * reports the user as up to date forever, while the values on disk are the
+   * ones from before the refresh.
+   */
+  it("stamps the revision whose values it wrote, not the one that arrived mid-preview (F7)", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    currentManifest = {
+      ...BUNDLED_MANIFEST,
+      revision: "remote-1",
+      defaults: {
+        ...BUNDLED_MANIFEST.defaults,
+        env: { ...BUNDLED_MANIFEST.defaults.env, ANTHROPIC_DEFAULT_OPUS_MODEL: "opus-from-1" },
+      },
+    };
+    // A refresh lands while the preview is on screen.
+    state.quickPickAnswer = (call) => {
+      currentManifest = {
+        ...BUNDLED_MANIFEST,
+        revision: "remote-2",
+        defaults: {
+          ...BUNDLED_MANIFEST.defaults,
+          env: { ...BUNDLED_MANIFEST.defaults.env, ANTHROPIC_DEFAULT_OPUS_MODEL: "opus-from-2" },
+        },
+      };
+      return call.items.find((item) => labelOf(item).startsWith("Apply all"));
+    };
+
+    await run("sensibleDefaults.applyDefaults");
+
+    // The values written are revision 1's — they are what the user was shown
+    // and accepted — so the stamp must be revision 1's too.
+    expect(await readEnv("ANTHROPIC_DEFAULT_OPUS_MODEL")).toBe("opus-from-1");
+    expect((await env.snapshotStore.load()).manifestRevision).toBe("remote-1");
+  });
+
+  it("shows the user the changes it then writes, whatever arrives mid-preview (F7)", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    currentManifest = {
+      ...BUNDLED_MANIFEST,
+      revision: "remote-1",
+      defaults: {
+        ...BUNDLED_MANIFEST.defaults,
+        permissions: { deny: ["Read(./.env)"] },
+      },
+    };
+    state.quickPickAnswer = (call) => {
+      currentManifest = {
+        ...BUNDLED_MANIFEST,
+        revision: "remote-2",
+        defaults: { ...BUNDLED_MANIFEST.defaults, permissions: { deny: [] } },
+      };
+      return call.items.find((item) => labelOf(item).startsWith("Apply all"));
+    };
+
+    await run("sensibleDefaults.applyDefaults");
+
+    const written = (await readSettings()).permissions as { deny?: string[] } | undefined;
+    expect(written?.deny).toEqual(["Read(./.env)"]);
+  });
+
+  it("stamps the snapshot with the revision in force now", async () => {
+    await seed({ env: { AWS_REGION: "eu-west-1" } });
+    currentManifest = { ...BUNDLED_MANIFEST, revision: "remote-2" };
+    state.quickPickAnswer = (call) => call.items.find((i) => labelOf(i).startsWith("Apply all"));
+
+    await run("sensibleDefaults.applyDefaults");
+
+    expect((await env.snapshotStore.load()).manifestRevision).toBe("remote-2");
+  });
+});
+
 describe("the command wrapper", () => {
   it("turns a thrown failure into a message rather than an unhandled rejection", async () => {
     disposable.dispose();
@@ -621,7 +1011,7 @@ describe("the command wrapper", () => {
     disposable = registerCommands({
       env,
       session,
-      manifest: BUNDLED_MANIFEST,
+      manifest: () => BUNDLED_MANIFEST,
       settingsFile: settingsPath(dir),
       backupsDir: backupsDir(dir),
       log: log as never,
@@ -644,7 +1034,7 @@ describe("the command wrapper", () => {
     disposable = registerCommands({
       env,
       session,
-      manifest: BUNDLED_MANIFEST,
+      manifest: () => BUNDLED_MANIFEST,
       settingsFile: settingsPath(dir),
       backupsDir: backupsDir(dir),
       log: log as never,

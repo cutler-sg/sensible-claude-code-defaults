@@ -7,6 +7,7 @@
 
 import type { Drift, ManagedKey, PlanResult, ReadResult, Snapshot } from "../config/types.js";
 import type { ConnectionResult, TokenPresence } from "../credential/types.js";
+import type { ManifestSource } from "../manifest/resolve.js";
 import type { CredentialPolicy, Manifest } from "../manifest/types.js";
 
 export type CheckGroup = "Installation" | "Configuration" | "Credential" | "Plugins";
@@ -18,7 +19,16 @@ export const CHECK_GROUPS: readonly CheckGroup[] = [
   "Plugins",
 ];
 
-export type CheckId =
+/**
+ * A manifest notice rendered as a panel row. Not a catalogue entry: there are
+ * between zero and two of them per run and their text comes from the manifest,
+ * so they are synthesised per report rather than registered. The index keeps
+ * the tree ids distinct, which is what stops VS Code collapsing two rows into
+ * one and losing the second notice entirely.
+ */
+export type NoticeId = `notice.${number}`;
+
+export type CatalogueCheckId =
   | "install.extension"
   | "install.version"
   | "install.cli"
@@ -37,6 +47,8 @@ export type CheckId =
   | "cred.leak"
   | "plugins.marketplace"
   | "plugins.enabled";
+
+export type CheckId = CatalogueCheckId | NoticeId;
 
 /**
  * `skipped` is for checks whose implementation lands in a later milestone or
@@ -121,6 +133,23 @@ export interface CredentialContext {
   now: Date;
 }
 
+/**
+ * Where the defaults in force came from (FR-3.2, FR-3.5).
+ *
+ * Deliberately not the `Resolution` itself: a check holding that could reach
+ * the fetch layer, and every check is a pure function of this context. This is
+ * the projection `config.stale` needs and nothing more.
+ */
+export interface ManifestStatus {
+  /** `manifest.revision`, restated so `config.stale` has one thing to compare. */
+  revision: string;
+  source: ManifestSource;
+  /** ISO 8601. Present for a fetched or cached manifest, absent for the bundle. */
+  fetchedAt?: string;
+  /** FR-3.5: a manifest was skipped because it wants this extension version or newer. */
+  needsExtensionVersion?: string;
+}
+
 export interface CheckContext {
   claudeDir: string;
   settingsFile: string;
@@ -128,6 +157,8 @@ export interface CheckContext {
   read: ReadResult;
   snapshot: Snapshot;
   manifest: Manifest;
+  /** Provenance of `manifest`, for `config.stale`. Its `revision` is `manifest.revision`. */
+  manifestStatus: ManifestStatus;
   /** `plan(env, desiredFromManifest(manifest))`; `blocked` when the file is malformed. */
   plan: PlanResult;
   drift: Drift[];
@@ -143,7 +174,8 @@ export interface CheckContext {
 }
 
 export interface Check {
-  id: CheckId;
+  /** Narrower than `CheckResult["id"]`: a notice is synthesised, never registered. */
+  id: CatalogueCheckId;
   group: CheckGroup;
   run(ctx: CheckContext): CheckResult | Promise<CheckResult>;
 }

@@ -5,6 +5,8 @@ import { keyDisplayName } from "../../../src/health/labels.js";
 import {
   accessibilityLabel,
   describeChange,
+  describeDroppedProtection,
+  droppedProtections,
   formatValue,
   iconFor,
   pluralize,
@@ -87,6 +89,91 @@ describe("describeChange", () => {
   });
 });
 
+/**
+ * F2. The deny list is element-owned, so elements we wrote are ours to remove:
+ * a manifest revision that simply stops listing `Read(./.env)` removes it from
+ * every install at once. `drift` stays empty, nothing reports it, and
+ * `config.stale` says only "there are newer recommended settings to apply" —
+ * which the user presses.
+ *
+ * The removal *is* in the preview, rendered by `describeChange` as a before and
+ * an after set joined by commas. Reading it means diffing two comma-separated
+ * lists by eye, which is precisely the task this extension exists because its
+ * audience cannot do. So a dropped protection has to be its own sentence.
+ */
+describe("droppedProtections", () => {
+  const denyChange = (before: string[] | undefined, after: string[]): Change => ({
+    key: "permissions.deny",
+    kind: before === undefined ? "add" : "update",
+    before,
+    after,
+  });
+
+  it("names each rule that stops being blocked", () => {
+    expect(
+      droppedProtections([denyChange(["Bash(rm -rf:*)", "Read(./.env)"], ["Bash(rm -rf:*)"])]),
+    ).toEqual(["Read(./.env)"]);
+  });
+
+  it("names every one of several, not just the first", () => {
+    expect(
+      droppedProtections([
+        denyChange(["Bash(rm -rf:*)", "Read(./.env)", "Read(./.aws/**)"], ["Bash(rm -rf:*)"]),
+      ]),
+    ).toEqual(["Read(./.env)", "Read(./.aws/**)"]);
+  });
+
+  it("says nothing when the list only grows", () => {
+    expect(
+      droppedProtections([denyChange(["Read(./.env)"], ["Read(./.env)", "Read(./.ssh/**)"])]),
+    ).toEqual([]);
+  });
+
+  it("says nothing about a list being created", () => {
+    expect(droppedProtections([denyChange(undefined, ["Read(./.env)"])])).toEqual([]);
+  });
+
+  it("reads a whole-key removal as dropping everything in it", () => {
+    expect(
+      droppedProtections([
+        { key: "permissions.deny", kind: "remove", before: ["Read(./.env)"], after: undefined },
+      ]),
+    ).toEqual(["Read(./.env)"]);
+  });
+
+  it("ignores every other managed key", () => {
+    expect(
+      droppedProtections([
+        { key: "env.AWS_REGION", kind: "update", before: "us-east-1", after: "eu-central-1" },
+        { key: "enabledPlugins", kind: "update", before: { a: true }, after: {} },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("survives a malformed before or after rather than hiding the rest", () => {
+    expect(
+      droppedProtections([
+        { key: "permissions.deny", kind: "update", before: "not a list", after: [] },
+      ]),
+    ).toEqual([]);
+  });
+
+  /** Rules are strings by schema, but the preview must never render an object. */
+  it("renders a non-string rule as text rather than [object Object]", () => {
+    const dropped = droppedProtections([
+      denyChange([{ nested: "rule" } as never, "Read(./.env)"], []),
+    ]);
+    expect(dropped).toHaveLength(2);
+    for (const rule of dropped) expect(rule).not.toContain("[object Object]");
+  });
+});
+
+describe("describeDroppedProtection", () => {
+  it("states the loss as a sentence, not as a diff", () => {
+    expect(describeDroppedProtection("Read(./.env)")).toBe("Stops blocking: Read(./.env)");
+  });
+});
+
 describe("formatValue", () => {
   it("renders containers by their contents, not as JSON", () => {
     expect(formatValue(["a", "b"])).toBe("a, b");
@@ -95,6 +182,10 @@ describe("formatValue", () => {
     expect(formatValue({})).toBe("(none)");
     expect(formatValue(undefined)).toBe("(not set)");
     expect(formatValue(true)).toBe("true");
+    // An empty string is `""` rather than nothing at all, so a value that is
+    // present but blank cannot be misread as unset.
+    expect(formatValue("")).toBe('""');
+    expect(formatValue(null)).toBe("null");
   });
 });
 

@@ -2,11 +2,12 @@ import * as vscode from "vscode";
 import { backupsDir, createSession } from "./config/index.js";
 import { readTokenFromSettings } from "./credential/writeThrough.js";
 import type { CredentialContext } from "./health/types.js";
-import { BUNDLED_MANIFEST } from "./manifest/bundled.js";
+import { createManifestCache } from "./manifest/cache.js";
 import { registerCommands } from "./ui/commands.js";
 import type { CredentialFlowDeps } from "./ui/flows.js";
 import { createHealthRunner } from "./ui/healthRunner.js";
 import { createHost } from "./ui/host.js";
+import { createManifestHolder, DEFAULT_MANIFEST_URL } from "./ui/manifestHolder.js";
 import { HealthTreeProvider } from "./ui/treeProvider.js";
 import { watchSettings } from "./ui/watcher.js";
 import { Logger } from "./util/log.js";
@@ -20,7 +21,17 @@ export function activate(context: vscode.ExtensionContext): void {
   log.info(`Sensible Claude Code Defaults ${context.extension.packageJSON.version} activated.`);
 
   const host = createHost(context);
-  const manifest = BUNDLED_MANIFEST;
+  // Constructed, not resolved: §13 caps activation at 100 ms, so the first
+  // fetch happens inside the deferred health run below and the panel renders
+  // from the bundled copy — and, from the second window onwards, from the cache
+  // the first one saved — while it is in flight.
+  const manifests = createManifestHolder({
+    url: () =>
+      vscode.workspace.getConfiguration().get("sensibleDefaults.manifestUrl", DEFAULT_MANIFEST_URL),
+    extensionVersion: String(context.extension.packageJSON.version),
+    cache: createManifestCache(context.globalState),
+    log,
+  });
   const provider = new HealthTreeProvider();
   const view = vscode.window.createTreeView("sensibleDefaults.health", {
     treeDataProvider: provider,
@@ -59,9 +70,12 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   };
 
-  const runHealth = createHealthRunner({
+  const runChecks = createHealthRunner({
     env: host.env,
-    manifest,
+    // A getter, not a value: the holder re-resolves on the hourly boundary and
+    // on "Check for Updated Recommendations", and a manifest captured here
+    // would pin the panel to the bundled defaults for the life of the window.
+    manifest: () => manifests.current(),
     platform: process.platform,
     detect: host.detect,
     log,
@@ -85,6 +99,24 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
 
+  /**
+   * FR-3.2 / FR-3.3 / §13: paint from what we already hold, then re-resolve,
+   * then repaint if the answer changed.
+   *
+   * In that order, never the other way round. The point of §13 is that the
+   * panel is populated before the network is consulted: on a machine behind a
+   * dead proxy the fetch spends its whole 5 s timeout, and painting first is
+   * what stops the user watching "Checking your Claude Code configuration…" for
+   * all of it. The refresh is throttled to one fetch an hour, so on every run
+   * but the first of each hour it returns without touching the network — which
+   * is what makes it safe to hang off every health run, including the ones a
+   * file change triggers.
+   */
+  const runHealth = async (): Promise<void> => {
+    await runChecks();
+    if (await manifests.refresh()) await runChecks();
+  };
+
   const watcher = watchSettings(host.claudeDir, host.settingsFile, () => void runHealth(), {
     suppress: () => Date.now() < suppressUntil,
   });
@@ -92,7 +124,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const commands = registerCommands({
     env: host.env,
     session: createSession(),
-    manifest,
+    manifest: () => manifests.current().manifest,
+    refreshManifest: (options) => manifests.refresh(options),
     settingsFile: host.settingsFile,
     backupsDir: backupsDir(host.claudeDir),
     log,

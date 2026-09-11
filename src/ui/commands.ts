@@ -38,13 +38,27 @@ import {
   setToken,
   testConnection,
 } from "./flows.js";
-import { describeChange, pluralize, relativeAge } from "./present.js";
+import {
+  describeChange,
+  describeDroppedProtection,
+  droppedProtections,
+  pluralize,
+  relativeAge,
+} from "./present.js";
 import type { Node } from "./treeProvider.js";
 
 export interface CommandDeps {
   env: ConfigEnv;
   session: ApplySession;
-  manifest: Manifest;
+  /**
+   * The manifest in force, read afresh on every invocation — a function for the
+   * same reason the health runner takes one. The host re-resolves it on the
+   * hourly boundary and on "Check for Updated Recommendations", and a value
+   * captured at registration would leave `selectRegion` offering the regions
+   * that shipped in the VSIX, and `applyDefaults` writing them, for the life of
+   * the window.
+   */
+  manifest: () => Manifest;
   settingsFile: string;
   backupsDir: string;
   log: Logger;
@@ -54,6 +68,12 @@ export interface CommandDeps {
   markWrite: () => void;
   /** The keychain, the terminal collection, and where a test result goes. */
   credential: CredentialFlowDeps;
+  /**
+   * FR-3.3's manual refresh: re-resolve the manifest ignoring the hourly
+   * throttle. Optional so a host that has not wired the resolver still gets a
+   * working command surface; the command then simply re-runs the checks.
+   */
+  refreshManifest?: (options: { force: true }) => Promise<boolean>;
   now?: () => Date;
 }
 
@@ -76,6 +96,7 @@ const MAX_STALE_RETRIES = 1;
  */
 const HANDLERS = {
   "sensibleDefaults.runHealthCheck": (deps) => deps.runHealth(),
+  "sensibleDefaults.checkForUpdates": (deps) => checkForUpdates(deps),
   "sensibleDefaults.applyDefaults": (deps) => applyDefaults(deps, 0),
   "sensibleDefaults.openSettings": (deps) => openSettings(deps),
   "sensibleDefaults.restoreBackup": (deps) => restoreBackupCommand(deps),
@@ -115,9 +136,23 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
   return vscode.Disposable.from(...COMMAND_IDS.map(register));
 }
 
-/** FR-6.1: preview, then write. A stale plan is recomputed, never forced. */
+/**
+ * FR-6.1: preview, then write. A stale plan is recomputed, never forced.
+ *
+ * The manifest is captured once, at the top, and threaded through (F7). It used
+ * to be read twice — for `desiredFromManifest` here, and again for the revision
+ * stamp after the QuickPick resolved — and a QuickPick is modal to the user,
+ * not to the event loop, so an hourly refresh lands between the two reads
+ * happily. The file then held one revision's values while the snapshot recorded
+ * another's, and `config.stale` compared the snapshot against the manifest in
+ * force, found them equal, and reported the user up to date permanently.
+ *
+ * A retry re-reads deliberately: it recomputes the plan the user must accept
+ * again, so it recomputes what that plan is against too.
+ */
 async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> {
-  const desired = desiredFromManifest(deps.manifest);
+  const manifest = deps.manifest();
+  const desired = desiredFromManifest(manifest);
   const planned = await plan(deps.env, desired);
 
   if (planned.kind === "blocked") {
@@ -132,21 +167,32 @@ async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> 
   const changes = redactChanges(planned.merge.changes);
   const count = changes.length;
   const confirmLabel = `Apply all ${pluralize(count, "change")}`;
+  // F2: protections this apply would drop, said as sentences and placed above
+  // everything else. They are already in the change rows, as a before-set and
+  // an after-set joined by commas — which is a diff the reader has to compute,
+  // and computing it is the thing this audience cannot do. A QuickPick shows
+  // only its first few items, so a loss below the fold is a loss unseen.
+  const dropped = droppedProtections(changes);
   // Multi-step QuickPick rather than an untitled-document diff (plan Q-P): the
   // design target is a user for whom a JSON diff is not a readable object.
   // Only the first item confirms; the change rows are there to be read, so
   // picking one is treated as "I was reading, not deciding" — i.e. cancel.
+  // That covers the loss rows too: they inform, they do not consent.
   const picked = await vscode.window.showQuickPick(
     [
       // Cancel is first so the highlighted item on open is the harmless one: a
       // stray Enter on a dialog the user has not read yet must never write.
       { label: CANCEL, description: "" },
+      ...dropped.map((rule) => ({
+        label: describeDroppedProtection(rule),
+        description: PROTECTION_LOST,
+      })),
       { label: confirmLabel, description: "Writes the changes listed below" },
       ...changes.map((change) => ({ label: describeChange(change), description: "" })),
     ],
     {
       canPickMany: false,
-      title: `Apply ${pluralize(count, "recommended change")}?`,
+      title: applyTitle(count, dropped.length),
       placeHolder: "Review the changes, then choose Apply",
       ignoreFocusOut: true,
     },
@@ -156,7 +202,7 @@ async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> 
     return;
   }
 
-  const result = await commitPlan(deps, planned);
+  const result = await commitPlan(deps, planned, { manifest });
   if (result.reason === "stale") {
     await warnStale();
     // One retry: the preview the user accepted described a document that no
@@ -171,6 +217,49 @@ async function applyDefaults(deps: CommandDeps, attempt: number): Promise<void> 
     );
   }
   await deps.runHealth();
+}
+
+/**
+ * FR-3.3's manual refresh. The one path that bypasses the hourly throttle.
+ *
+ * It always re-runs the checks, even when nothing changed: the user pressed a
+ * button, and a command that appears to do nothing is indistinguishable from a
+ * broken one. What it *says* is decided by the revision, though — see below. It never reports a failed fetch (FR-3.2) — a network that is not
+ * there produces "using the recommendations saved on this computer" in the
+ * panel and a line in the log, which is the honest answer and the only one this
+ * audience can act on.
+ */
+async function checkForUpdates(deps: CommandDeps): Promise<void> {
+  // Compared by revision, not by the holder's boolean (F15). That boolean
+  // answers "does the panel need repainting?", and the provenance is part of
+  // it — so the first successful fetch after a run on the bundled copy
+  // reported "Updated to the latest recommended settings" for a manifest
+  // byte-identical to the one already in force. The revision is the manifest's
+  // own answer to "am I a different set of recommendations?".
+  const before = deps.manifest().revision;
+  await deps.refreshManifest?.({ force: true });
+  const updated = deps.manifest().revision !== before;
+  await deps.runHealth();
+  await vscode.window.showInformationMessage(
+    updated
+      ? "Updated to the latest recommended settings."
+      : "You already have the latest recommended settings.",
+  );
+}
+
+const PROTECTION_LOST = "Claude Code will be allowed to do this again";
+
+/**
+ * F2. The dialog is not neutral about a narrowing: the title says what is being
+ * lost before the user reaches any row. `permissions.deny` is the only managed
+ * key whose contents are a safety boundary, so this is the only apply that gets
+ * a second sentence.
+ */
+function applyTitle(count: number, dropped: number): string {
+  const ask = `Apply ${pluralize(count, "recommended change")}?`;
+  return dropped === 0
+    ? ask
+    : `${ask} ${pluralize(dropped, "thing")} Claude Code cannot do today will stop being blocked.`;
 }
 
 async function openSettings(deps: CommandDeps): Promise<void> {
@@ -239,7 +328,8 @@ async function resetKey(deps: CommandDeps, arg: unknown, attempt: number): Promi
     deps.log.warn("resetKey called without a drifted key; ignoring.");
     return;
   }
-  const desired = desiredFromManifest(deps.manifest);
+  const manifest = deps.manifest();
+  const desired = desiredFromManifest(manifest);
   if (!(key in desired)) {
     // A managed key the manifest says nothing about: the reset would plan no
     // change at all, and clicking a button that does nothing reads as a bug.
@@ -251,11 +341,12 @@ async function resetKey(deps: CommandDeps, arg: unknown, attempt: number): Promi
   const planned = await resetKeyPlan(deps.env, desired, key);
   await commitSingle(deps, planned, attempt, (next) => resetKey(deps, key, next), {
     alreadyThere: `Your ${keyDisplayName(key)} already matches the recommended value.`,
+    manifest,
   });
 }
 
 async function selectRegion(deps: CommandDeps): Promise<void> {
-  const regions = deps.manifest.regions;
+  const regions = deps.manifest().regions;
   if (regions.length === 0) {
     // An empty QuickPick renders as a blank list with no explanation. It only
     // happens with a manifest that carries no regions, which M4's remote fetch
@@ -280,10 +371,12 @@ async function applyRegion(deps: CommandDeps, region: string, attempt: number): 
   // A region the user just chose is theirs by definition, so it goes through
   // the ownership-transferring reset path rather than a plain apply, which
   // would report the hand-picked value as drift forever.
+  const manifest = deps.manifest();
   const desired: Desired = { "env.AWS_REGION": region };
   const planned = await resetKeyPlan(deps.env, desired, "env.AWS_REGION");
   await commitSingle(deps, planned, attempt, (next) => applyRegion(deps, region, next), {
     alreadyThere: `Your ${keyDisplayName("env.AWS_REGION")} is already ${region}.`,
+    manifest,
   });
 }
 
@@ -329,7 +422,7 @@ async function commitSingle(
   planned: PlanResult,
   attempt: number,
   retry: (attempt: number) => Promise<void>,
-  say: { alreadyThere: string },
+  say: { alreadyThere: string; manifest: Manifest },
 ): Promise<void> {
   if (planned.kind === "blocked") {
     await reportBlocked(deps, planned.error);
@@ -347,7 +440,7 @@ async function commitSingle(
   // `forceBackup`: this write overwrites a value the *user* set, so the
   // session's one backup — which may already be spent on a routine apply — is
   // not enough to make it undoable (FR-2.4, hard rule 3).
-  const result = await commitPlan(deps, planned, { forceBackup: true });
+  const result = await commitPlan(deps, planned, { forceBackup: true, manifest: say.manifest });
   if (result.reason === "stale") {
     await warnStale();
     if (attempt < MAX_STALE_RETRIES) await retry(attempt + 1);
@@ -365,7 +458,12 @@ async function confirmReplace(planned: ReadyPlan): Promise<boolean> {
   const changes = redactChanges(planned.merge.changes);
   const first = changes[0];
   const name = first === undefined ? "these settings" : keyDisplayName(first.key);
-  const detail = changes.map(describeChange).join("\n");
+  // F2, on the other write path: a reset of the blocked-commands list restores
+  // the manifest's list over the user's, which can drop rules. Same
+  // unreadable before/after set, same fix — the losses stated first, as
+  // sentences, above the diff they would otherwise be buried in.
+  const lost = droppedProtections(changes).map(describeDroppedProtection);
+  const detail = [...lost, ...changes.map(describeChange)].join("\n");
   const choice = await vscode.window.showWarningMessage(
     `Replace your ${name} with the recommended value?`,
     { modal: true, detail: `${detail}\n\nYour current settings are saved first.` },
@@ -374,17 +472,23 @@ async function confirmReplace(planned: ReadyPlan): Promise<boolean> {
   return choice === REPLACE;
 }
 
+/**
+ * `meta.manifest` is the one the plan was built from, passed in rather than
+ * re-read (F7): the stamp has to name the revision whose values are being
+ * written, and the user's decision took long enough for a refresh to land.
+ */
 async function commitPlan(
   deps: CommandDeps,
   planned: ReadyPlan,
-  meta?: { forceBackup: true },
+  meta: { manifest: Manifest; forceBackup?: true },
 ): Promise<CommitResult> {
+  const { manifest, ...rest } = meta;
   // Suppression opens *before* the write, not after: the rename lands during
   // the call, so a window opened afterwards is already too late for the event.
   deps.markWrite();
   const result = await commit(deps.env, deps.session, planned, {
-    manifestRevision: deps.manifest.revision,
-    ...meta,
+    manifestRevision: manifest.revision,
+    ...rest,
   });
   if (result.written) {
     deps.log.info(`Wrote ${result.changes.length} change(s) to settings.json.`);

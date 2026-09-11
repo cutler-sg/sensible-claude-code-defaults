@@ -51,6 +51,55 @@ export function describeChange(change: Change): string {
   return `${keyDisplayName(change.key)} — ${before} → ${after}`;
 }
 
+/**
+ * The rules an apply would stop blocking (F2).
+ *
+ * `permissions.deny` is element-owned, so an element we wrote is ours to
+ * remove: a manifest revision that simply stops listing `Read(./.env)` removes
+ * it from every install at once, with `drift` empty because nothing was
+ * contested, and `config.stale` saying only "there are newer recommended
+ * settings to apply" — which the user presses.
+ *
+ * The removal is in `describeChange`'s output already, as a before-set and an
+ * after-set joined by commas. Reading that means diffing two comma-separated
+ * lists by eye, which is the exact task this extension exists because its
+ * audience cannot do. So the losses are extracted here and rendered as their
+ * own sentences, above everything else in the preview.
+ *
+ * Only removals: a list that grows is the update channel doing its job, and a
+ * row per addition would bury the one row that matters.
+ */
+export function droppedProtections(changes: readonly Change[]): string[] {
+  const dropped: string[] = [];
+  for (const change of changes) {
+    if (change.key !== "permissions.deny") continue;
+    // A `before` that is not a list is a malformed file the merge engine
+    // already refuses to touch; there is nothing to have lost.
+    if (!Array.isArray(change.before)) continue;
+    // `after === undefined` is the whole key being removed, which drops all of
+    // it. Anything else non-list cannot happen, and reading it as "everything
+    // is gone" would overstate rather than understate the loss.
+    const after = Array.isArray(change.after) ? change.after : [];
+    for (const rule of change.before) {
+      if (!after.some((kept) => sameRule(kept, rule))) dropped.push(formatValue(rule));
+    }
+  }
+  return dropped;
+}
+
+/**
+ * By serialised value, matching `merge.ts`'s set semantics for this key: a deny
+ * rule's identity *is* its value, so an element can only be added or removed.
+ */
+function sameRule(a: JsonValue, b: JsonValue): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** One dropped rule, as a sentence rather than as a diff the reader computes. */
+export function describeDroppedProtection(rule: string): string {
+  return `Stops blocking: ${rule}`;
+}
+
 /** Values are rendered for reading, not for round-tripping: no quotes on strings. */
 export function formatValue(value: JsonValue | undefined): string {
   if (value === undefined) return "(not set)";

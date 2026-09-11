@@ -1,18 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { ALL_CHECKS } from "../../../src/health/catalogue.js";
+import { LABELS } from "../../../src/health/labels.js";
 import { runAll, transition } from "../../../src/health/runner.js";
 import type {
+  CatalogueCheckId,
   Check,
   CheckId,
   CheckResult,
   HealthReport,
   Level,
 } from "../../../src/health/types.js";
+import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
+import type { Manifest } from "../../../src/manifest/types.js";
 import { makeCtx } from "./fixture.js";
 
 const AT = () => new Date("2026-09-10T13:00:00.000Z");
 
-function stub(id: CheckId, level: Level): Check {
+function stub(id: CatalogueCheckId, level: Level): Check {
   return {
     id,
     group: "Configuration",
@@ -26,7 +30,7 @@ function stub(id: CheckId, level: Level): Check {
   };
 }
 
-function thrower(id: CheckId, error: unknown): Check {
+function thrower(id: CatalogueCheckId, error: unknown): Check {
   return {
     id,
     group: "Configuration",
@@ -87,6 +91,58 @@ describe("runAll", () => {
   it("stringifies a non-Error throw", async () => {
     const result = await report(thrower("config.exists", "just a string"));
     expect(result.results[0]?.detail).toBe("just a string");
+  });
+
+  /**
+   * F5. The notice push used to sit outside `runOne`'s try/catch, so a manifest
+   * whose `notices` is not an array made `runAll` reject — which the host turns
+   * into a permanent error toast and an empty panel.
+   *
+   * Narrow today, because validation guarantees the shape. But `manifestHolder`
+   * starts on `BUNDLED_MANIFEST`, which is a cast that has not been validated
+   * at that point, and `resolve.ts`'s bundled floor deliberately returns its
+   * manifest even when validation fails — so the runner is reachable with a
+   * manifest nobody vouched for, and it is the wrong layer to find that out in.
+   */
+  it("does not let a malformed manifest's notices take the whole report down (F5)", async () => {
+    const ctx = makeCtx({
+      manifest: { ...BUNDLED_MANIFEST, notices: "not an array" } as unknown as Manifest,
+    });
+
+    const result = await runAll([stub("config.exists", "pass")], ctx, AT);
+
+    // The checks still ran and the panel still has rows.
+    expect(result.results[0]?.id).toBe("config.exists");
+    expect(result.counts.pass).toBe(1);
+  });
+
+  it("reports the failed notice synthesis as one contained row, not silence", async () => {
+    const ctx = makeCtx({
+      manifest: { ...BUNDLED_MANIFEST, notices: undefined } as unknown as Manifest,
+    });
+
+    const result = await runAll([stub("config.exists", "pass")], ctx, AT);
+
+    const crashed = result.results.find((entry) => entry.label === LABELS.crashed);
+    expect(crashed).toMatchObject({ group: "Configuration", level: "error" });
+    expect(crashed?.fix).toEqual({ kind: "none" });
+  });
+
+  it("describes a non-Error thrown out of notice synthesis", async () => {
+    const ctx = makeCtx({
+      manifest: {
+        ...BUNDLED_MANIFEST,
+        get notices(): never {
+          throw "just a string";
+        },
+      } as unknown as Manifest,
+    });
+
+    const result = await runAll([stub("config.exists", "pass")], ctx, AT);
+
+    expect(result.results.find((entry) => entry.label === LABELS.crashed)?.detail).toBe(
+      "just a string",
+    );
   });
 
   it("runs the real catalogue on a healthy context with no errors", async () => {

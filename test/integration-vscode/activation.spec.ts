@@ -24,6 +24,7 @@ describe("activation", () => {
     for (const id of [
       "sensibleDefaults.runHealthCheck",
       "sensibleDefaults.applyDefaults",
+      "sensibleDefaults.checkForUpdates",
       "sensibleDefaults.openSettings",
       "sensibleDefaults.restoreBackup",
       "sensibleDefaults.selectRegion",
@@ -46,4 +47,13 @@ describe("activation", () => {
     await vscode.commands.executeCommand("sensibleDefaults.runHealthCheck");
     await vscode.commands.executeCommand("sensibleDefaults.runHealthCheck");
   });
+
+  /**
+   * `checkForUpdates` is deliberately not executed here, and neither is any
+   * other command that ends on a notification. `showInformationMessage`
+   * resolves when the user dismisses the toast, and in a headless host nobody
+   * does — the command's promise simply never settles and the test times out.
+   * Its behaviour is covered in `test/unit/ui/commands.test.ts`, where the
+   * dialogue is the thing under test rather than an obstacle to it.
+   */
 });

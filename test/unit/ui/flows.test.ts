@@ -45,7 +45,7 @@ function deps(manifest: Manifest = BUNDLED_MANIFEST): FlowDeps {
   return {
     env,
     session,
-    manifest,
+    manifest: () => manifest,
     log: log as never,
     runHealth: async () => {
       healthRuns += 1;

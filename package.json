@@ -37,7 +37,10 @@
   "main": "./dist/extension.js",
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": true,
+      "restrictedConfigurations": [
+        "sensibleDefaults.manifestUrl"
+      ]
     }
   },
   "contributes": {
@@ -70,6 +73,11 @@
         "title": "Apply Recommended Configuration",
         "category": "Sensible Defaults",
         "icon": "$(wand)"
+      },
+      {
+        "command": "sensibleDefaults.checkForUpdates",
+        "title": "Check for Updated Recommendations",
+        "category": "Sensible Defaults"
       },
       {
         "command": "sensibleDefaults.openSettings",
@@ -144,6 +152,7 @@
       "properties": {
         "sensibleDefaults.manifestUrl": {
           "type": "string",
+          "scope": "application",
           "default": "https://raw.githubusercontent.com/cutler-sg/sensible-claude-code-defaults/main/manifest/defaults.json",
           "description": "URL of the defaults manifest. Falls back to the cached and then the bundled copy when unreachable."
         },
