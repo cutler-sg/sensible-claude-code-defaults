@@ -1,14 +1,19 @@
 # Sensible Claude Code Defaults
 
-A VS Code extension that sets up and continuously health-checks a working Claude
-Code configuration on AWS Bedrock. It writes a small, well-defined set of keys to
-your user-level `~/.claude/settings.json`, keeps your Bedrock API key in the OS
+Sets up Claude Code to run on AWS Bedrock, then keeps checking that the setup
+still works. It writes a short, fixed list of keys to your own
+`~/.claude/settings.json`, keeps your Bedrock API key in your computer's
 keychain, and tells you plainly when something is wrong — a missing region, an
-ageing credential, a setting that drifted.
+ageing key, a setting that drifted.
 
-## Independence
+<!--
+  Screenshot of the health panel goes here as `media/panel.png`, captured from a
+  real window rather than mocked up. Not committed yet; this comment is the
+  placeholder rather than a broken image link.
+-->
 
-An independent tool. Not affiliated with, endorsed by, or sponsored by Anthropic, PBC.
+**An independent tool. Not affiliated with, endorsed by, or sponsored by
+Anthropic, PBC.**
 
 ## What this extension writes
 
@@ -20,29 +25,37 @@ Everything is written to your **user profile**, never inside a project folder:
 | Backups (10 most recent) | `~/.claude/sensible-defaults/backups/` |
 | Record of what we last wrote | `~/.claude/sensible-defaults/state.json` |
 
-Inside `settings.json` it manages a short, fixed list of keys and leaves the rest
-of the file — including your own settings, ordering, and indentation — untouched:
+Inside `settings.json` it manages nine keys and nothing else. The rest of the
+file — your own settings, their order, your indentation — is left exactly as it
+was. Here is the whole list, with what the defaults that ship inside the
+extension set each one to:
 
-- **Use AWS Bedrock** — tells Claude Code to talk to AWS instead of Anthropic directly.
-- **AWS region** — which AWS region your Bedrock models are called in.
-- **Opus / Sonnet / Haiku model** — which model each of the three sizes maps to.
-- **Bedrock API key** — your credential. Kept in your operating system's keychain;
-  the copy here is what Claude Code actually reads.
-- **Blocked actions** — a small baseline list of things Claude Code should refuse
-  to do without asking.
-- **Plugin marketplaces** and **enabled plugins** — registered once, so plugin
-  updates arrive without the extension touching your settings again.
+| The key in `settings.json` | What it is | Shipped default |
+|---|---|---|
+| `env.CLAUDE_CODE_USE_BEDROCK` | Talk to AWS instead of Anthropic directly | `"1"` |
+| `env.AWS_REGION` | Which AWS region your Bedrock models are called in | `us-east-1` |
+| `env.ANTHROPIC_DEFAULT_OPUS_MODEL` | Which model "Opus" means | `us.anthropic.claude-opus-5` |
+| `env.ANTHROPIC_DEFAULT_SONNET_MODEL` | Which model "Sonnet" means | `us.anthropic.claude-sonnet-5` |
+| `env.ANTHROPIC_DEFAULT_HAIKU_MODEL` | Which model "Haiku" means | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `env.AWS_BEARER_TOKEN_BEDROCK` | Your Bedrock API key | your key, never anything of ours |
+| `permissions.deny` | Things Claude Code refuses outright, without asking you | `Bash(rm -rf:*)`, `Read(./.env)`, `Read(./.aws/**)` |
+| `extraKnownMarketplaces` | Claude Code plugin marketplaces to register | nothing — the key is there so a forked manifest can add some |
+| `enabledPlugins` | Claude Code plugins to turn on | nothing, for the same reason |
+
+Both lists are checkable: the nine keys are `MANAGED_KEYS` in
+[`src/config/types.ts`](src/config/types.ts), and the values are
+[`manifest/defaults.json`](manifest/defaults.json).
 
 Before any change you get a preview listing every line that will change, and a
-copy of the previous file is saved to the backups folder above. `Restore Previous
-Configuration` puts any of those copies back.
+copy of the previous file is saved to the backups folder above. *Restore
+Previous Configuration* puts any of those copies back.
 
 **Claude Code writes some of these keys too.** Its own `/setup-bedrock` command
-and its model-selection prompt write the region and the model names directly. The
-extension does not fight that: when a managed value no longer matches what it last
-wrote, the panel reports it — "Claude Code changed the Opus model" — and leaves the
-value alone. Use *Reset to Recommended* on that row if you want the recommended
-value back; nothing is overwritten until you do.
+and its model-selection prompt write the region and the model names directly.
+The extension does not fight that: when a managed value no longer matches what
+it last wrote, the panel reports it — "Claude Code changed the Opus model" — and
+leaves the value alone. Use *Reset to Recommended* on that row if you want the
+recommended value back; nothing is overwritten until you do.
 
 ## If you use WSL, Remote-SSH, or a dev container
 
@@ -84,13 +97,15 @@ saying `wsl`, `ssh-remote`, `dev-container` or `local`.
 
 ## Where your Bedrock API key is stored
 
-Your key lives in **your operating system's keychain** — Keychain on macOS,
-Credential Manager on Windows, the login keyring on Linux. That copy is the
-real one: it is what *Set Bedrock API Key* writes, what *Update Bedrock API Key*
-replaces, and what the age reminder measures.
+Your key lives in **your editor's secret storage**, which is encrypted on disk
+with a key held in your operating system's keychain — Keychain on macOS, DPAPI
+on Windows, the login keyring on Linux. That copy is the real one: it is what
+*Set Bedrock API Key* writes, what *Update Bedrock API Key* replaces, and what
+the age reminder measures.
 
-It is also written into `~/.claude/settings.json`, at mode `0600` (readable only
-by you). That second copy is not optional and not an oversight:
+It is also written into `~/.claude/settings.json`, readable only by you — mode
+`0600` on macOS and Linux, and on Windows an access list with the broad
+principals removed. That second copy is not optional and not an oversight:
 
 - The **Claude Code panel** inside VS Code starts its program from VS Code
   itself, and a program cannot read your keychain. The settings file is the only
@@ -98,15 +113,56 @@ by you). That second copy is not optional and not an oversight:
 - Integrated **terminals** get the key a different way — the extension hands it
   to each new terminal directly, so a terminal never reads it from disk.
 
-*Remove Bedrock API Key* clears all three at once: keychain, settings file, and
-terminals. It does not cancel the key at Amazon — do that in the Bedrock console
-if you want it to stop working everywhere.
+*Remove Bedrock API Key* clears all three at once: secret storage, settings
+file, and terminals. It does not cancel the key at Amazon — do that in the
+Bedrock console if you want it to stop working everywhere.
 
 If you already ran Claude Code's own `/setup-bedrock`, your key is in the
-settings file but not the keychain. The panel offers **Use the key from my
-settings file**, which saves it to the keychain without making you find it again.
-If the two ever hold *different* keys, nothing is overwritten: the panel asks
-which one you want.
+settings file but not in secret storage. The panel offers **Use the key from my
+settings file**, which saves it without making you find it again. If the two
+ever hold *different* keys, nothing is overwritten: the panel asks which one you
+want.
+
+**None of this stops the key being read by what Claude Code starts.** That is
+the first item under [Residual risk](#residual-risk), and it is the part worth
+reading.
+
+## Network requests
+
+This extension makes exactly two outbound requests, and no others. It sends no
+telemetry, no analytics, and no crash reports — not "none yet", but a deliberate
+commitment: adding any would mean an opt-in, a disclosure here, and honouring
+your `telemetry.telemetryLevel`.
+
+**1. It fetches the recommended settings.**
+
+```
+GET https://raw.githubusercontent.com/cutler-sg/sensible-claude-code-defaults/main/manifest/defaults.json
+```
+
+At most once an hour per window, and whenever you run *Check for Updated
+Recommendations*. It sends nothing but the request — no key, no identifier, no
+query string, and nothing about you or your machine. The reply is the table of
+recommended values above. If it fails, or takes longer than five seconds, the
+last good copy is used, and failing that the copy inside the extension; the
+panel says which one it is using rather than pretending the channel worked.
+
+**2. It tests your Bedrock API key, when you ask it to.**
+
+```
+POST https://bedrock-runtime.<your region>.amazonaws.com/model/<model id>/invoke
+```
+
+Only when you click *Test Bedrock Connection*. This is the only time the
+extension sends your key anywhere. It goes to Amazon's Bedrock endpoint for your
+configured region and nowhere else, sends a one-character message, asks for a
+single token of output, and reports only whether it worked. Nothing about the
+answer — including any error text Amazon returns — is logged or shown to you
+verbatim.
+
+Neither request is proxied by anything of ours: the extension has no proxy
+configuration of its own and uses the editor's own network stack, so your
+`http.proxy` settings apply.
 
 ## Residual risk
 
@@ -138,7 +194,9 @@ and how long it lasts.
 When a key is saved, the panel checks your open project folders for a copy of it
 — the case where a tutorial told you to paste it into a `.env` and it is now on
 its way to a git remote. A clean result is worth something, but it is not a
-guarantee. Here is exactly what it does and does not do.
+guarantee. Here is exactly what it does and does not do. The whole of it is
+[`src/credential/leakScan.ts`](src/credential/leakScan.ts), if you would rather
+read the code than take this on trust.
 
 **It looks at** the places a key actually gets pasted, inside the folders you
 currently have open:
@@ -165,18 +223,19 @@ symbolic links out of a folder. If a folder you opened is itself a shortcut to
 somewhere else, the scan reads the real location it points at and names files
 by where they actually are.
 
-**It stops after three seconds.** On a large project it will not have looked at
-everything, and it says so — a row reading "we ran out of time" is not a clean
-result, and the panel never reports one as if it were. If it finds a copy of
-your key *and* runs out of time, it tells you both: the file it found is real,
-but the list is not necessarily the whole list, and running the check again
-picks up where it left off.
+**It stops after three seconds, or 5,000 files.** On a large project it will not
+have looked at everything, and it says so — a row reading "we ran out of time"
+is not a clean result, and the panel never reports one as if it were. If it
+finds a copy of your key *and* runs out of time, it tells you both: the file it
+found is real, but the list is not necessarily the whole list, and running the
+check again picks up where it left off.
 
 **It does not look inside your git history.** If the key has ever been
 committed, it is in past versions of the repository and in every clone of it.
-Deleting the line today does not remove it. When the scan finds your key in a
-file that git is tracking, it says so and tells you to replace the key —
-because replacing it is the only thing that actually works.
+Deleting the line today does not remove it, and neither does deleting the
+branch. When the scan finds your key in a file that git is tracking, it says so
+and tells you to replace the key — because replacing it is the only thing that
+actually works.
 
 **It never edits your files.** Nothing in this extension writes inside a project
 folder, ever. If your key is found, you are shown which file, and you remove it.
@@ -196,25 +255,55 @@ like a credential — is replaced with `«redacted»` before it reaches the
 clipboard**, so the report is safe to paste into a public issue. Nothing is
 written to a file: the report exists only on your clipboard until you paste it.
 
-## Network requests
+Questions and bugs both go to
+[GitHub issues](https://github.com/cutler-sg/sensible-claude-code-defaults/issues).
+**A way for your key to end up somewhere it should not be is the one thing that
+does not go in a public issue** — email security@cutler.sg instead; the scope is
+in [SECURITY.md](SECURITY.md).
 
-This extension makes exactly two kinds of outbound request, and no others. It
-sends no telemetry, analytics, or crash reports.
+## Uninstalling
 
-| Request | When | What is sent |
-|---|---|---|
-| Test your Bedrock API key | Only when you click *Test Bedrock Connection* | Your key, to Amazon, over HTTPS |
-| Fetch the recommended settings *(not yet — a later update)* | On startup and when you re-check | Nothing but the request itself |
+Uninstalling the extension removes the extension. It does not undo what the
+extension wrote, so here is the rest of it.
 
-Today the recommended settings ship inside the extension, so the test call is
-the only request it makes at all.
+**Do this first, while the extension is still installed:** run *Remove Bedrock
+API Key*. That is the only convenient way to get the key out of your editor's
+secret storage — VS Code does not clear an extension's secrets when you
+uninstall it ([microsoft/vscode#123817](https://github.com/microsoft/vscode/issues/123817),
+still open), and there is no per-extension item you can go and delete by hand on
+any platform: the secrets live encrypted inside VS Code's own state, and the
+only thing in your macOS Keychain, Windows DPAPI store or Linux keyring is the
+key that decrypts all of them, shared by every extension. If you have already
+uninstalled, reinstall, run the command, and uninstall again.
 
-The test call is the only time the extension sends your key anywhere. It goes to
-Amazon's Bedrock endpoint for your configured region and nowhere else, asks for
-a single token of output, and reports only whether it worked. Nothing about the
-answer — including any error text Amazon returns — is logged or shown to you
-verbatim.
+Then, at your leisure:
 
-Both requests honour VS Code's proxy settings (`http.proxy`,
-`http.proxySupport`); the extension has no proxy configuration of its own.
+- **`~/.claude/settings.json` keeps the nine keys**, your Bedrock API key among
+  them. Nothing removes them for you. Delete the `env` entries you no longer
+  want, or restore a backup before you uninstall.
+- **`~/.claude/sensible-defaults/` stays.** It holds `state.json` and up to ten
+  backups of your previous settings — and a backup taken after you set your key
+  contains that key in plain text. `rm -rf ~/.claude/sensible-defaults` when you
+  are done with them.
+- **The cached copy of the recommended settings** sits in VS Code's own
+  extension storage. It contains nothing about you and goes when VS Code cleans
+  up the extension's data.
+- **Your project folders have nothing to clean up.** The extension never wrote
+  anything inside one.
 
+## Why this exists
+
+Claude Code on Bedrock needs half a dozen environment variables to be right at
+once, in a file most people have no reason to open, and the failure modes all
+look the same from the outside: it just does not work. This extension writes
+those variables, keeps your key somewhere better than a shell profile, and
+turns "it does not work" into a sentence naming which one of them is wrong.
+
+That is the whole of it. It is not a proxy and it is not a gateway: your
+requests go from Claude Code straight to AWS, it never sees a prompt or a
+response, and it runs no inference of its own. It configures a tool that
+somebody else wrote, and says so.
+
+MIT licensed. The source is at
+[github.com/cutler-sg/sensible-claude-code-defaults](https://github.com/cutler-sg/sensible-claude-code-defaults) —
+every claim on this page is a file in it.

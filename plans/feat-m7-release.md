@@ -1,7 +1,7 @@
 # Plan — M7 (README, first-run polish, pre-release publish)
 
 Source of truth: `docs/PRD.md` §5A (naming, icon, trademark posture), §8 (build/CI auth), §9 (publishing runbook), §13 (trust posture), D8 (non-affiliation is a launch blocker).
-Depends on everything. Branch: `feat/m7-release`. Status: **draft, written 2026-09-11.**
+Depends on everything. Branch: `feat/m7-release`. Status: **Parts A and B done 2026-09-11; Parts C and D blocked on MC's account work.**
 
 ## The framing
 
@@ -9,19 +9,19 @@ A new, unverified publisher asking non-technical users for an AWS credential is 
 
 ## Part A — the README, which is also the Marketplace listing page
 
-- [ ] **Above the fold**: what it does in two sentences, a screenshot of the panel, and the non-affiliation statement verbatim: *"An independent tool. Not affiliated with, endorsed by, or sponsored by Anthropic, PBC."* (D8 — load-bearing, because the mark sits mid-phrase in the name rather than in a detachable trailing descriptor.)
-- [ ] **What this extension writes** — already drafted in M2; verify it still matches the managed key list.
-- [ ] **Where your Bedrock API key is stored** — drafted in M3; must include FR-4.10 plainly: Claude Code passes credentials through the process environment, so every subprocess and MCP server it spawns inherits the token. Storage hardening does not change that; scope and rotation do.
-- [ ] **Network requests** — exactly two, both named with their URLs: the defaults manifest fetch, and the user-initiated Bedrock test call. No telemetry, and say so.
-- [ ] **Residual risk** — the leak scan's coverage and its limits; that a token already committed to git is in history and rotation is the only remedy.
-- [ ] **Uninstalling** — what is left behind (`~/.claude/sensible-defaults/`, the keychain entry) and how to remove it. A tool that writes to a config directory owes the reader an exit.
-- [ ] A short "why does this exist" that does not oversell: it configures, it does not proxy or run inference.
+- [x] **Above the fold**: what it does in two sentences, a screenshot of the panel, and the non-affiliation statement verbatim: *"An independent tool. Not affiliated with, endorsed by, or sponsored by Anthropic, PBC."* (D8 — load-bearing, because the mark sits mid-phrase in the name rather than in a detachable trailing descriptor.)
+- [x] **What this extension writes** — already drafted in M2; verify it still matches the managed key list.
+- [x] **Where your Bedrock API key is stored** — drafted in M3; must include FR-4.10 plainly: Claude Code passes credentials through the process environment, so every subprocess and MCP server it spawns inherits the token. Storage hardening does not change that; scope and rotation do.
+- [x] **Network requests** — exactly two, both named with their URLs: the defaults manifest fetch, and the user-initiated Bedrock test call. No telemetry, and say so.
+- [x] **Residual risk** — the leak scan's coverage and its limits; that a token already committed to git is in history and rotation is the only remedy.
+- [x] **Uninstalling** — what is left behind (`~/.claude/sensible-defaults/`, the keychain entry) and how to remove it. A tool that writes to a config directory owes the reader an exit.
+- [x] A short "why does this exist" that does not oversell: it configures, it does not proxy or run inference.
 
 ## Part B — icon and listing (§5A)
 
-- [ ] Replace the M0 placeholder. Constraints from §5A: no orange, no starburst, nothing resembling Anthropic's mark (differentiation *and* trade dress), not the default glyph, legible at 32px, a colour uncommon in Claude-adjacent listings. The current teal check-mark satisfies the letter of this; M7 decides whether it is good enough to ship or wants one deliberate pass.
-- [ ] `galleryBanner` colour + theme, `categories`, and a description that carries the search keywords while the title stays differentiated (§5A: search matches the full name and description regardless of sidebar clipping).
-- [ ] `CHANGELOG.md` written for humans, not commit-message dumps.
+- [x] Replace the M0 placeholder. Constraints from §5A: no orange, no starburst, nothing resembling Anthropic's mark (differentiation *and* trade dress), not the default glyph, legible at 32px, a colour uncommon in Claude-adjacent listings. The current teal check-mark satisfies the letter of this; M7 decides whether it is good enough to ship or wants one deliberate pass.
+- [x] `galleryBanner` colour + theme, `categories`, and a description that carries the search keywords while the title stays differentiated (§5A: search matches the full name and description regardless of sidebar clipping).
+- [x] `CHANGELOG.md` written for humans, not commit-message dumps.
 
 ## Part C — publishing, which is mostly account work MC must do
 
