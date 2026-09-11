@@ -5,7 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-09-11
+
+### Fixed
+
+- The activity bar entry had no icon. The glyph file was removed as unused in
+  the release prep, because nothing in the code references it — VS Code resolves
+  the path at runtime. A test now checks that every icon the manifest points at
+  exists on disk.
+
+## [0.1.0] - 2026-09-11
 
 First release, published as a pre-release. It sets up Claude Code to run on AWS
 Bedrock and then keeps checking that the setup still works.
