@@ -3,7 +3,11 @@ name: CI
 on:
   push:
     branches: ["**"]
+  # `synchronize` is deliberately absent: a new commit on a PR branch already
+  # fires the push trigger, and listening for both ran the whole matrix twice
+  # per commit — two macOS runners to learn one thing.
   pull_request:
+    types: [opened, reopened]
 
 permissions:
   contents: read
