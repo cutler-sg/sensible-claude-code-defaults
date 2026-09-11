@@ -257,6 +257,9 @@ written to a file: the report exists only on your clipboard until you paste it.
 
 Questions and bugs both go to
 [GitHub issues](https://github.com/cutler-sg/sensible-claude-code-defaults/issues).
+**A way for your key to end up somewhere it should not be is the one thing that
+does not go in a public issue** — email security@cutler.sg instead; the scope is
+in [SECURITY.md](SECURITY.md).
 
 ## Uninstalling
 
