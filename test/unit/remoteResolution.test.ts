@@ -21,12 +21,14 @@ import { resolveClaudeDir } from "../../src/config/paths.js";
  * `extensionKind`); `test/integration-vscode/resolution.spec.ts` covers the
  * second; `docs/manual-verification.md` items 3 and 4 close what neither can.
  *
- * Expectations run through `path.resolve` because the *runner* may be Windows
- * even when the home under test is a POSIX remote one: `resolveClaudeDir` ends
- * in `path.resolve`, which on Windows prefixes the current drive. Comparing
- * against a bare `/home/...` literal would assert the runner's platform rather
- * than where the config lands. The remote-vs-client distinction each case is
- * really about survives that normalisation untouched.
+ * Expectations are built with the same `path` primitive the function itself
+ * uses, because the *runner* may be Windows even when the home under test is a
+ * POSIX remote one. The default branch is `path.join(home, '.claude')`, which
+ * adds no drive; the `CLAUDE_CONFIG_DIR` branch ends in `path.resolve`, which
+ * on Windows does. Spelling either as a bare `/home/...` literal would assert
+ * the runner's platform rather than where the config lands, and spelling both
+ * the same way gets one of them wrong. The remote-vs-client distinction each
+ * case is really about survives either normalisation untouched.
  */
 describe("resolveClaudeDir on a remote extension host (FR-1.3)", () => {
   /** A WSL2 distro's home. Not `/mnt/c/Users/...`, which is the Windows side. */
@@ -40,7 +42,7 @@ describe("resolveClaudeDir on a remote extension host (FR-1.3)", () => {
 
   it("resolves under the WSL home, not the Windows profile it is reached from", () => {
     const resolved = resolveClaudeDir({}, WSL_HOME);
-    expect(resolved).toBe(path.resolve(path.join(WSL_HOME, ".claude")));
+    expect(resolved).toBe(path.join(WSL_HOME, ".claude"));
     // The §10.3 row, as an assertion: "writes land in the WSL home, not the
     // Windows home". Both halves, because the first alone would also pass for a
     // path that happened to contain the right substring.
@@ -52,13 +54,11 @@ describe("resolveClaudeDir on a remote extension host (FR-1.3)", () => {
   });
 
   it("resolves under the SSH login's home on the server", () => {
-    expect(resolveClaudeDir({}, SSH_HOME)).toBe(path.resolve(path.join(SSH_HOME, ".claude")));
+    expect(resolveClaudeDir({}, SSH_HOME)).toBe(path.join(SSH_HOME, ".claude"));
   });
 
   it("resolves under the devcontainer user's home", () => {
-    expect(resolveClaudeDir({}, CONTAINER_HOME)).toBe(
-      path.resolve(path.join(CONTAINER_HOME, ".claude")),
-    );
+    expect(resolveClaudeDir({}, CONTAINER_HOME)).toBe(path.join(CONTAINER_HOME, ".claude"));
   });
 
   it("gives a different answer for each side, so the sides cannot be confused", () => {
@@ -83,7 +83,7 @@ describe("resolveClaudeDir on a remote extension host (FR-1.3)", () => {
     // The regression in one line. A Windows client reaching a Linux remote: the
     // answer is the remote's, and nothing about the client appears in it.
     const resolved = resolveClaudeDir({}, WSL_HOME);
-    expect(resolved).not.toBe(path.resolve(path.join(WINDOWS_HOME, ".claude")));
+    expect(resolved).not.toBe(path.join(WINDOWS_HOME, ".claude"));
     expect(resolved.toLowerCase()).not.toContain("c:\\");
   });
 });
