@@ -297,6 +297,32 @@ describe("testConnection classification", () => {
     expect(result).toEqual({ kind: "bad-credential", status: 401 });
   });
 
+  /**
+   * The bearer-token path does not use the SigV4 exception names. These are
+   * the exact bodies `bedrock-runtime` returned on 2026-09-11 for a refused
+   * `Authorization: Bearer` key; the first is what a user with an expired or
+   * mistyped key actually sees. None carries an exception name, so they reach
+   * the bare-403 fallback — which is the right answer. Pinned so a future marker
+   * cannot quietly claim them for a model or policy verdict instead.
+   */
+  it.each([
+    [
+      "a refused bearer key",
+      '{"Message":"Authentication failed: Please make sure your API Key is valid."}',
+    ],
+    [
+      "a key without the prefix",
+      '{"Message":"Invalid API Key format: Must start with pre-defined prefix"}',
+    ],
+    [
+      "a key missing its delimiter",
+      '{"Message":"Invalid API Key format: Delimiter \':\' not found"}',
+    ],
+  ])("403 for %s is a bad credential, not unknown", async (_name, body) => {
+    const { result } = await run([respond(403, body)]);
+    expect(result).toEqual({ kind: "bad-credential", status: 403 });
+  });
+
   it("403 with UnrecognizedClientException is a bad credential", async () => {
     const { result } = await run([respond(403, '{"__type":"UnrecognizedClientException"}')]);
     expect(result).toEqual({ kind: "bad-credential", status: 403 });

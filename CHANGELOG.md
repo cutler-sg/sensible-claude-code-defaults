@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.1] - 2026-09-11
 
+### Changed
+
+- The recommended models now use Amazon's **global** inference profiles
+  (`global.anthropic.…`) instead of the US-only ones. They work from every
+  commercial region — the US-only form does not exist in Singapore, Tokyo,
+  Mumbai or most of Asia-Pacific — and Claude Code itself falls back to the same
+  prefix outside the US and EU. The README says what you lose (a data-residency
+  guarantee, GovCloud) and how to pick a regional form instead.
+
 ### Fixed
 
+- When *Test Bedrock Connection* hits a response it cannot classify, the Output
+  channel now records the HTTP status alongside "unknown", so the next such
+  report can be diagnosed from the log alone.
 - The activity bar entry had no icon. The glyph file was removed as unused in
   the release prep, because nothing in the code references it — VS Code resolves
   the path at runtime. A test now checks that every icon the manifest points at

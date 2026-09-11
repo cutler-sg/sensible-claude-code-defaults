@@ -5,7 +5,7 @@ import { LABELS } from "../../../src/health/labels.js";
 import type { CheckContext, ManifestStatus } from "../../../src/health/types.js";
 import { makeCtx } from "./fixture.js";
 
-const CURRENT = "2026-09-10T00:00:00Z";
+const CURRENT = "2026-09-11T00:00:00Z";
 const OLDER = "2026-08-01T00:00:00Z";
 
 function applied(revision: string | undefined): Snapshot {

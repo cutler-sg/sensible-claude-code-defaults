@@ -60,7 +60,7 @@ function desiredFixture(overrides: Desired = {}): Desired {
     "env.AWS_REGION": "us-east-1",
     "env.ANTHROPIC_DEFAULT_OPUS_MODEL": OPUS_V1,
     "env.ANTHROPIC_DEFAULT_SONNET_MODEL": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-    "env.ANTHROPIC_DEFAULT_HAIKU_MODEL": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "env.ANTHROPIC_DEFAULT_HAIKU_MODEL": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
     "env.AWS_BEARER_TOKEN_BEDROCK": "ABSKQmVkcm9ja0FQSUtleS1leGFtcGxl",
     "permissions.deny": ["Bash(rm -rf:*)", "Read(./.env)"],
     extraKnownMarketplaces: {
@@ -176,7 +176,7 @@ describe("fresh install", () => {
     expect(planned.merge.drift).toEqual([]);
 
     const result = await commit(env, session, planned, {
-      manifestRevision: "2026-09-10T00:00:00Z",
+      manifestRevision: "2026-09-11T00:00:00Z",
     });
 
     expect(result).toMatchObject({ written: true, backup: undefined });
@@ -185,7 +185,7 @@ describe("fresh install", () => {
 
     const snapshot = await readSnapshotFile();
     expect(Object.keys(snapshot.values)).toHaveLength(9);
-    expect(snapshot.manifestRevision).toBe("2026-09-10T00:00:00Z");
+    expect(snapshot.manifestRevision).toBe("2026-09-11T00:00:00Z");
     expect(snapshot.appliedAt).toBe(new Date(clockMs).toISOString());
     expect(await listBackups(backupsDir(claudeDir))).toEqual([]);
   });
