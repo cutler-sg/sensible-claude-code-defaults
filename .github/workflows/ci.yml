@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# A push supersedes the run before it. Without this a hung leg keeps a runner
+# (and a macOS one at that) busy long after its commit stopped mattering.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # The unit suite is filesystem-heavy and platform-parameterised (workspace
   # guard, mode/ACL repair, path resolution), so most platform risk is reachable
@@ -16,6 +22,7 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +61,7 @@ jobs:
   headless-linux:
     name: test (linux, no keyring)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -76,6 +84,7 @@ jobs:
 
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 

@@ -146,6 +146,12 @@ describe("claude directory resolution (FR-1.3)", () => {
     assert.ok(launcherHome);
     const decoy = path.join(launcherHome, ".claude", "settings.json");
 
+    // `openSettings` falls back to a modal offer to create the file when it is
+    // not there, and in a headless host nobody dismisses it: the command's
+    // promise never settles and the run hangs until the job timeout rather than
+    // failing. Plant the file so the command takes its open-an-editor path.
+    writeFileSync(expectedSettings, "{}\n");
+
     await vscode.commands.executeCommand("sensibleDefaults.openSettings");
     const opened = vscode.window.activeTextEditor?.document.uri.fsPath;
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
