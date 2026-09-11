@@ -1,7 +1,7 @@
 {
   "name": "sensible-claude-code-defaults",
   "displayName": "Sensible Claude Code Defaults",
-  "description": "Health checks and working defaults for Claude Code on AWS Bedrock.",
+  "description": "Set up and health-check Claude Code on AWS Bedrock: sensible defaults, guided Bedrock API key setup, and a panel that says what is wrong. An independent tool, not affiliated with Anthropic, PBC.",
   "publisher": "cutler-sg",
   "version": "0.1.0",
   "license": "MIT",
@@ -16,15 +16,27 @@
   "keywords": [
     "claude",
     "claude code",
+    "anthropic",
     "bedrock",
+    "amazon bedrock",
     "aws",
-    "configuration"
+    "configuration",
+    "settings",
+    "credentials",
+    "health check"
   ],
   "qna": "https://github.com/cutler-sg/sensible-claude-code-defaults/issues",
   "icon": "media/icon.png",
   "categories": [
+    "AI",
+    "Machine Learning",
     "Other"
   ],
+  "galleryBanner": {
+    "color": "#0B2F38",
+    "theme": "dark"
+  },
+  "preview": true,
   "engines": {
     "vscode": "^1.98.0"
   },

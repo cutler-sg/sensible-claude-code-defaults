@@ -29,6 +29,59 @@ describe("package.json", () => {
     expect(manifest.capabilities.untrustedWorkspaces.supported).toBe(true);
   });
 
+  it("carries the search keywords and the non-affiliation statement (§5A, D8)", () => {
+    // The title is free to differentiate because search matches the full
+    // display name *and* the description; the description is where the words a
+    // user types have to appear. D8 puts the non-affiliation statement in the
+    // Marketplace description as well as the README, so it is pinned here.
+    const description = manifest.description.toLowerCase();
+    for (const term of ["claude code", "bedrock", "aws"]) {
+      expect(description).toContain(term);
+    }
+    expect(manifest.description).toContain("not affiliated with Anthropic, PBC");
+  });
+
+  it("declares categories the Marketplace recognises, and not just Other", () => {
+    // The Marketplace rejects anything outside this list, and `Other` alone
+    // puts the listing in the bucket nobody browses.
+    const allowed = new Set([
+      "AI",
+      "Azure",
+      "Chat",
+      "Data Science",
+      "Debuggers",
+      "Extension Packs",
+      "Education",
+      "Formatters",
+      "Keymaps",
+      "Language Packs",
+      "Linters",
+      "Machine Learning",
+      "Notebooks",
+      "Programming Languages",
+      "SCM Providers",
+      "Snippets",
+      "Testing",
+      "Themes",
+      "Visualization",
+      "Other",
+    ]);
+    expect(manifest.categories.length).toBeGreaterThan(1);
+    for (const category of manifest.categories) {
+      expect(allowed).toContain(category);
+    }
+  });
+
+  it("stays under the Marketplace's 30-keyword ceiling", () => {
+    // Publishing fails outright with "You exceeded the number of allowed tags
+    // of 30", so this is a gate rather than a style preference.
+    expect(manifest.keywords.length).toBeLessThanOrEqual(30);
+  });
+
+  it("ships 0.1.0 flagged as a preview (plan Q-AI)", () => {
+    expect(manifest.preview).toBe(true);
+  });
+
   it("contributes the sensibleDefaults activity bar container", () => {
     const containers = manifest.contributes.viewsContainers.activitybar;
     expect(containers.map((c) => c.id)).toContain("sensibleDefaults");
