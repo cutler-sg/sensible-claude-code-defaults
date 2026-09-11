@@ -10,6 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 const hooks = vi.hoisted(() => ({
   renameFailure: null as Error | null,
+  /** Fail the next N renames with this error, then let the real one through. */
+  renameFailuresLeft: 0,
+  renameTransientError: null as Error | null,
+  renameCalls: 0,
   chmodCalls: 0,
   dirSyncFailure: null as Error | null,
   dirSyncs: 0,
@@ -21,10 +25,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     default: actual,
     rename: (...args: Parameters<typeof actual.rename>) => {
+      hooks.renameCalls += 1;
       const failure = hooks.renameFailure;
       if (failure) {
         hooks.renameFailure = null;
         return Promise.reject(failure);
+      }
+      if (hooks.renameFailuresLeft > 0 && hooks.renameTransientError) {
+        hooks.renameFailuresLeft -= 1;
+        return Promise.reject(hooks.renameTransientError);
       }
       return actual.rename(...args);
     },
@@ -76,6 +85,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   hooks.renameFailure = null;
+  hooks.renameFailuresLeft = 0;
+  hooks.renameTransientError = null;
+  hooks.renameCalls = 0;
   hooks.chmodCalls = 0;
   hooks.dirSyncFailure = null;
   hooks.dirSyncs = 0;
@@ -718,6 +730,60 @@ describe("concurrent writers (F8)", () => {
     expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "fulfilled"]);
     expect(payloads).toContain(await fs.readFile(file, "utf8"));
     expect(await tempFiles()).toEqual([]);
+  });
+
+  /**
+   * Windows only in production, but the retry is worth asserting everywhere:
+   * the platform is a parameter, so the behaviour can be driven directly.
+   *
+   * `rename` over an existing file is atomic on POSIX and cannot fail for a
+   * reader. Windows needs exclusive access to the destination for the instant
+   * it swaps, so a peer's open handle — another writer, Claude Code reading its
+   * own settings, an indexer — fails the call with a sharing violation. The
+   * Windows CI leg caught exactly that: one of three concurrent writers
+   * rejected while the other two succeeded.
+   */
+  it("retries a Windows sharing violation rather than failing the write", async () => {
+    hooks.renameTransientError = Object.assign(new Error("EPERM: busy"), { code: "EPERM" });
+    hooks.renameFailuresLeft = 3;
+
+    await writeRawAtomic(file, '{"survived":true}\n', { ...OPTS, platform: "win32" });
+
+    expect(await fs.readFile(file, "utf8")).toBe('{"survived":true}\n');
+    expect(hooks.renameCalls).toBe(4);
+    expect(await tempFiles()).toEqual([]);
+  });
+
+  it("gives up on a sharing violation that never clears", async () => {
+    hooks.renameTransientError = Object.assign(new Error("EBUSY: held"), { code: "EBUSY" });
+    hooks.renameFailuresLeft = 99;
+
+    await expect(
+      writeRawAtomic(file, "{}\n", { ...OPTS, platform: "win32" }),
+    ).rejects.toBeInstanceOf(ConfigError);
+    // Bounded: the initial attempt plus RENAME_RETRIES, never an open loop.
+    expect(hooks.renameCalls).toBe(6);
+    expect(await tempFiles()).toEqual([]);
+  });
+
+  it("does not retry on POSIX, where these codes mean something real", async () => {
+    hooks.renameTransientError = Object.assign(new Error("EACCES: real"), { code: "EACCES" });
+    hooks.renameFailuresLeft = 99;
+
+    await expect(
+      writeRawAtomic(file, "{}\n", { ...OPTS, platform: "linux" }),
+    ).rejects.toBeInstanceOf(ConfigError);
+    expect(hooks.renameCalls).toBe(1);
+  });
+
+  it("does not retry a Windows error that is not a sharing violation", async () => {
+    hooks.renameTransientError = Object.assign(new Error("ENOSPC: full"), { code: "ENOSPC" });
+    hooks.renameFailuresLeft = 99;
+
+    await expect(
+      writeRawAtomic(file, "{}\n", { ...OPTS, platform: "win32" }),
+    ).rejects.toBeInstanceOf(ConfigError);
+    expect(hooks.renameCalls).toBe(1);
   });
 
   it("a failing write does not delete a concurrent writer's temp file", async () => {

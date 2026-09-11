@@ -285,7 +285,7 @@ async function atomicReplace(
     } finally {
       await handle.close();
     }
-    await fs.rename(tmp, target);
+    await renameReplacing(tmp, target, platform);
     // rename preserves the temp file's mode, but the destination may have
     // pre-existed at a looser mode on some filesystems — be explicit (FR-2.8).
     await tighten(target, platform, acl);
@@ -331,6 +331,60 @@ async function resolveTarget(file: string): Promise<string> {
  * check and is the one place the answer is reported. This is the tightening,
  * not the telling.
  */
+/**
+ * `rename`, with a bounded retry on Windows.
+ *
+ * On POSIX `rename(2)` over an existing file is atomic and cannot fail because
+ * somebody else is reading it. Windows has no such guarantee: `MoveFileEx`
+ * needs exclusive access to the destination for the instant it swaps, and any
+ * other handle on it — a concurrent writer mid-swap, Claude Code reading its
+ * own settings, an indexer, an antivirus scanner — makes the call fail with a
+ * sharing violation instead.
+ *
+ * The Windows CI leg found this: of three concurrent writers to one path, one
+ * was rejected while the other two succeeded. Each failure surfaces to the user
+ * as a settings write that did not happen, for no reason they can act on, and
+ * Claude Code writing the same file is the common case rather than a contrived
+ * one.
+ *
+ * A sharing violation is transient by nature — the other handle closes — so a
+ * short backoff is the whole fix. The retry is deliberately narrow: only the
+ * error codes Windows raises for a busy destination, and never on POSIX, where
+ * these codes would mean something real.
+ */
+async function renameReplacing(
+  tmp: string,
+  target: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  if (platform !== "win32") {
+    await fs.rename(tmp, target);
+    return;
+  }
+  const TRANSIENT = new Set(["EPERM", "EACCES", "EBUSY"]);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.rename(tmp, target);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (attempt >= RENAME_RETRIES || !TRANSIENT.has(code)) {
+        throw error;
+      }
+      // 5ms, 10ms, 20ms, 40ms, 80ms: ~155ms in total, far below anything a
+      // user perceives, and long enough for a peer's handle to close.
+      await delay(5 * 2 ** attempt);
+    }
+  }
+}
+
+/** Five retries: generous for a handle that is closing, short enough to fail fast. */
+const RENAME_RETRIES = 5;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function tighten(
   target: string,
   platform: NodeJS.Platform,
