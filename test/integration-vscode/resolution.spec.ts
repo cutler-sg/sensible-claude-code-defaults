@@ -1,15 +1,14 @@
 /// <reference types="mocha" />
 import * as assert from "node:assert/strict";
 import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
 const EXTENSION_ID = "cutler-sg.sensible-claude-code-defaults";
 
 /**
- * FR-1.3 / §10.3 / §15 "WSL homedir mismatch" — which machine's home directory
- * the extension actually reads and writes.
+ * FR-1.3 / §10.3 / §15 "WSL homedir mismatch" — which machine's directory the
+ * extension actually reads and writes.
  *
  * ## What this file covers, and what it does not
  *
@@ -20,14 +19,15 @@ const EXTENSION_ID = "cutler-sg.sensible-claude-code-defaults";
  * host on the remote — and then by resolving its paths from nothing but that
  * host process's own environment.
  *
- * **Genuinely covered here.** That second half: the directory this extension
- * reads and writes is the one `os.homedir()` yields *inside the extension host
- * process*, and it is not the home of the process that launched VS Code. The
- * two are different directories in this run (`.vscode-test.mjs` redirects
- * `HOME`/`USERPROFILE` for the host and records the launcher's own home in
- * `SCD_LAUNCHER_HOME`), so the assertion has something to fail against. That
- * is the structural analogue of remote placement: a client-side value reaching
- * path resolution would show up here as the launcher's home.
+ * **Genuinely covered here.** That second half. The harness sets
+ * `CLAUDE_CONFIG_DIR` for the host process and nothing else; the directory this
+ * extension reads and writes must therefore be that one, resolved from the
+ * host's *own* environment, and must not be the launcher's `~/.claude`. Both
+ * are asserted against the running extension rather than recomputed here.
+ * Earlier drafts redirected HOME instead, which exercised the plain-homedir
+ * branch but stalled the Electron host on macOS before the first test; the
+ * plain-homedir branch is driven directly by `test/unit/paths.test.ts` and
+ * `test/unit/remoteResolution.test.ts`, so nothing is lost by moving it there.
  *
  * **Not covered here.** That a *real* remote host resolves the real remote
  * home. `@vscode/test-cli` runs no remote — there is one machine and one
@@ -38,34 +38,25 @@ const EXTENSION_ID = "cutler-sg.sensible-claude-code-defaults";
  * `Object.defineProperty` on a local window, and an earlier draft did exactly
  * that; the result was worthless. Nothing in `resolveClaudeDir` reads
  * `remoteName`, so such a test passes identically whether resolution is right
- * or wrong — it asserts the absence of a dependency that was never there, while
- * reading like remote coverage. Deliberately not written.
- *
- * Every assertion below was checked against a mutant (`resolveClaudeDir`
- * rewritten to prefer `SCD_LAUNCHER_HOME`) and fails on it. The remaining gap —
- * real remote placement — is closed by a human on real hardware:
- * `docs/manual-verification.md`, items 3 and 4.
- *
- * Two other pieces sit either side of this one. `test/unit/packageJson.test.ts`
- * asserts the manifest carries no `extensionKind`, which is what permits remote
- * placement at all. `test/unit/remoteResolution.test.ts` drives
- * `resolveClaudeDir` directly against remote-shaped environments — a WSL home,
- * a Remote-SSH home, a Windows profile — which is where the shape of the answer
- * is checked. Neither can see the wiring; this file is the one that does.
+ * or wrong. It would assert the absence of a dependency that was never there,
+ * while reading like remote coverage. `docs/manual-verification.md` items 3
+ * and 4 close what this file cannot.
  */
 describe("claude directory resolution (FR-1.3)", () => {
   /**
-   * Evaluated in the extension host process, which is the process the extension
-   * runs in. Under Remote-SSH or WSL this process is on the remote machine, so
-   * this expression is the remote home — the whole requirement, restated as an
-   * expression.
+   * Read from the extension host process's own environment, which is the
+   * process the extension runs in. Under Remote-SSH or WSL that process is on
+   * the remote machine, so this is the remote's directory — the whole
+   * requirement, restated as an expression.
    */
-  const expectedClaudeDir = path.join(os.homedir(), ".claude");
+  const configured = process.env.CLAUDE_CONFIG_DIR;
+  assert.ok(configured, "CLAUDE_CONFIG_DIR is not set in the host; see .vscode-test.mjs");
+  const expectedClaudeDir = path.resolve(configured);
   const expectedSettings = path.join(expectedClaudeDir, "settings.json");
 
   /**
    * Compare paths the way the filesystem does. `Uri.fsPath` hands back a
-   * lower-cased drive letter (`c:\Users\...`) where `os.homedir()` gives an
+   * lower-cased drive letter (`c:\Users\...`) where `path.resolve` gives an
    * upper-cased one, and on Windows those are one path. Nothing about which
    * machine's home was chosen turns on that letter's case, so folding it keeps
    * the assertion pointed at the thing it is about. POSIX is left alone, where
@@ -81,23 +72,18 @@ describe("claude directory resolution (FR-1.3)", () => {
     mkdirSync(expectedClaudeDir, { recursive: true });
   });
 
-  it("runs in a host whose home is not the launcher's, so the assertions can fail", () => {
+  it("runs in a host whose Claude directory is not the launcher's, so the assertions can fail", () => {
     // Guard, not a behaviour claim. Every assertion below distinguishes "the
-    // host's own home" from "some other home", and without two distinct
-    // directories none of them can tell those apart — the file would pass on a
-    // misconfigured harness while proving nothing. Stated first so a broken
-    // harness fails here rather than silently downgrading the rest.
+    // directory the host resolved" from "the launcher's ~/.claude", and without
+    // two distinct directories none of them can tell those apart — the file
+    // would pass on a misconfigured harness while proving nothing. Stated first
+    // so a broken harness fails here rather than silently downgrading the rest.
     const launcherHome = process.env.SCD_LAUNCHER_HOME;
     assert.ok(launcherHome, "SCD_LAUNCHER_HOME is not set; see .vscode-test.mjs");
     assert.notEqual(
-      os.homedir(),
-      launcherHome,
-      "the extension host shares a home with its launcher, so this suite cannot tell them apart",
-    );
-    assert.equal(
-      process.env.CLAUDE_CONFIG_DIR,
-      undefined,
-      "CLAUDE_CONFIG_DIR is set, so resolution is not taking the FR-1.2 homedir branch",
+      expectedClaudeDir,
+      path.join(launcherHome, ".claude"),
+      "the host resolved the launcher's own ~/.claude, so this suite cannot tell them apart",
     );
   });
 
