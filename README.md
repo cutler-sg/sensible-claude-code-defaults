@@ -70,7 +70,12 @@ settings file**, which saves it to the keychain without making you find it again
 If the two ever hold *different* keys, nothing is overwritten: the panel asks
 which one you want.
 
-### What this does not protect against
+## Residual risk
+
+Two things this extension cannot fix, stated plainly rather than left for you to
+discover.
+
+### Every program Claude Code starts inherits your key
 
 Claude Code passes credentials to everything it starts through the process
 environment. **Every program Claude Code launches — every tool, every MCP
@@ -89,6 +94,69 @@ and how long it lasts.
   180.
 - If you administer the AWS account, cap key lifetime centrally with
   `iam:ServiceSpecificCredentialAgeDays` rather than relying on people to rotate.
+
+### The project scan finds some copies of your key, not all of them
+
+When a key is saved, the panel checks your open project folders for a copy of it
+— the case where a tutorial told you to paste it into a `.env` and it is now on
+its way to a git remote. A clean result is worth something, but it is not a
+guarantee. Here is exactly what it does and does not do.
+
+**It looks at** the places a key actually gets pasted, inside the folders you
+currently have open:
+
+- files named `.env` or `.env.something`, and `.envrc`
+- files ending in `.json`, `.md`, `.txt`, `.yaml`, `.yml`, `.toml`, `.sh`,
+  `.ps1`, `.bat`, `.cmd` or `.bak` — the last one because a settings file
+  copied before editing becomes `settings.json.bak`
+- `Dockerfile`, and `Dockerfile.anything`
+- the shell profiles: `.zshrc`, `.bashrc`, `.bash_profile`, `.zprofile` and
+  `.profile`
+
+**It does not look at** anything else — your source files, your notebooks, your
+editor's own settings, your shell history, your terminal scrollback, or any
+folder you do not have open in this window. It ignores files larger than 1 MB.
+
+**It skips some folders.** `node_modules`, `.git` and `.venv` are skipped
+wherever they appear. `dist` and `out` are skipped only when they sit directly
+inside a folder you have open, because that is where build output lives — a
+`dist` or `out` further down is an ordinary source folder and is read normally.
+
+**It stays inside the folders you opened.** It does not follow shortcuts or
+symbolic links out of a folder. If a folder you opened is itself a shortcut to
+somewhere else, the scan reads the real location it points at and names files
+by where they actually are.
+
+**It stops after three seconds.** On a large project it will not have looked at
+everything, and it says so — a row reading "we ran out of time" is not a clean
+result, and the panel never reports one as if it were. If it finds a copy of
+your key *and* runs out of time, it tells you both: the file it found is real,
+but the list is not necessarily the whole list, and running the check again
+picks up where it left off.
+
+**It does not look inside your git history.** If the key has ever been
+committed, it is in past versions of the repository and in every clone of it.
+Deleting the line today does not remove it. When the scan finds your key in a
+file that git is tracking, it says so and tells you to replace the key —
+because replacing it is the only thing that actually works.
+
+**It never edits your files.** Nothing in this extension writes inside a project
+folder, ever. If your key is found, you are shown which file, and you remove it.
+
+**It does not run in a folder you have not trusted.** Reading your project files
+is the one thing this extension does that touches your code, so in a restricted
+window it does not read them at all, and the panel says the folder was not
+checked rather than pretending it was clean.
+
+## Getting help
+
+*Copy Diagnostics for Support* puts a report on your clipboard describing your
+setup: your versions and platform, which recommended settings are in force, your
+`~/.claude/settings.json`, the health check results, and the last 50 lines from
+the extension's output log. **Your Bedrock API key — and anything else that looks
+like a credential — is replaced with `«redacted»` before it reaches the
+clipboard**, so the report is safe to paste into a public issue. Nothing is
+written to a file: the report exists only on your clipboard until you paste it.
 
 ## Network requests
 

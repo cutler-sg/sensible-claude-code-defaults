@@ -152,6 +152,13 @@ describe("contributed configuration", () => {
 });
 
 describe("contributed commands", () => {
+  it("offers the diagnostics command under its FR-7.1 title", () => {
+    const command = manifest.contributes.commands.find(
+      (entry) => entry.command === "sensibleDefaults.copyDiagnostics",
+    );
+    expect(command?.title).toBe("Copy Diagnostics for Support");
+  });
+
   it("offers the manual update check under its FR-3.3 title", () => {
     const command = manifest.contributes.commands.find(
       (entry) => entry.command === "sensibleDefaults.checkForUpdates",

@@ -6,6 +6,7 @@
  */
 
 import type { Drift, ManagedKey, PlanResult, ReadResult, Snapshot } from "../config/types.js";
+import type { ScanOutcome } from "../credential/leakScan.js";
 import type { ConnectionResult, TokenPresence } from "../credential/types.js";
 import type { ManifestSource } from "../manifest/resolve.js";
 import type { CredentialPolicy, Manifest } from "../manifest/types.js";
@@ -125,6 +126,15 @@ export interface CredentialContext {
    * token's presence is then unknowable rather than false (plan Q-X).
    */
   keychainError?: string;
+  /**
+   * FR-4.8's workspace scan, run by `buildContext` so `cred.leak` stays a pure
+   * function like every other check. Absent when the host has not wired a
+   * workspace — the check then reports "not checked", not "clean".
+   *
+   * `ScanOutcome` carries paths and line numbers and never a token value, so
+   * hard rule 4 stays structural here as it does for `StoredTokenMeta`.
+   */
+  leakScan?: ScanOutcome;
   /**
    * The clock `cred.age` measures against. Carried on the context rather than
    * read inside the check so the check stays a pure function of its input, like

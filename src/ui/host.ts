@@ -5,6 +5,7 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
 import {
@@ -31,7 +32,49 @@ export interface Host {
   store: TokenStore;
   /** FR-4.3: the integrated-terminal collection, with `persistent` off. */
   terminal: TerminalTokenEnv;
+  /**
+   * FR-4.8's scan inputs, read per call. `isTrusted` in particular must not be
+   * captured: VS Code grants trust to a running window, so a value read at
+   * activation would leave the scan permanently disabled in a folder the user
+   * has since trusted.
+   */
+  leakScan: () => LeakScanHostDeps;
 }
+
+/** The `LeakScanDeps` a host can supply — everything but the token itself. */
+export interface LeakScanHostDeps {
+  folders: readonly string[];
+  isTrusted: boolean;
+  isTracked: (file: string) => Promise<boolean | undefined>;
+}
+
+/**
+ * Whether git tracks a path (FR-4.8).
+ *
+ * `git ls-files --error-unmatch` is the question stated exactly: it exits 0 for
+ * a tracked path and non-zero for anything else, including "not a repository"
+ * and "git is not installed". Those two are indistinguishable from "not
+ * tracked" at the exit code, which is why a non-zero answer becomes `false`
+ * rather than a claim — and why `cred.leak`'s untracked wording still tells the
+ * user to rotate.
+ *
+ * `--` separates the path from any option, so a file named `-n` cannot become
+ * a flag.
+ */
+async function gitTracks(file: string): Promise<boolean | undefined> {
+  try {
+    await execFile("git", ["ls-files", "--error-unmatch", "--", file], {
+      cwd: dirname(file),
+      timeout: GIT_TIMEOUT_MS,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Past this, the answer is not worth the wait — the scan has its own budget. */
+const GIT_TIMEOUT_MS = 2000;
 
 export function createHost(context: vscode.ExtensionContext): Host {
   const claudeDir = resolveClaudeDir();
@@ -57,6 +100,13 @@ export function createHost(context: vscode.ExtensionContext): Host {
     // if the collection refuses, which is deliberate: a collection VS Code
     // caches to disk must not receive the token at all.
     terminal: new TerminalTokenEnv(context.environmentVariableCollection),
+    // Read per call, never captured: trust is granted to a running window, and
+    // a folder can be added to a window after activation.
+    leakScan: () => ({
+      folders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [],
+      isTrusted: vscode.workspace.isTrusted,
+      isTracked: gitTracks,
+    }),
     detect: () =>
       detectClaudeCode({
         getExtensionVersion: () => {

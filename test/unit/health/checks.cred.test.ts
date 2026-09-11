@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ScanOutcome } from "../../../src/credential/leakScan.js";
 import type { ConnectionResult } from "../../../src/credential/types.js";
 import { credAgeCheck } from "../../../src/health/checks/cred.age.js";
 import { credLeakCheck } from "../../../src/health/checks/cred.leak.js";
@@ -8,6 +9,7 @@ import { credValidCheck } from "../../../src/health/checks/cred.valid.js";
 import { LABELS } from "../../../src/health/labels.js";
 import type { CheckContext, CredentialContext } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
+import { expectNoTokenLeak } from "../ui/credentialDeps.js";
 import { daysAgo, FIXTURE_TOKEN, makeCtx, NOW, okCredential } from "./fixture.js";
 
 const POLICY = BUNDLED_MANIFEST.credential;
@@ -344,11 +346,239 @@ describe("cred.age", () => {
   });
 });
 
+/**
+ * FR-4.8. Two things this check must never do: name the value it found, and
+ * report a scan that did not finish as a clean one.
+ */
 describe("cred.leak", () => {
-  it("stays skipped, and says so honestly, until the scan lands (M5)", () => {
-    const result = credLeakCheck.run();
-    expect(result.level).toBe("skipped");
-    expect(result.label).toMatch(/later update/);
+  const HIT = { file: "/home/tester/project/.env", line: 3 };
+
+  function withScan(leakScan: ScanOutcome | undefined): CheckContext {
+    return ctxWith(leakScan === undefined ? {} : { leakScan });
+  }
+
+  it("passes when the scan finished and found nothing", () => {
+    const result = credLeakCheck.run(withScan({ kind: "clean" }));
+
+    expect(result.level).toBe("pass");
     expect(result.fix).toEqual({ kind: "none" });
+  });
+
+  it("reports 'not checked' rather than a pass when no scan was run", () => {
+    const result = credLeakCheck.run(withScan(undefined));
+
+    expect(result.level).toBe("info");
+    expect(result.label).toBe(LABELS["cred.leak"].notChecked);
+  });
+
+  it("skips when there is no key to look for", () => {
+    const result = credLeakCheck.run(withScan({ kind: "skipped", reason: "no-token" }));
+
+    expect(result.level).toBe("skipped");
+    expect(result.label).toBe(LABELS["cred.leak"].skipped);
+  });
+
+  it("skips when no folder is open", () => {
+    const result = credLeakCheck.run(withScan({ kind: "skipped", reason: "no-folders" }));
+
+    expect(result.level).toBe("skipped");
+    expect(result.label).toBe(LABELS["cred.leak"].noFolders);
+  });
+
+  /**
+   * §13. Not a failure and not a pass: we were not allowed to look, and saying
+   * so is what stops an untrusted folder reading as a checked one.
+   */
+  it("says the folder was not checked when it is untrusted", () => {
+    const result = credLeakCheck.run(withScan({ kind: "skipped", reason: "untrusted" }));
+
+    expect(result.level).toBe("info");
+    expect(result.label).toBe(LABELS["cred.leak"].untrusted);
+    expect(result.fix).toEqual({ kind: "none" });
+  });
+
+  it("fails on a hit and offers to open the file at the line", () => {
+    const result = credLeakCheck.run(withScan({ kind: "hits", hits: [HIT] }));
+
+    expect(result.level).toBe("error");
+    expect(result.label).toBe(LABELS["cred.leak"].found);
+    expect(result.fix).toEqual({
+      kind: "command",
+      command: "sensibleDefaults.openLeakedFile",
+      title: "Open the file",
+      args: [HIT.file, HIT.line],
+    });
+  });
+
+  it("names the path and never the value", () => {
+    const result = credLeakCheck.run(withScan({ kind: "hits", hits: [HIT] }));
+
+    expect(result.detail).toContain(HIT.file);
+    // Every string the row produces, checked against the token the fixture
+    // holds — the same detector the panel-wide leak test uses.
+    expectNoTokenLeak(
+      [result.label, result.detail ?? "", JSON.stringify(result.fix)],
+      [FIXTURE_TOKEN],
+    );
+  });
+
+  /**
+   * Hard rule 1 and plan Q-AD: the extension never edits a workspace file, so
+   * the row must not imply that it might.
+   */
+  it("says plainly that nothing was changed for the user", () => {
+    const result = credLeakCheck.run(withScan({ kind: "hits", hits: [HIT] }));
+
+    expect(result.detail).toContain("Nothing here has been changed for you");
+  });
+
+  /**
+   * A tracked file has almost certainly had the value committed, and no edit to
+   * the working tree takes it out of history. A user who deletes the line and
+   * believes they are safe is worse off than one who was never told.
+   */
+  it("says rotation is the only remedy when the file is tracked", () => {
+    const result = credLeakCheck.run(withScan({ kind: "hits", hits: [{ ...HIT, tracked: true }] }));
+
+    expect(result.label).toBe(LABELS["cred.leak"].foundTracked);
+    expect(result.detail).toContain("history");
+    expect(result.detail).toContain("replace the key");
+  });
+
+  it("gives the untracked advice when git says the file is not tracked", () => {
+    const result = credLeakCheck.run(
+      withScan({ kind: "hits", hits: [{ ...HIT, tracked: false }] }),
+    );
+
+    expect(result.label).toBe(LABELS["cred.leak"].found);
+    expect(result.detail).not.toContain("history");
+  });
+
+  it("names every file it found, not just the one it offers to open", () => {
+    const second = { file: "/home/tester/project/notes.md", line: 1 };
+
+    const result = credLeakCheck.run(withScan({ kind: "hits", hits: [HIT, second] }));
+
+    expect(result.detail).toContain(HIT.file);
+    expect(result.detail).toContain(second.file);
+  });
+
+  it("escalates the whole row when any one hit is tracked", () => {
+    const result = credLeakCheck.run(
+      withScan({
+        kind: "hits",
+        hits: [HIT, { file: "/home/tester/project/notes.md", line: 1, tracked: true }],
+      }),
+    );
+
+    expect(result.label).toBe(LABELS["cred.leak"].foundTracked);
+  });
+
+  /**
+   * The rule that matters most. "We looked at some of your files and found
+   * nothing" and "your key is not in your project" are different claims.
+   */
+  it("reports an empty partial scan as information, never a pass", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [], reason: "timeout" }));
+
+    expect(result.level).toBe("info");
+    expect(result.level).not.toBe("pass");
+    expect(result.label).toBe(LABELS["cred.leak"].partial);
+    expect(result.detail).toContain("not a clean result");
+  });
+
+  it("says the same for a scan stopped by the file cap", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [], reason: "file-cap" }));
+
+    expect(result.level).toBe("info");
+    expect(result.label).toBe(LABELS["cred.leak"].partial);
+  });
+
+  it("still fails on a hit found before the scan ran out of budget", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [HIT], reason: "timeout" }));
+
+    expect(result.level).toBe("error");
+  });
+
+  /**
+   * F7. A partial scan with hits rendered identically to a complete one: the
+   * plain "found" label, a finite-looking list of files, and "Remove the key
+   * from the file yourself". The user fixes the named file, re-runs, times out
+   * again before reaching the remaining copies, and gets the same confident
+   * list back.
+   *
+   * The module header's promise is that a partial scan never reports a clean
+   * bill of health. That held for the empty case only — an incomplete list of
+   * places your key is, presented as the list, is the same false reassurance in
+   * a different costume. So the row says the scan did not finish whenever it
+   * did not finish, hits or not.
+   */
+  it("says the scan did not finish even when it found something", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [HIT], reason: "timeout" }));
+
+    expect(result.label).toBe(LABELS["cred.leak"].foundPartial);
+    expect(result.label).not.toBe(LABELS["cred.leak"].found);
+    expect(result.detail).toContain("not all of your files were checked");
+  });
+
+  it("says the same for a tracked hit found before the scan ran out", () => {
+    const result = credLeakCheck.run(
+      withScan({ kind: "partial", hits: [{ ...HIT, tracked: true }], reason: "timeout" }),
+    );
+
+    expect(result.level).toBe("error");
+    expect(result.label).toBe(LABELS["cred.leak"].foundTrackedPartial);
+    // The rotation advice is the stronger claim and must survive.
+    expect(result.detail).toContain("history");
+    expect(result.detail).toContain("not all of your files were checked");
+  });
+
+  it("says the same when the file cap stopped the scan, not the clock", () => {
+    const result = credLeakCheck.run(
+      withScan({ kind: "partial", hits: [HIT], reason: "file-cap" }),
+    );
+
+    expect(result.label).toBe(LABELS["cred.leak"].foundPartial);
+    expect(result.detail).toContain("not all of your files were checked");
+  });
+
+  /**
+   * The other half of the same rule: a scan that *did* finish must not be
+   * hedged. "There may be more" on an exhaustive result trains the user to
+   * ignore it on the one where it is true.
+   */
+  it("does not hedge a scan that finished", () => {
+    const result = credLeakCheck.run(withScan({ kind: "hits", hits: [HIT] }));
+
+    expect(result.label).toBe(LABELS["cred.leak"].found);
+    expect(result.detail).not.toContain("not all of your files were checked");
+  });
+
+  /** Whatever it says about finishing, it never says the extension edited anything. */
+  it("still says plainly that nothing was changed, on a partial result too", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [HIT], reason: "timeout" }));
+
+    expect(result.detail).toContain("Nothing here has been changed for you");
+  });
+
+  it("names the path and never the value on a partial result either", () => {
+    const result = credLeakCheck.run(withScan({ kind: "partial", hits: [HIT], reason: "timeout" }));
+
+    expect(result.detail).toContain(HIT.file);
+    expectNoTokenLeak(
+      [result.label, result.detail ?? "", JSON.stringify(result.fix)],
+      [FIXTURE_TOKEN],
+    );
+  });
+
+  /**
+   * A `ScanOutcome` variant the check has not been taught about must not read
+   * as a pass: not knowing is exactly what the "not checked" row says.
+   */
+  it("treats an unrecognised outcome as not checked", () => {
+    const result = credLeakCheck.run(withScan({ kind: "something-new" } as unknown as ScanOutcome));
+
+    expect(result.level).toBe("info");
+    expect(result.label).toBe(LABELS["cred.leak"].notChecked);
   });
 });

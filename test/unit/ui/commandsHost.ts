@@ -46,6 +46,8 @@ export const state = {
   registered: new Map<string, (...args: unknown[]) => Promise<void>>(),
   opened: [] as string[],
   shownDocuments: [] as unknown[],
+  /** The `TextDocumentShowOptions` each `showTextDocument` received, if any. */
+  showOptions: [] as unknown[],
   configuration: new Map<string, unknown>(),
   /** Thrown by `workspace.openTextDocument` when set (absent settings file). */
   openFailure: undefined as Error | undefined,
@@ -57,6 +59,12 @@ export const state = {
   ) => string | undefined,
   /** Answers a modal/notification by message; default dismisses. */
   answer: ((_shown: Shown) => undefined) as (shown: Shown) => string | undefined,
+  /** What `env.clipboard.writeText` last received (FR-7.1). */
+  clipboard: "",
+  /** What `extensions.getExtension` reports for Claude Code. */
+  claudeCodeVersion: undefined as string | undefined,
+  /** `env.remoteName`: undefined is a local window. */
+  remoteName: undefined as string | undefined,
 };
 
 export function reset(): void {
@@ -70,11 +78,15 @@ export function reset(): void {
   state.registered = new Map();
   state.opened = [];
   state.shownDocuments = [];
+  state.showOptions = [];
   state.configuration = new Map();
   state.openFailure = undefined;
   state.quickPickAnswer = () => undefined;
   state.inputBoxAnswer = () => undefined;
   state.answer = () => undefined;
+  state.clipboard = "";
+  state.claudeCodeVersion = undefined;
+  state.remoteName = undefined;
 }
 
 function record(into: Shown[], message: string, rest: unknown[]): Promise<string | undefined> {
@@ -102,8 +114,9 @@ export const window = {
     state.quickPicks.push(call);
     return state.quickPickAnswer(call);
   },
-  showTextDocument: async (document: unknown) => {
+  showTextDocument: async (document: unknown, options?: unknown) => {
     state.shownDocuments.push(document);
+    if (options !== undefined) state.showOptions.push(options);
   },
   showInputBox: (options: InputBoxOptions = {}) => {
     const call: InputBoxCall = { options };
@@ -161,6 +174,43 @@ export const commands = {
 
 export const Uri = {
   file: (fsPath: string) => ({ fsPath }),
+};
+
+/** Enough of the position API for `openLeakedFile` to place a cursor. */
+export class Position {
+  constructor(
+    public readonly line: number,
+    public readonly character: number,
+  ) {}
+}
+
+export class Range {
+  constructor(
+    public readonly start: Position,
+    public readonly end: Position,
+  ) {}
+}
+
+/** A fixed VS Code version, so a diagnostics assertion is deterministic. */
+export const version = "1.98.2";
+
+export const env = {
+  get remoteName(): string | undefined {
+    return state.remoteName;
+  },
+  clipboard: {
+    writeText: (text: string): Promise<void> => {
+      state.clipboard = text;
+      return Promise.resolve();
+    },
+  },
+};
+
+export const extensions = {
+  getExtension: (id: string) =>
+    id === "anthropic.claude-code" && state.claudeCodeVersion !== undefined
+      ? { packageJSON: { version: state.claudeCodeVersion } }
+      : undefined,
 };
 
 export const Disposable = {

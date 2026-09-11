@@ -4,9 +4,16 @@
  * One secret, one JSON document `{token, setAt}`, so the token's age travels
  * with the value and a Linux libsecret unlock prompts once rather than twice.
  * `SecretStorage` is injected structurally, so nothing here imports `vscode`.
+ *
+ * FR-4.9: this is also where the redaction registry is fed. The store is the
+ * only door a token value comes through, so registering here is what makes
+ * "the token never appears in a log line" a property of the system rather than
+ * a rule every call site has to remember — a value is registered before the
+ * caller that asked for it can do anything with it, `set` included.
  */
 
 import type { CredentialPolicy } from "../manifest/types.js";
+import { register } from "../util/redact.js";
 import { validateTokenShape } from "./shape.js";
 import {
   type SecretStorageLike,
@@ -64,15 +71,44 @@ export class SecretTokenStore implements TokenStore {
       // A bare string is what an earlier shape would have stored. Re-store it in
       // the current shape so the age clock starts now rather than never.
       const migrated: StoredToken = { token: parsed.token, setAt: this.#stamp() };
+      register(migrated.token);
       await this.#secrets.store(TOKEN_SECRET_KEY, JSON.stringify(migrated));
       return migrated;
     }
 
+    register(parsed.value.token);
     return parsed.value;
   }
 
+  /**
+   * The value being replaced is registered too (FR-4.9). A rotation that only
+   * registered the new key would leave the old one loggable for the rest of the
+   * window — and the old one is precisely the value a user is most likely to
+   * find in a stale log line, a settings file we are quoting back, or a
+   * diagnostics report pasted into a public issue.
+   *
+   * The read is best-effort: a keychain that will not open, or a previous value
+   * we cannot parse, must not stop a rotation. What we lose in that case is the
+   * ability to scrub a value we never saw, which is the same position we are in
+   * on a machine where the key was pasted in by hand.
+   */
   async set(value: StoredToken): Promise<void> {
+    register(value.token);
+    await this.#registerPrevious();
     await this.#secrets.store(TOKEN_SECRET_KEY, JSON.stringify(value));
+  }
+
+  async #registerPrevious(): Promise<void> {
+    let raw: string | undefined;
+    try {
+      raw = await this.#secrets.get(TOKEN_SECRET_KEY);
+    } catch {
+      return;
+    }
+    if (raw === undefined) return;
+    const parsed = parse(raw);
+    if (parsed.kind === "stored") register(parsed.value.token);
+    if (parsed.kind === "legacy") register(parsed.token);
   }
 
   async clear(): Promise<void> {
@@ -89,19 +125,29 @@ export class SecretTokenStore implements TokenStore {
   }
 }
 
-/** In-memory `TokenStore` for tests in modules that only need a token to exist. */
+/**
+ * In-memory `TokenStore` for tests in modules that only need a token to exist.
+ *
+ * It registers exactly as the real store does, previous value included. A test
+ * double that skipped registration would let a leak test pass because the
+ * registry happened to be empty, which is the one way these tests can be wrong.
+ */
 export class MemoryTokenStore implements TokenStore {
   #value: StoredToken | undefined;
 
   constructor(initial?: StoredToken) {
     this.#value = initial;
+    register(initial?.token);
   }
 
   get(): Promise<StoredToken | undefined> {
+    register(this.#value?.token);
     return Promise.resolve(this.#value === undefined ? undefined : { ...this.#value });
   }
 
   set(value: StoredToken): Promise<void> {
+    register(value.token);
+    register(this.#value?.token);
     this.#value = { ...value };
     return Promise.resolve();
   }

@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { backupsDir, createSession } from "./config/index.js";
 import { readTokenFromSettings } from "./credential/writeThrough.js";
-import type { CredentialContext } from "./health/types.js";
+import type { CredentialContext, HealthReport } from "./health/types.js";
 import { createManifestCache } from "./manifest/cache.js";
 import { registerCommands } from "./ui/commands.js";
 import type { CredentialFlowDeps } from "./ui/flows.js";
@@ -11,6 +11,7 @@ import { createManifestHolder, DEFAULT_MANIFEST_URL } from "./ui/manifestHolder.
 import { HealthTreeProvider } from "./ui/treeProvider.js";
 import { watchSettings } from "./ui/watcher.js";
 import { Logger } from "./util/log.js";
+import { forgetAll } from "./util/redact.js";
 
 /** How long after our own write the watcher ignores the directory (plan Q-Q). */
 const SUPPRESS_MS = 1500;
@@ -54,6 +55,15 @@ export function activate(context: vscode.ExtensionContext): void {
    * on every store change, and stamped with the tested key so `cred.valid` can
    * catch a change this window did not make either.
    */
+  /**
+   * The last completed report and the CLI version that run detected, for the
+   * FR-7.1 diagnostics command. Captured from `present`, which already receives
+   * every report — a second full run to obtain one would be a `claude
+   * --version` probe and a permission repair for a command that only reads.
+   */
+  let lastReport: HealthReport | undefined;
+  let lastCliVersion: string | undefined;
+
   let lastTest: CredentialContext["lastTest"];
   const credential: CredentialFlowDeps = {
     store: host.store,
@@ -77,7 +87,11 @@ export function activate(context: vscode.ExtensionContext): void {
     // would pin the panel to the bundled defaults for the life of the window.
     manifest: () => manifests.current(),
     platform: process.platform,
-    detect: host.detect,
+    detect: async () => {
+      const detection = await host.detect();
+      lastCliVersion = detection.cli.found ? detection.cli.version : undefined;
+      return detection;
+    },
     log,
     notified: context.globalState,
     credential: () => ({
@@ -89,8 +103,12 @@ export function activate(context: vscode.ExtensionContext): void {
     // run, so a window that missed a change made in another one catches up
     // rather than exporting a key that has been cleared or replaced.
     terminal: host.terminal,
+    // FR-4.8 / §13: read per run, so a folder trusted after activation is
+    // scanned rather than reported unchecked for the life of the window.
+    leakScan: host.leakScan,
     onSelfWrite: markWrite,
     present: (report) => {
+      lastReport = report;
       provider.setReport(report);
       view.badge =
         provider.errorCount > 0
@@ -137,6 +155,12 @@ export function activate(context: vscode.ExtensionContext): void {
       watcher.rearm();
     },
     credential,
+    extensionVersion: String(context.extension.packageJSON.version),
+    diagnostics: {
+      manifest: () => manifests.current().status,
+      report: () => lastReport,
+      cliVersion: () => lastCliVersion,
+    },
   });
 
   context.subscriptions.push(channel, view, commands, watcher);
@@ -185,6 +209,14 @@ async function pushTokenToTerminals(
   }
 }
 
+/**
+ * Everything disposable is owned by the extension context, so the only thing to
+ * tear down is the one piece of state that is not: the redaction registry.
+ *
+ * It holds exact token values in memory, deliberately never persisted (plan
+ * Q-AE), so dropping them here is what keeps "memory-only" true for a host that
+ * deactivates and reactivates an extension without restarting the process.
+ */
 export function deactivate(): void {
-  // Nothing to tear down; all disposables are owned by the extension context.
+  forgetAll();
 }

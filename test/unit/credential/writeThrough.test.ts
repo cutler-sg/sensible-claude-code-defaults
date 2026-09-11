@@ -19,11 +19,15 @@ import {
   syncTokenToSettings,
   TOKEN_SETTINGS_KEY,
 } from "../../../src/credential/writeThrough.js";
+import { forgetAll, REDACTED, redact } from "../../../src/util/redact.js";
 
 const TOKEN = "ABSKQmVkcm9ja0FQSUtleUV4YW1wbGVWYWx1ZQ";
 const ROTATED = "ABSKUm90YXRlZEJlZHJvY2tBUElLZXlWYWx1ZQ";
 /** What Claude Code's own `/setup-bedrock` would have left in the file. */
 const WIZARD_TOKEN = "bedrock-api-key-BQoJb3JpZ2luX2VjEHkaCXVzLWVhc3QtMQ";
+
+/** Matches no `redact` pattern, so only the registry can ever catch it. */
+const UNPATTERNED = "Zq7Xk2Mv9Tb4Rn6Wc8Jd3Fp5Hs1Ly0Gu";
 
 const POSIX = process.platform !== "win32";
 
@@ -59,6 +63,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // The registry is module-level state, and this file now feeds it: a value
+  // left behind would silently redact another file's fixtures.
+  forgetAll();
   await rm(tmp, { recursive: true, force: true });
 });
 
@@ -213,6 +220,50 @@ describe("readTokenFromSettings", () => {
     await mkdir(claudeDir, { recursive: true });
     await writeFile(file, "{not json", "utf8");
     await expect(readTokenFromSettings(env)).resolves.toBeUndefined();
+  });
+
+  /**
+   * A malformed file still registers what it can (F1).
+   *
+   * The read returns undefined — there is no document to take a value from with
+   * any confidence, and `cred.mirrored` must not claim a token is mirrored on
+   * the strength of a regex. But returning early *before* registering left the
+   * registry empty in precisely the state where the diagnostics report falls
+   * back on it alone, because a file that did not parse has no keys for a key
+   * rule to apply to. The bytes are still there, so they are read for scrubbing
+   * purposes even though they are not trusted as an answer.
+   */
+  it("registers a value out of a malformed file, though it reports none", async () => {
+    await mkdir(claudeDir, { recursive: true });
+    // Unquoted: `reader.ts` names this as the most likely way a user corrupts
+    // this file, and it is the shape that both breaks the parse and leaves the
+    // credential in plain text.
+    await writeFile(file, `{\n  "env": { "AWS_BEARER_TOKEN_BEDROCK": ${UNPATTERNED} }\n}`, "utf8");
+    forgetAll();
+
+    await expect(readTokenFromSettings(env)).resolves.toBeUndefined();
+
+    expect(redact(`log line: ${UNPATTERNED}`)).toBe(`log line: ${REDACTED}`);
+  });
+
+  it("registers a quoted value out of a file that broke elsewhere", async () => {
+    await mkdir(claudeDir, { recursive: true });
+    await writeFile(file, `{ "env": { "AWS_BEARER_TOKEN_BEDROCK": "${UNPATTERNED}" },`, "utf8");
+    forgetAll();
+
+    await readTokenFromSettings(env);
+
+    expect(redact(UNPATTERNED)).toBe(REDACTED);
+  });
+
+  it("registers nothing from a malformed file that names no secret key", async () => {
+    await mkdir(claudeDir, { recursive: true });
+    await writeFile(file, `{ "notes": "${UNPATTERNED}"`, "utf8");
+    forgetAll();
+
+    await readTokenFromSettings(env);
+
+    expect(redact(UNPATTERNED)).toBe(UNPATTERNED);
   });
 
   it("is undefined when the value is not a string", async () => {

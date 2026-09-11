@@ -10,6 +10,8 @@
 
 import { plan, repairPermissions, settingsPath } from "../config/index.js";
 import type { ConfigEnv, Drift, PlanResult } from "../config/types.js";
+import type { LeakScanDeps, ScanOutcome } from "../credential/leakScan.js";
+import { scanWorkspaceForToken } from "../credential/leakScan.js";
 import { normalizeToken } from "../credential/shape.js";
 import type { TokenPresence, TokenStore } from "../credential/types.js";
 import type { Manifest } from "../manifest/types.js";
@@ -48,7 +50,21 @@ export interface BuildContextInput {
    * configured", which is the truth for a host that has not wired a keychain.
    */
   credential?: CredentialDeps;
+  /**
+   * FR-4.8's scan inputs — the open folders, the trust answer, and how to ask
+   * git about a path. Absent when the host has not wired a workspace, in which
+   * case `cred.leak` reports "not checked" rather than "clean": not looking is
+   * not evidence.
+   *
+   * The token itself is supplied here rather than by the caller: it comes from
+   * the same read this function already makes, and a `CheckContext` has nowhere
+   * to put one (hard rule 4).
+   */
+  leakScan?: LeakScanContextDeps;
 }
+
+/** Everything `scanWorkspaceForToken` needs except the value to look for. */
+export type LeakScanContextDeps = Omit<LeakScanDeps, "token">;
 
 export interface CredentialDeps {
   store: TokenStore;
@@ -84,6 +100,10 @@ export async function buildContext(input: BuildContextInput): Promise<CheckConte
     buildCredential(manifest, input.credential),
   ]);
 
+  // Run after the credential read, not beside it: the value to look for is the
+  // one that read found, and it never reaches the returned context.
+  const leakScan = await runLeakScan(input);
+
   return {
     claudeDir: env.claudeDir,
     settingsFile: settingsPath(env.claudeDir),
@@ -101,9 +121,35 @@ export async function buildContext(input: BuildContextInput): Promise<CheckConte
     plan: planned,
     drift: driftOf(planned),
     detection,
-    credential,
+    credential: leakScan === undefined ? credential : { ...credential, leakScan },
     permissions,
   };
+}
+
+/**
+ * FR-4.8. The token is read here and handed straight to the scan; it is not
+ * stored, not returned, and has nowhere on `CheckContext` it could go.
+ *
+ * A scan that throws is swallowed into `undefined` — "we could not look" — for
+ * the same reason `repairPermissions` is: one check's failure must not blank
+ * the whole panel. `scanWorkspaceForToken` is documented not to throw, so this
+ * is the belt to that braces.
+ */
+async function runLeakScan(input: BuildContextInput): Promise<ScanOutcome | undefined> {
+  const scan = input.leakScan;
+  if (scan === undefined) return undefined;
+
+  let token: string | undefined;
+  try {
+    token = (await input.credential?.store.get())?.token;
+  } catch {
+    // A keychain that will not open is `cred.present`'s story, not this one.
+    // Without a value there is nothing to look for, which the scan reports as
+    // skipped — honest, and not a clean bill of health.
+    token = undefined;
+  }
+
+  return scanWorkspaceForToken({ ...scan, token }).catch(() => undefined);
 }
 
 /**

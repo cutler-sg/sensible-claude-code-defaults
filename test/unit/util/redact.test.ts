@@ -1,0 +1,487 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { SECRET_KEYS } from "../../../src/config/managedKeys.js";
+import {
+  forgetAll,
+  REDACTED,
+  redact,
+  redactValue,
+  register,
+  registeredCount,
+  registerSecretsIn,
+  registerSecretsInText,
+} from "../../../src/util/redact.js";
+
+/**
+ * `redact.ts` is the module hard rule 4 rests on, so it gets a suite of its own
+ * rather than being covered incidentally by the consumers that call it. Every
+ * test here clears the registry afterwards: it is module-level state, and a
+ * value left behind would silently redact another file's fixtures.
+ */
+afterEach(() => {
+  forgetAll();
+});
+
+/** Matches none of the PATTERNS, so only the registry can catch it. */
+const UNRECOGNISED = "Zq7Xk2Mv9Tb4Rn6Wc8Jd3Fp5Hs1Ly0Gu";
+
+describe("the registry", () => {
+  it("replaces a registered value wherever it appears", () => {
+    register(UNRECOGNISED);
+
+    expect(redact(`saved ${UNRECOGNISED} and again ${UNRECOGNISED}`)).toBe(
+      `saved ${REDACTED} and again ${REDACTED}`,
+    );
+  });
+
+  it("leaves a value it was never told about alone", () => {
+    expect(redact(`saved ${UNRECOGNISED}`)).toBe(`saved ${UNRECOGNISED}`);
+  });
+
+  it("ignores undefined, so a caller need not check first", () => {
+    register(undefined);
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  it("registers the trimmed value, so a stored newline cannot hide the core", () => {
+    register(`  ${UNRECOGNISED}\n`);
+
+    expect(redact(`token=${UNRECOGNISED}`)).toBe(`token=${REDACTED}`);
+  });
+
+  /**
+   * The store is the authority on what counts as a credential, and it accepts
+   * a short value on purpose: `shape.ts` returns `too-short` as a *warning*
+   * because a rule that turns away a real key costs the user their whole setup.
+   * So a five-character value is stored, mirrored into the settings file and
+   * exported to terminals — and a registry floor above that would silently drop
+   * the one value the store just told us to scrub. Two floors that disagree is
+   * a policy hole; this one is closed in the store's favour.
+   */
+  it("registers a value the store would accept, however short", () => {
+    register("abcde");
+
+    expect(registeredCount()).toBe(1);
+    expect(redact("key=abcde")).toBe(`key=${REDACTED}`);
+  });
+
+  it("registers a value one character long", () => {
+    register("x");
+
+    expect(registeredCount()).toBe(1);
+    expect(redact("axb")).toBe(`a${REDACTED}b`);
+  });
+
+  /**
+   * The one value with nothing to lose: `shape.ts` calls an empty string an
+   * error and the store reads it as plain absence, so there is no credential
+   * here to protect — and registering it would replace every empty position in
+   * every line.
+   */
+  it("refuses a value that is empty or only whitespace", () => {
+    register("");
+    register("   \n ");
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  it("holds one entry per distinct value", () => {
+    register(UNRECOGNISED);
+    register(UNRECOGNISED);
+    register(`${UNRECOGNISED}2`);
+
+    expect(registeredCount()).toBe(2);
+  });
+
+  /**
+   * The rotation case, structurally. A previous token that is a prefix of the
+   * new one must not be replaced first: doing so would cut the longer value in
+   * half and leave its tail readable.
+   */
+  it("replaces the longest match first", () => {
+    const short = "TOKENPREFIX0";
+    const long = `${short}ANDMORESECRET`;
+    register(short);
+    register(long);
+
+    const out = redact(`old=${short} new=${long}`);
+
+    expect(out).toBe(`old=${REDACTED} new=${REDACTED}`);
+    expect(out).not.toContain("ANDMORE");
+  });
+
+  it("forgets everything on demand", () => {
+    register(UNRECOGNISED);
+    forgetAll();
+
+    expect(registeredCount()).toBe(0);
+    expect(redact(UNRECOGNISED)).toBe(UNRECOGNISED);
+  });
+});
+
+describe("the pattern net", () => {
+  it.each([
+    ["an access key id", "AKIAIOSFODNN7EXAMPLE"],
+    ["a session key id", "ASIAIOSFODNN7EXAMPLE"],
+    ["a long-term Bedrock key", "ABSKQmVkcm9ja0FQSUtleVZhbHVl"],
+    ["a short-term Bedrock key", "bedrock-api-key-QmVkcm9ja1Nob3J0"],
+  ])("catches %s we never held", (_name, secret) => {
+    expect(redact(`value: ${secret} end`)).toBe(`value: ${REDACTED} end`);
+  });
+
+  it("catches a bearer header in either case", () => {
+    expect(redact("Authorization: Bearer abc.def")).toBe(REDACTED);
+    expect(redact("authorization : Bearer abc.def")).toBe(REDACTED);
+  });
+
+  it("catches the token key quoted back out of a settings document", () => {
+    expect(redact('  "AWS_BEARER_TOKEN_BEDROCK": "whatever-is-in-there",')).toBe(`  ${REDACTED},`);
+  });
+
+  it("leaves ordinary prose alone", () => {
+    const line = 'Health check: {"pass":12,"info":1,"warning":0,"error":0,"skipped":5}';
+
+    expect(redact(line)).toBe(line);
+  });
+
+  /**
+   * Each pattern is a module-level literal carrying the `g` flag, so a stale
+   * `lastIndex` would make the second call on an identical line miss.
+   */
+  it("gives the same answer twice in a row", () => {
+    const line = "key AKIAIOSFODNN7EXAMPLE and ABSKQmVkcm9ja0FQSUtleVZhbHVl";
+
+    expect(redact(line)).toBe(redact(line));
+    expect(redact(line)).toBe(`key ${REDACTED} and ${REDACTED}`);
+  });
+
+  /**
+   * Every pattern is anchored on a literal prefix or key name with no nested
+   * quantifier, so a long non-matching line cannot blow the stack or spin.
+   * Asserted rather than assumed: a log line is attacker-influenced whenever a
+   * settings file is.
+   */
+  it("stays linear on a 100 KiB line", () => {
+    register(UNRECOGNISED);
+    const line = `${"AB".repeat(50_000)}${UNRECOGNISED}`;
+
+    const started = Date.now();
+    const out = redact(line);
+
+    expect(out.endsWith(REDACTED)).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe("redactValue", () => {
+  /**
+   * The walker compares each own key against the set it is given, and the keys
+   * it sees are leaf names — so `SECRET_KEYS`, whose entries are dotted managed
+   * keys, matches nothing on its own. `report.ts` passes the leaf names; this
+   * pins the behaviour so that translation cannot be dropped by accident.
+   */
+  const LEAVES: ReadonlySet<string> = new Set(
+    [...SECRET_KEYS].map((key) => key.slice(key.lastIndexOf(".") + 1)),
+  );
+
+  it("redacts by key, wherever the key is nested", () => {
+    const out = redactValue({ env: { AWS_BEARER_TOKEN_BEDROCK: UNRECOGNISED } }, LEAVES);
+
+    expect(out).toEqual({ env: { AWS_BEARER_TOKEN_BEDROCK: REDACTED } });
+  });
+
+  it("redacts by key even for a value that is not a string", () => {
+    const out = redactValue({ AWS_BEARER_TOKEN_BEDROCK: { nested: 1 } }, LEAVES);
+
+    expect(out).toEqual({ AWS_BEARER_TOKEN_BEDROCK: REDACTED });
+  });
+
+  it("redacts by value under a key it does not know", () => {
+    register(UNRECOGNISED);
+
+    expect(redactValue({ notes: `key is ${UNRECOGNISED}` }, LEAVES)).toEqual({
+      notes: `key is ${REDACTED}`,
+    });
+  });
+
+  it("walks arrays", () => {
+    register(UNRECOGNISED);
+
+    expect(redactValue([UNRECOGNISED, { AWS_BEARER_TOKEN_BEDROCK: "x" }], LEAVES)).toEqual([
+      REDACTED,
+      { AWS_BEARER_TOKEN_BEDROCK: REDACTED },
+    ]);
+  });
+
+  it("passes non-string primitives through untouched", () => {
+    expect(redactValue({ n: 1, b: true, z: null }, LEAVES)).toEqual({ n: 1, b: true, z: null });
+    expect(redactValue(42, LEAVES)).toBe(42);
+    expect(redactValue(undefined, LEAVES)).toBeUndefined();
+  });
+
+  it("does not mutate its input", () => {
+    const input = { env: { AWS_BEARER_TOKEN_BEDROCK: UNRECOGNISED } };
+
+    redactValue(input, LEAVES);
+
+    expect(input.env.AWS_BEARER_TOKEN_BEDROCK).toBe(UNRECOGNISED);
+  });
+
+  /**
+   * A settings document is user data, so its keys can be anything — including
+   * `__proto__`. `redactValue` assigns rather than defines, so such a key is
+   * sent to the returned object's prototype and vanishes from the serialised
+   * output instead of appearing in it (`managedKeys.setPath` avoids this by
+   * defining the key; see the M5 report for the gap).
+   *
+   * That is a fidelity loss, not a disclosure, and this pins the half that
+   * matters: the subtree is redacted on the way past, so whichever way the
+   * assignment lands, nothing readable survives it — and `Object.prototype` is
+   * untouched, so the pollution cannot reach any other object.
+   */
+  it("keeps a __proto__ key in the report instead of losing it to the prototype", () => {
+    register(UNRECOGNISED);
+    const parsed = JSON.parse(
+      `{"a":1,"__proto__":{"AWS_BEARER_TOKEN_BEDROCK":"x","note":"${UNRECOGNISED}"}}`,
+    ) as unknown;
+
+    const out = redactValue(parsed, LEAVES) as Record<string, unknown>;
+    const rendered = JSON.stringify(out);
+
+    // Redacted, and still *there*: assigning would have set the prototype, so
+    // the entry would vanish from the report the user is pasting for help.
+    expect(rendered).not.toContain(UNRECOGNISED);
+    expect(rendered).toContain("__proto__");
+    expect(rendered).toContain(REDACTED);
+    expect(rendered).toContain('"a":1');
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).AWS_BEARER_TOKEN_BEDROCK).toBeUndefined();
+  });
+
+  it("matches a dotted secret key as well as a bare leaf name", () => {
+    const out = redactValue(
+      { env: { AWS_BEARER_TOKEN_BEDROCK: "hand-pasted-unknown-shape" } },
+      new Set(["env.AWS_BEARER_TOKEN_BEDROCK"]),
+    );
+
+    // SECRET_KEYS is dotted; a caller handing it over unchanged must not
+    // silently fall back to the pattern net alone.
+    expect(JSON.stringify(out)).not.toContain("hand-pasted");
+    expect(JSON.stringify(out)).toContain(REDACTED);
+  });
+});
+
+/**
+ * A settings document's keys are unconstrained user data, and a transposed
+ * key/value is an ordinary hand-editing mistake — so a key is as capable of
+ * carrying the token as a value is. `redactValue` walking values only meant
+ * that the one place `redact` could not reach was the one place a key/value
+ * swap puts the secret.
+ */
+describe("redactValue over object keys", () => {
+  const LEAVES: ReadonlySet<string> = new Set(
+    [...SECRET_KEYS].map((key) => key.slice(key.lastIndexOf(".") + 1)),
+  );
+
+  it("redacts a registered secret that appears as a key", () => {
+    register(UNRECOGNISED);
+
+    const out = redactValue({ env: { [UNRECOGNISED]: "AWS_BEARER_TOKEN_BEDROCK" } }, LEAVES);
+
+    expect(JSON.stringify(out)).not.toContain(UNRECOGNISED);
+    expect(JSON.stringify(out)).toContain(REDACTED);
+  });
+
+  /**
+   * The transposition in full: the value is the key name and the key is the
+   * key. `redact()` on the same text as a string would have caught this, so a
+   * walker that skips keys is strictly weaker than not walking at all.
+   */
+  it("catches a key the pattern net recognises, with an empty registry", () => {
+    const pasted = "ABSKQmVkcm9ja0FQSUtleVZhbHVl";
+
+    const out = redactValue(
+      JSON.parse(`{"env":{"${pasted}":"AWS_BEARER_TOKEN_BEDROCK"}}`) as unknown,
+      LEAVES,
+    );
+
+    expect(JSON.stringify(out)).not.toContain(pasted);
+  });
+
+  /**
+   * The one key that must survive verbatim: redacting it too would leave a row
+   * of two «redacted»s, and the reader could no longer tell which setting was
+   * removed.
+   */
+  it("keeps a secret key's own name so the row stays identifiable", () => {
+    expect(redactValue({ env: { AWS_BEARER_TOKEN_BEDROCK: "x" } }, LEAVES)).toEqual({
+      env: { AWS_BEARER_TOKEN_BEDROCK: REDACTED },
+    });
+  });
+
+  it("leaves an ordinary key alone", () => {
+    register(UNRECOGNISED);
+
+    expect(redactValue({ model: "sonnet", n: 1 }, LEAVES)).toEqual({ model: "sonnet", n: 1 });
+  });
+});
+
+/**
+ * The registry matches exact substrings, so before this any re-encoding of the
+ * token walked straight past it — and `encodeURIComponent(token)` in a log line
+ * or a URL is trivially reversible by any reader of a public issue. The module
+ * header presents the registry as the half that carries the guarantee, so this
+ * has to be true rather than assumed.
+ */
+describe("re-encoded forms of a registered secret", () => {
+  /** Contains `+` and `/`, so its URL-encoded form actually differs. */
+  const WITH_SPECIALS = "Zq7X+k2M/v9T=b4Rn6Wc8Jd3Fp5Hs1Ly0Gu";
+
+  it("scrubs the URL-encoded form", () => {
+    register(WITH_SPECIALS);
+
+    const encoded = encodeURIComponent(WITH_SPECIALS);
+
+    expect(encoded).not.toBe(WITH_SPECIALS);
+    expect(redact(`GET /x?key=${encoded}`)).toBe(`GET /x?key=${REDACTED}`);
+  });
+
+  it("scrubs the base64 form", () => {
+    register(UNRECOGNISED);
+
+    const encoded = Buffer.from(UNRECOGNISED, "utf8").toString("base64");
+
+    expect(redact(`body: ${encoded}`)).toBe(`body: ${REDACTED}`);
+  });
+
+  it("still scrubs the raw value", () => {
+    register(WITH_SPECIALS);
+
+    expect(redact(`token=${WITH_SPECIALS}`)).toBe(`token=${REDACTED}`);
+  });
+
+  /**
+   * The derived forms are scrubbing aliases, not registrations in their own
+   * right: counting them would make `registeredCount` report a number that has
+   * nothing to do with how many secrets are known.
+   */
+  it("counts the secret once, however many forms it has", () => {
+    register(WITH_SPECIALS);
+
+    expect(registeredCount()).toBe(1);
+  });
+
+  it("forgets the derived forms too", () => {
+    register(UNRECOGNISED);
+    forgetAll();
+
+    const encoded = Buffer.from(UNRECOGNISED, "utf8").toString("base64");
+
+    expect(redact(encoded)).toBe(encoded);
+  });
+});
+
+/**
+ * Arming the registry from a document we are about to render.
+ *
+ * The registry is fed by the credential store, so it is populated only once
+ * something has read a token this window. A report built before that — or from
+ * a file that never parsed, where nothing could read one — had nothing in it,
+ * and those are precisely the states where the key rule cannot help either.
+ */
+describe("registerSecretsIn", () => {
+  const LEAVES: ReadonlySet<string> = new Set(["AWS_BEARER_TOKEN_BEDROCK"]);
+
+  it("registers a value sitting under a secret key", () => {
+    registerSecretsIn({ env: { AWS_BEARER_TOKEN_BEDROCK: UNRECOGNISED } }, LEAVES);
+
+    expect(redact(`a copy: ${UNRECOGNISED}`)).toBe(`a copy: ${REDACTED}`);
+  });
+
+  it("registers through arrays", () => {
+    registerSecretsIn([{ AWS_BEARER_TOKEN_BEDROCK: UNRECOGNISED }], LEAVES);
+
+    expect(registeredCount()).toBe(1);
+  });
+
+  it("registers nothing for a document with no secret key in it", () => {
+    registerSecretsIn({ model: "sonnet", env: { AWS_REGION: "us-east-1" } }, LEAVES);
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  it("ignores a non-string value under a secret key", () => {
+    registerSecretsIn({ AWS_BEARER_TOKEN_BEDROCK: { nested: 1 } }, LEAVES);
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  it("ignores a primitive handed to it directly", () => {
+    registerSecretsIn("just a string", LEAVES);
+    registerSecretsIn(42, LEAVES);
+
+    expect(registeredCount()).toBe(0);
+  });
+});
+
+/**
+ * The same arming, for a file that did not parse — which is the state that most
+ * needs it. There are no keys to apply a key rule to, so the registry is the
+ * only thing standing between the raw bytes and a public issue, and nothing
+ * else can put a value in it: every reader of the file returns early on a
+ * malformed read. The bytes are still there, so they are what we read.
+ */
+describe("registerSecretsInText", () => {
+  const LEAVES: ReadonlySet<string> = new Set(["AWS_BEARER_TOKEN_BEDROCK"]);
+
+  it("registers a quoted value out of text that never parsed", () => {
+    registerSecretsInText(`{ "env": { "AWS_BEARER_TOKEN_BEDROCK": "${UNRECOGNISED}" },`, LEAVES);
+
+    expect(redact(`elsewhere: ${UNRECOGNISED}`)).toBe(`elsewhere: ${REDACTED}`);
+  });
+
+  /**
+   * The corruption `reader.ts` names as the most likely one for this file: a
+   * key pasted in without quotes. It is also the shape that breaks the parse,
+   * so it is guaranteed to arrive by this door and no other.
+   */
+  it("registers an unquoted pasted value", () => {
+    registerSecretsInText(`  "AWS_BEARER_TOKEN_BEDROCK": ${UNRECOGNISED},\n`, LEAVES);
+
+    expect(redact(`elsewhere: ${UNRECOGNISED}`)).toBe(`elsewhere: ${REDACTED}`);
+  });
+
+  it("registers a value whose key lost its own quotes", () => {
+    registerSecretsInText(`AWS_BEARER_TOKEN_BEDROCK: ${UNRECOGNISED}`, LEAVES);
+
+    expect(registeredCount()).toBe(1);
+  });
+
+  /**
+   * A guess, not a value the store accepted — so it has to be long enough that
+   * a match is a disclosure rather than a coincidence. Registering `1` here
+   * would replace every `1` in the report with «redacted».
+   */
+  it("refuses a guess too short to be anything but a coincidence", () => {
+    registerSecretsInText('"AWS_BEARER_TOKEN_BEDROCK": 1,', LEAVES);
+
+    expect(registeredCount()).toBe(0);
+    expect(redact("line 1 column 1")).toBe("line 1 column 1");
+  });
+
+  it("registers nothing when the text names no secret key", () => {
+    registerSecretsInText(`{ "notes": "${UNRECOGNISED}"`, LEAVES);
+
+    expect(registeredCount()).toBe(0);
+  });
+
+  it("registers every occurrence, not just the first", () => {
+    const second = "Pw4Nb8Kt2Vx6Lm0Cq5Ry9Df3Jh7Sz1Ae";
+    registerSecretsInText(
+      `"AWS_BEARER_TOKEN_BEDROCK": ${UNRECOGNISED},\n"AWS_BEARER_TOKEN_BEDROCK": "${second}"`,
+      LEAVES,
+    );
+
+    expect(registeredCount()).toBe(2);
+  });
+});
