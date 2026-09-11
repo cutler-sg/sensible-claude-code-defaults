@@ -362,8 +362,15 @@ export async function testConnection(deps: FlowDeps): Promise<void> {
   // outlived its credential from one that still speaks for it (F5).
   deps.credential.recordTest(result, stored.setAt);
   // The kind, never the body and never the token: `ConnectionResult` carries
-  // only a status, a region, or a model id we supplied ourselves.
-  deps.log.info(`Connection test: ${result.kind}`);
+  // only a status, a region, or a model id we supplied ourselves. The status
+  // rides along on the unknown branch because that is the one branch where the
+  // kind alone leaves nothing to act on — an HTTP code is safe to log and is
+  // the first thing anyone diagnosing it would ask for.
+  deps.log.info(
+    result.kind === "unknown"
+      ? `Connection test: unknown (HTTP ${result.status})`
+      : `Connection test: ${result.kind}`,
+  );
   await announce(result);
   await deps.runHealth();
 }

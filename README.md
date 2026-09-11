@@ -34,13 +34,23 @@ extension set each one to:
 |---|---|---|
 | `env.CLAUDE_CODE_USE_BEDROCK` | Talk to AWS instead of Anthropic directly | `"1"` |
 | `env.AWS_REGION` | Which AWS region your Bedrock models are called in | `us-east-1` |
-| `env.ANTHROPIC_DEFAULT_OPUS_MODEL` | Which model "Opus" means | `us.anthropic.claude-opus-5` |
-| `env.ANTHROPIC_DEFAULT_SONNET_MODEL` | Which model "Sonnet" means | `us.anthropic.claude-sonnet-5` |
-| `env.ANTHROPIC_DEFAULT_HAIKU_MODEL` | Which model "Haiku" means | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `env.ANTHROPIC_DEFAULT_OPUS_MODEL` | Which model "Opus" means | `global.anthropic.claude-opus-5` |
+| `env.ANTHROPIC_DEFAULT_SONNET_MODEL` | Which model "Sonnet" means | `global.anthropic.claude-sonnet-5` |
+| `env.ANTHROPIC_DEFAULT_HAIKU_MODEL` | Which model "Haiku" means | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `env.AWS_BEARER_TOKEN_BEDROCK` | Your Bedrock API key | your key, never anything of ours |
 | `permissions.deny` | Things Claude Code refuses outright, without asking you | `Bash(rm -rf:*)`, `Read(./.env)`, `Read(./.aws/**)` |
 | `extraKnownMarketplaces` | Claude Code plugin marketplaces to register | nothing — the key is there so a forked manifest can add some |
 | `enabledPlugins` | Claude Code plugins to turn on | nothing, for the same reason |
+
+The model ids use Amazon's **global** inference profiles, which route each
+request to whichever AWS region has capacity. That is the only form of these
+models that works from every commercial region — in Singapore, Tokyo, Mumbai
+and most of Asia-Pacific there is no regional alternative — and Claude Code
+itself falls back to the same `global.` prefix outside the US and EU. Two
+things it does not give you: a data-residency guarantee, and GovCloud. If your
+organisation needs requests kept inside one geography, change the three model
+ids to the `us.`, `eu.`, `au.` or `jp.` form of the same name; the health check
+carries on working with whichever you pick.
 
 Both lists are checkable: the nine keys are `MANAGED_KEYS` in
 [`src/config/types.ts`](src/config/types.ts), and the values are

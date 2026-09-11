@@ -38,6 +38,30 @@ Blocked on MC, and stated as blocked rather than worked around:
 - [x] Tag `v0.1.0`; *(2026-09-11)* the release workflow publishes to both registries once the secrets exist.
 - [ ] **Recommended before launch** (§5A): a short note to `usersafety@anthropic.com` describing what is shipping. Converts an unknown into a yes or an early no at zero cost, before installs and publisher verification accrue against the name. This is MC's call and MC's send.
 
+## First real-hardware run (2026-09-11, MC on macOS)
+
+Screenshot showed the panel rendering correctly with every check passing bar
+one drift info row, and two findings:
+
+- **Blank activity-bar square.** `media/icon.svg` was deleted in #17 as
+  "unreferenced"; it was the `viewsContainers[].icon`, a runtime path grep
+  cannot see. Fixed in #21 with a themeable `currentColor` glyph and a test
+  that every icon path the manifest names exists on disk. Ships in 0.1.1.
+- **"Amazon gave an answer we didn't understand" in 214 ms.** 0.1.0 logged
+  only the kind, so the cause could not be determined. Replaying the exact
+  call against `bedrock-runtime` showed a refused bearer key is a plain
+  `403 {"Message":"Authentication failed…"}` with no exception name — which
+  the bare-403 fallback already classifies as bad-credential, so that was
+  *not* the cause. A marker change written for it survived mutation and was
+  reverted. What remains: a non-Bedrock 200 (proxy) or a 4xx/5xx body outside
+  the marker set. #22 logs the status and shows it on the row tooltip so the
+  next report is diagnosable; MC to re-run and report the code.
+- **Global inference profiles.** Per the AWS model cards the `us.` form of
+  Opus 5 / Sonnet 5 / Haiku 4.5 does not exist from ap-southeast-1 and most
+  of APAC; `global.` works everywhere commercial and is Claude Code's own
+  fallback outside US/EU. Manifest moved to `global.` in #22, revision
+  `2026-09-11T00:00:00Z`, README notes the residency trade-off.
+
 ## Decisions taken
 
 - **Q-AI** Ship pre-release first, always. The first real install is the only test of the first-run flow that counts, and a pre-release channel makes a bad first version cheap to replace.
