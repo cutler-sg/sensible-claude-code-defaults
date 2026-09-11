@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "watch",
+      "type": "shell",
+      "command": "bun run watch",
+      "problemMatcher": "$esbuild-watch",
+      "isBackground": true,
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "never"
+      }
+    },
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "bun run build",
+      "problemMatcher": "$esbuild",
+      "group": "build"
+    }
+  ]
+}

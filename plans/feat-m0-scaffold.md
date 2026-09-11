@@ -33,27 +33,27 @@ Re-checked §17 before planning. Deltas from the PRD:
 
 ## M0 — scaffold + CI (0.5 day)
 
-- [ ] Initial commit on `main`: existing `CLAUDE.md`, `docs/PRD.md`, `.gitignore`, this plan. (Needs consent: creates the remote + first push to `main`, Q-B.)
-- [ ] Branch `feat/m0-scaffold`.
-- [ ] `package.json` per §7: `publisher` placeholder until Q4; `engines.vscode ^1.98.0`; `extensionDependencies: ["anthropic.claude-code"]`; `activationEvents: ["onStartupFinished"]`; **no** `extensionKind`; `capabilities.untrustedWorkspaces.supported: true`; view container `sensibleDefaults` + view `sensibleDefaults.health`; one command `sensibleDefaults.runHealthCheck` (stub); the three `configuration` properties.
-- [ ] `tsconfig.json`, `esbuild.js`, `biome.json`, `vitest.config.ts`, `.vscodeignore`, `.vscode/launch.json` + `tasks.json`.
-- [ ] `src/extension.ts`: create output channel `Sensible Claude Code Defaults`, log activation, register the stub command. Nothing else.
-- [ ] `src/util/log.ts` (thin wrapper around `LogOutputChannel`; redaction boundary lands in M5 but the single choke point exists from day one).
-- [ ] `README.md` stub containing the D8 non-affiliation statement and the "files written / token location" section headings. `CHANGELOG.md`, `LICENSE` (MIT).
-- [ ] `media/icon.png` + `icon.svg`: non-orange, non-starburst placeholder that is *not* the default glyph (§5A). Final icon is M7.
-- [ ] `test/unit/packageJson.test.ts`: asserts no `extensionKind`, exact `extensionDependencies`, exact `activationEvents`, `main` path, `untrustedWorkspaces` — FR-1.3's explicit test.
-- [ ] `.github/workflows/ci.yml`: PR + push → bun install → biome → tsc → vitest → `vsce package --no-dependencies` → upload `.vsix` artifact.
-- [ ] `.github/workflows/release.yml`: on `v*` tag → same gates → `azure/login` (OIDC) → `vsce publish --azure-credential --pre-release` → `ovsx publish -p $OVSX_PAT`. Publish steps skipped when secrets absent so the workflow dry-runs before Q4.
-- [ ] DoD: `bun run package` produces a `.vsix` that installs with `code --install-extension` and logs activation; CI green; release workflow dry-runs. Actual first publish waits on Q4 + Entra (Q-C).
+- [x] Initial commit on `main`: existing `CLAUDE.md`, `docs/PRD.md`, `.gitignore`, this plan. (Needs consent: creates the remote + first push to `main`, Q-B.)
+- [x] Branch `feat/m0-scaffold`.
+- [x] `package.json` per §7: `publisher` placeholder until Q4; `engines.vscode ^1.98.0`; `extensionDependencies: ["anthropic.claude-code"]`; `activationEvents: ["onStartupFinished"]`; **no** `extensionKind`; `capabilities.untrustedWorkspaces.supported: true`; view container `sensibleDefaults` + view `sensibleDefaults.health`; one command `sensibleDefaults.runHealthCheck` (stub); the three `configuration` properties.
+- [x] `tsconfig.json`, `esbuild.js`, `biome.json`, `vitest.config.ts`, `.vscodeignore`, `.vscode/launch.json` + `tasks.json`.
+- [x] `src/extension.ts`: create output channel `Sensible Claude Code Defaults`, log activation, register the stub command. Nothing else.
+- [x] `src/util/log.ts` (thin wrapper around `LogOutputChannel`; redaction boundary lands in M5 but the single choke point exists from day one).
+- [x] `README.md` stub containing the D8 non-affiliation statement and the "files written / token location" section headings. `CHANGELOG.md`, `LICENSE` (MIT).
+- [x] `media/icon.png` + `icon.svg`: non-orange, non-starburst placeholder that is *not* the default glyph (§5A). Final icon is M7.
+- [x] `test/unit/packageJson.test.ts`: asserts no `extensionKind`, exact `extensionDependencies`, exact `activationEvents`, `main` path, `untrustedWorkspaces` — FR-1.3's explicit test.
+- [x] `.github/workflows/ci.yml`: PR + push → bun install → biome → tsc → vitest → `vsce package --no-dependencies` → upload `.vsix` artifact.
+- [x] `.github/workflows/release.yml`: on `v*` tag → same gates → `azure/login` (OIDC) → `vsce publish --azure-credential --pre-release` → `ovsx publish -p $OVSX_PAT`. Publish steps skipped when secrets absent so the workflow dry-runs before Q4.
+- [ ] DoD: `bun run package` produces a `.vsix` that installs with `code --install-extension` and logs activation; CI green; release workflow dry-runs. Actual first publish waits on Q4 + Entra (Q-C). *(2026-09-10: `.vsix` builds clean — 10 files, no `node_modules`; lint, `tsc --noEmit`, and vitest green locally. Install-and-activate and the first CI run remain outstanding — nothing pushed yet.)*
 
 ## M1 — config engine (2 days)
 
 Module layout (`src/config/`), all `vscode`-free:
 
-- [ ] `paths.ts` — `resolveClaudeDir(env)` (Q-F), `settingsPath`, `backupsDir`, `assertOutsideWorkspace(target, folders)` guard used by every write.
-- [ ] `managedKeys.ts` — `MANAGED_KEYS` const (FR-2.1), `getPath`/`setPath`/`deletePath` for dotted keys; `env` created when absent, other `env` entries untouched.
-- [ ] `reader.ts` — `readSettings(path)` → `{kind:'absent'} | {kind:'ok', data, style} | {kind:'malformed', raw, error}`. `style` = detected indent + trailing-newline so writes don't reformat the user's file. Root not a plain object, or `env` present but not an object → `malformed`.
-- [ ] `merge.ts` — pure `merge(current, snapshot, desired) → { next, changes, drift }`. One function, no I/O. Rows:
+- [x] `paths.ts` — `resolveClaudeDir(env)` (Q-F), `settingsPath`, `backupsDir`, `assertOutsideWorkspace(target, folders)` guard used by every write.
+- [x] `managedKeys.ts` — `MANAGED_KEYS` const (FR-2.1), `getPath`/`setPath`/`deletePath` for dotted keys; `env` created when absent, other `env` entries untouched.
+- [x] `reader.ts` — `readSettings(path)` → `{kind:'absent'} | {kind:'ok', data, style} | {kind:'malformed', raw, error}`. `style` = detected indent + trailing-newline so writes don't reformat the user's file. Root not a plain object, or `env` present but not an object → `malformed`.
+- [x] `merge.ts` — pure `merge(current, snapshot, desired) → { next, changes, drift }`. One function, no I/O. Rows:
 
   | current vs snapshot | desired present | desired absent (removal, Q-G) |
   |---|---|---|
@@ -65,23 +65,23 @@ Module layout (`src/config/`), all `vscode`-free:
 
   Preserved keys are **not** adopted into the snapshot: the snapshot records only what we wrote, so a later manifest bump can never overwrite a user value we never owned. Ownership transfers only via explicit "reset to recommended" (M2).
   Equality: deep-equal; arrays order-insensitive for `permissions.deny` (Claude Code declares `uniqueItems`). Granularity for array/map keys: Q-E.
-- [ ] `snapshot.ts` — `SnapshotStore` interface; `FileSnapshotStore` (used by tests, and by the extension if Q-D goes my way) + `MementoSnapshotStore` adapter (10 lines, lives in `src/ui` side since it touches `vscode`).
-- [ ] `writer.ts` — `writeSettingsAtomic(path, data, style)`: `realpath` the target first (a symlinked `settings.json` from a dotfiles repo must not be replaced by a regular file), write temp in the *target's* directory with mode `0600`, `fsync`, `rename`, `chmod 0600` after rename (POSIX; Windows ACL deferred to M6, Q-K), temp removed on any failure. `ensureMode0600(path)`. `backupOnce(session)`, `listBackups`, `restoreBackup`, retain 10 (dir per Q-H).
-- [ ] `apply.ts` — two-phase orchestrator so FR-6.1's diff preview is structural, not bolted on: `plan(desired) → {changes, drift, next}` then `commit(plan)` → backup-once → write → snapshot save. `plan` on a malformed file returns `{blocked:'malformed'}` and `commit` refuses (FR-2.5).
+- [x] `snapshot.ts` — `SnapshotStore` interface; `FileSnapshotStore` (used by tests, and by the extension if Q-D goes my way) + `MementoSnapshotStore` adapter (10 lines, lives in `src/ui` side since it touches `vscode`).
+- [x] `writer.ts` — `writeSettingsAtomic(path, data, style)`: `realpath` the target first (a symlinked `settings.json` from a dotfiles repo must not be replaced by a regular file), write temp in the *target's* directory with mode `0600`, `fsync`, `rename`, `chmod 0600` after rename (POSIX; Windows ACL deferred to M6, Q-K), temp removed on any failure. `ensureMode0600(path)`. `backupOnce(session)`, `listBackups`, `restoreBackup`, retain 10 (dir per Q-H).
+- [x] `apply.ts` — two-phase orchestrator so FR-6.1's diff preview is structural, not bolted on: `plan(desired) → {changes, drift, next}` then `commit(plan)` → backup-once → write → snapshot save. `plan` on a malformed file returns `{blocked:'malformed'}` and `commit` refuses (FR-2.5).
 
 Tests (write alongside, per CLAUDE.md):
 
-- [ ] `merge.test.ts` — every cell of the table above × three value shapes (scalar `env.*`, array `permissions.deny`, map `enabledPlugins`), plus: `enabledPlugins` value is `string[]` (schema allows it), `env` absent, `env` non-object, unmanaged keys and `$schema` untouched and order-preserved, snapshot has keys no longer in `MANAGED_KEYS`.
-- [ ] `reader.test.ts` — absent, ok, malformed (trailing comma, BOM, comment), root array, indent/newline detection.
-- [ ] `writer.test.ts` — atomicity (inject a failing rename, assert original intact and no `.tmp` left), mode `0600` after write, symlink target preserved, formatting preserved, backup rotation keeps exactly 10 newest, restore round-trip.
-- [ ] `paths.test.ts` — `CLAUDE_CONFIG_DIR` honoured/ignored per Q-F, `assertOutsideWorkspace` rejects a target inside any folder (§10.4 assertion #2; also rejects `.claude/settings.local.json` inside a workspace by construction).
-- [ ] `integration/apply.test.ts` under a temp dir — fresh install, hand-written existing config, malformed (no write, no backup), drifted, `/setup-bedrock`-style rewrite of a model pin between two applies, backup/restore round-trip.
-- [ ] DoD: `bun test` green; coverage of `src/config` ≥ 95% lines (merge.ts 100%); no `vscode` import under `src/config`.
+- [x] `merge.test.ts` — every cell of the table above × three value shapes (scalar `env.*`, array `permissions.deny`, map `enabledPlugins`), plus: `enabledPlugins` value is `string[]` (schema allows it), `env` absent, `env` non-object, unmanaged keys and `$schema` untouched and order-preserved, snapshot has keys no longer in `MANAGED_KEYS`.
+- [x] `reader.test.ts` — absent, ok, malformed (trailing comma, BOM, comment), root array, indent/newline detection.
+- [x] `writer.test.ts` — atomicity (inject a failing rename, assert original intact and no `.tmp` left), mode `0600` after write, symlink target preserved, formatting preserved, backup rotation keeps exactly 10 newest, restore round-trip.
+- [x] `paths.test.ts` — `CLAUDE_CONFIG_DIR` honoured/ignored per Q-F, `assertOutsideWorkspace` rejects a target inside any folder (§10.4 assertion #2; also rejects `.claude/settings.local.json` inside a workspace by construction).
+- [x] `integration/apply.test.ts` under a temp dir — fresh install, hand-written existing config, malformed (no write, no backup), drifted, `/setup-bedrock`-style rewrite of a model pin between two applies, backup/restore round-trip.
+- [x] DoD: `bun test` green (229 tests, 8 files); coverage of `src/config` 99% lines (every module 100%, `index.ts` barrel uncovered); no `vscode` import under `src/config`. Adversarial review (2026-09-10) found 17 issues, 5 critical (symlink bypass of the workspace guard, plan→commit TOCTOU, resetKeyPlan adopting user elements, prototype-chain reads in mergeMap, restore undone by next apply); all fixed with regression tests — 333 tests, 100% per module. Residual: TOCTOU is narrowed (stale-check in commit), not closed — a write between the check and the rename is still lost; a lock protocol Claude Code honours does not exist (see Q-J below).
 
 ## Open questions
 
 Blocking M0 publish (not M0 scaffolding):
-- **Q-A (PRD Q4)** Publisher ID. All four candidates free on both registries. Recommend `cutler`: matches the repo org and keeps `carrotly-ai` off a tool that asks users for a cloud credential. Which apex for verification: `cutler.sg` (already serves the agents endpoint) or `cutler.io` (named in §9)?
+- ~~**Q-A (PRD Q4)** Publisher ID.~~ **RESOLVED 2026-09-10: `cutler-sg`**, verification domain **`cutler.sg`** (verified live: apex, DNS A 216.150.1.1, HTTPS 200, valid TLS, Vercel). `cutler-sg` confirmed free on both the VS Code Marketplace and Open VSX. Extension id is therefore `cutler-sg.sensible-claude-code-defaults`; listing homepage will be `https://cutler.sg/sensible-claude-code-defaults`. The six-month verified-publisher clock starts when the publisher account is created — do that now, before any code ships.
 - **Q-B** GitHub remote: `cotdp` account, repo `cotdp/sensible-claude-code-defaults`? Consent for the one initial push to `main`.
 - **Q-C** Is there an Entra tenant to federate `vsce publish --azure-credential` against? If not, PAT stopgap (Marketplace Manage, all orgs) is viable for 12 weeks only.
 
@@ -92,7 +92,8 @@ M1 design calls (assumption in bold; say "no" to flip):
 - **Q-G** Removal semantics (missing from FR-2.2): needed for `clearToken` and for managed keys dropped from a future manifest. **Delete only if current equals snapshot; otherwise preserve + drift.**
 - **Q-H** Backup dir: PRD says `~/.claude/.backups/`. Claude Code already owns `~/.claude/backups/`. Proposal: **`~/.claude/sensible-defaults/backups/`**, namespaced with the state file.
 - **Q-I** Confirm "Node 22" = toolchain only; bundle targets **node20**.
-- **Q-J** **bun** + `vsce --no-dependencies`; fall back to npm only if vsce fights it.
+- **Q-J** **bun** + `vsce --no-dependencies`; fall back to npm only if vsce fights it. *(resolved: bun works.)*
+- **Q-J2** Concurrent-writer window: `commit` now refuses a stale plan, but nothing locks the file between the re-read and the rename. Claude Code has no lock protocol we can honour. Options: accept (the window is milliseconds and the pre-write backup is always taken first), or take an advisory `settings.json.lock` that only *we* respect (protects two VS Code windows, not Claude Code). **Assume accept for v1; revisit if M6 platform testing shows real collisions.**
 - **Q-K** Windows ACL check/repair (FR-2.8) **deferred to M6**; M1 does POSIX `0600` only, with a no-op + info log on `win32`.
 - **Q-L** PRD §16 Q2 ("report on vs install the plugin marketplace") is already answered by §4.2 ("Extension, once"). Writing `extraKnownMarketplaces` + `enabledPlugins` to the user file *is* installing. Suggest closing Q2 as "install, once, via the merge engine" or removing those two keys from `MANAGED_KEYS` for v1.
 

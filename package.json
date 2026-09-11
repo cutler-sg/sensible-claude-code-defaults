@@ -1,0 +1,232 @@
+{
+  "name": "sensible-claude-code-defaults",
+  "displayName": "Sensible Claude Code Defaults",
+  "description": "Health checks and working defaults for Claude Code on AWS Bedrock.",
+  "publisher": "cutler-sg",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cutler-sg/sensible-claude-code-defaults.git"
+  },
+  "homepage": "https://cutler.sg/sensible-claude-code-defaults",
+  "bugs": {
+    "url": "https://github.com/cutler-sg/sensible-claude-code-defaults/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude code",
+    "bedrock",
+    "aws",
+    "configuration"
+  ],
+  "qna": "https://github.com/cutler-sg/sensible-claude-code-defaults/issues",
+  "icon": "media/icon.png",
+  "categories": [
+    "Other"
+  ],
+  "engines": {
+    "vscode": "^1.98.0"
+  },
+  "extensionDependencies": [
+    "anthropic.claude-code"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sensibleDefaults",
+          "title": "Sensible Defaults",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sensibleDefaults": [
+        {
+          "id": "sensibleDefaults.health",
+          "name": "Configuration Health"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sensibleDefaults.runHealthCheck",
+        "title": "Check Configuration",
+        "category": "Sensible Defaults",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sensibleDefaults.applyDefaults",
+        "title": "Apply Recommended Configuration",
+        "category": "Sensible Defaults",
+        "icon": "$(wand)"
+      },
+      {
+        "command": "sensibleDefaults.openSettings",
+        "title": "Open settings.json",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.restoreBackup",
+        "title": "Restore Previous Configuration",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.setToken",
+        "title": "Set Bedrock API Key",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.rotateToken",
+        "title": "Update Bedrock API Key",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.clearToken",
+        "title": "Remove Bedrock API Key",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.testConnection",
+        "title": "Test Bedrock Connection",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.adoptToken",
+        "title": "Use the key from my settings file",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.reapplyToken",
+        "title": "Copy the key into my settings file",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.resolveTokenConflict",
+        "title": "Resolve API key conflict",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.selectRegion",
+        "title": "Change AWS Region",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.repairPermissions",
+        "title": "Repair File Permissions",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.resetKey",
+        "title": "Reset to Recommended",
+        "category": "Sensible Defaults",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "sensibleDefaults.runFix",
+        "title": "Fix This",
+        "category": "Sensible Defaults",
+        "icon": "$(wrench)"
+      }
+    ],
+    "configuration": {
+      "title": "Sensible Defaults",
+      "properties": {
+        "sensibleDefaults.manifestUrl": {
+          "type": "string",
+          "default": "https://raw.githubusercontent.com/cutler-sg/sensible-claude-code-defaults/main/manifest/defaults.json",
+          "description": "URL of the defaults manifest. Falls back to the cached and then the bundled copy when unreachable."
+        },
+        "sensibleDefaults.checkOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run configuration health checks when the window finishes starting up."
+        }
+      }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "sensibleDefaults.runHealthCheck",
+          "when": "view == sensibleDefaults.health",
+          "group": "navigation"
+        },
+        {
+          "command": "sensibleDefaults.applyDefaults",
+          "when": "view == sensibleDefaults.health",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sensibleDefaults.runFix",
+          "when": "view == sensibleDefaults.health && viewItem == check:command",
+          "group": "inline"
+        },
+        {
+          "command": "sensibleDefaults.resetKey",
+          "when": "view == sensibleDefaults.health && viewItem == drift",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "sensibleDefaults.runFix",
+          "when": "false"
+        },
+        {
+          "command": "sensibleDefaults.resetKey",
+          "when": "false"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sensibleDefaults.health",
+        "contents": "Checking your Claude Code configuration…",
+        "when": "sensibleDefaults.hasReport == false"
+      },
+      {
+        "view": "sensibleDefaults.health",
+        "contents": "Claude Code isn't set up for AWS Bedrock yet.\n[Apply recommended configuration](command:sensibleDefaults.applyDefaults)",
+        "when": "view == sensibleDefaults.health && sensibleDefaults.needsSetup"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "test": "vitest run",
+    "package": "node esbuild.js --production && vsce package --no-dependencies",
+    "vscode:prepublish": "node esbuild.js --production",
+    "test:integration": "node esbuild.js && esbuild test/integration-vscode/*.spec.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:mocha --outdir=out/test/integration-vscode && vscode-test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.14",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.19.0",
+    "@types/vscode": "~1.98.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.7.0",
+    "esbuild": "^0.25.12",
+    "mocha": "^12.0.0",
+    "ovsx": "^0.10.7",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
