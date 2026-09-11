@@ -200,7 +200,10 @@ describe("contributed commands", () => {
     ]);
     for (const entry of title) {
       expect(entry.group).toBe("navigation");
-      expect(entry.when).toBe("view == sensibleDefaults.health");
+      // M8: the tree is the Details view; the primary view is a webview with
+      // its own buttons, and a title-bar icon there would be a second way to
+      // do the same thing.
+      expect(entry.when).toBe("view == sensibleDefaults.details");
     }
   });
 
@@ -214,20 +217,28 @@ describe("contributed commands", () => {
     expect(reset?.group).toBe("inline");
   });
 
-  it("shows a first-run placeholder until a report exists", () => {
+  it("the primary view is a webview and the tree is the Details view (M8)", () => {
+    const views = manifest.contributes.views.sensibleDefaults;
+    expect(views.map((v) => v.id)).toEqual(["sensibleDefaults.health", "sensibleDefaults.details"]);
+    expect(views[0]).toMatchObject({ type: "webview" });
+    // The tree only appears when the panel's Details disclosure is open.
+    expect(views[1]?.when).toBe("sensibleDefaults.detailsOpen");
+  });
+
+  it("shows a first-run placeholder in the tree until a report exists", () => {
     const [welcome] = manifest.contributes.viewsWelcome;
-    expect(welcome?.view).toBe("sensibleDefaults.health");
+    expect(welcome?.view).toBe("sensibleDefaults.details");
     expect(welcome?.when).toBe("sensibleDefaults.hasReport == false");
     expect(welcome?.contents).toContain("Checking your Claude Code configuration");
   });
 
-  it("offers the apply button when Claude Code is installed but unconfigured (FR-5.5)", () => {
+  it("the tree has nothing to say when unconfigured; the panel owns that state (FR-5.5)", () => {
     const setup = manifest.contributes.viewsWelcome.find((entry) =>
       entry.when.includes("sensibleDefaults.needsSetup"),
     );
-    expect(setup?.view).toBe("sensibleDefaults.health");
-    expect(setup?.when).toBe("view == sensibleDefaults.health && sensibleDefaults.needsSetup");
-    expect(setup?.contents).toContain("(command:sensibleDefaults.applyDefaults)");
+    expect(setup?.view).toBe("sensibleDefaults.details");
+    // No apply button here: the panel's "Set up now" is the one path in.
+    expect(setup?.contents).not.toContain("(command:");
   });
 
   it("links its welcome buttons to declared commands", () => {

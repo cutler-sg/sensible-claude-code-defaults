@@ -15,6 +15,24 @@ ageing key, a setting that drifted.
 **An independent tool. Not affiliated with, endorsed by, or sponsored by
 Anthropic, PBC.**
 
+## Getting started
+
+Click the wrench-and-tick icon in the activity bar on the left. The panel
+that opens does the rest:
+
+1. **Set up now.** One button.
+2. **Paste your Bedrock API key.** If you don't have one yet, *Create a key*
+   opens the exact page in the Amazon console and tells you which tab to use.
+   The panel says where the key goes before you continue.
+3. **Watch it test.** The panel asks Amazon whether the key works and tells
+   you in one sentence, with one button for whatever comes next.
+
+That is the whole setup. Afterwards the panel shows a single line — everything
+working, or the one thing that isn't and the button that fixes it — with the
+full list of checks behind *Details* for whoever is helping you. Every panel
+action is also in the command palette under *Sensible Defaults*, for people who
+prefer it.
+
 ## What this extension writes
 
 Everything is written to your **user profile**, never inside a project folder:

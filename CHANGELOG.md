@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - Unreleased
+
+### Added
+
+- **A guided setup in the sidebar.** The panel is now the whole experience for
+  a non-technical user: *Set up now*, paste the key (with a live check that it
+  looks like one, a show/hide toggle, and a *Create a key* walkthrough that
+  opens the right console page), then watch it test. Every outcome is one
+  sentence and one button. Once set up, the panel shows a single line — working,
+  or the one thing to fix — with the full check list behind *Details*.
+- The region is chosen for you. The recommended models use Amazon's global
+  inference profiles, which work from any region, so the setup no longer asks;
+  *Change region* stays as a link for anyone who needs a specific one.
+
+### Changed
+
+- The check tree moved behind the panel's *Details* disclosure. Nothing was
+  removed; it is one click further from the person who never needed it.
+
 ## [0.1.1] - 2026-09-11
 
 ### Changed

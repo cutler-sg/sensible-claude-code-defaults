@@ -23,7 +23,7 @@ import * as vscode from "vscode";
 import type { ApplySession, CommitResult, ConfigEnv } from "../config/index.js";
 import { getPath, readSettings, settingsPath } from "../config/index.js";
 import { normalizeToken, SHAPE_MESSAGES, validateTokenShape } from "../credential/shape.js";
-import type { ConnectionResult, TokenEnv, TokenStore } from "../credential/types.js";
+import type { ConnectionResult, StoredToken, TokenEnv, TokenStore } from "../credential/types.js";
 import { testConnection as callBedrock } from "../credential/validate.js";
 import {
   adoptTokenFromSettings,
@@ -114,10 +114,21 @@ async function enterToken(
   }
 
   const token = normalizeToken(entered);
+  if (await saveToken(deps, token)) await offerTest(deps);
+  await deps.runHealth();
+}
+
+/**
+ * Store, then mirror, with no UI of its own (plan M8 Part B). The palette
+ * command and the sidebar panel both come through here; only the wrapper
+ * differs. Returns whether the settings file now holds the key, exactly as
+ * `mirror` reports it, so a caller does not follow a failed mirror with an
+ * offer that assumes it worked.
+ */
+export async function saveToken(deps: FlowDeps, token: string): Promise<boolean> {
   await store(deps, token);
   deps.log.info("Saved a Bedrock API key to the system keychain.");
-  if (await mirror(deps, token)) await offerTest(deps);
-  await deps.runHealth();
+  return await mirror(deps, token);
 }
 
 /**
@@ -346,17 +357,30 @@ export async function testConnection(deps: FlowDeps): Promise<void> {
     return;
   }
 
-  const configuredRegion = await region(deps);
   const result = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: "Testing your Bedrock API key…" },
-    () =>
-      callBedrock({
-        token: stored.token,
-        region: configuredRegion,
-        models: modelsToTry(deps.manifest()),
-        ...(deps.credential.fetch === undefined ? {} : { fetch: deps.credential.fetch }),
-      }),
+    () => runConnectionTest(deps, stored),
   );
+  await announce(result);
+  await deps.runHealth();
+}
+
+/**
+ * The test itself, with no UI (plan M8 Part B): call Bedrock, record the
+ * result against the key it tested, log the kind. The palette command wraps
+ * this in a progress toast and announces the outcome; the sidebar panel shows
+ * the outcome inline and needs neither.
+ */
+export async function runConnectionTest(
+  deps: FlowDeps,
+  stored: StoredToken,
+): Promise<ConnectionResult> {
+  const result = await callBedrock({
+    token: stored.token,
+    region: await region(deps),
+    models: modelsToTry(deps.manifest()),
+    ...(deps.credential.fetch === undefined ? {} : { fetch: deps.credential.fetch }),
+  });
 
   // Stamped with the key it tested, so `cred.valid` can tell a result that has
   // outlived its credential from one that still speaks for it (F5).
@@ -371,8 +395,7 @@ export async function testConnection(deps: FlowDeps): Promise<void> {
       ? `Connection test: unknown (HTTP ${result.status})`
       : `Connection test: ${result.kind}`,
   );
-  await announce(result);
-  await deps.runHealth();
+  return result;
 }
 
 /** Q-U: Haiku first because Claude Code uses it for background work. */

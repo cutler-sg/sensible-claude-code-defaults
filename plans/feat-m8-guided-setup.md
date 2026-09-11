@@ -1,7 +1,7 @@
 # Plan — M8 (guided setup: a sidebar experience a non-technical user can finish)
 
 Source of truth: `docs/PRD.md` §5 FR-4 (credential flows), §13 (trust posture), and the first real-hardware run recorded in `plans/feat-m7-release.md`.
-Depends on M7. Branch: `feat/m8-guided-setup`. Status: **draft, written 2026-09-11. Decisions D-1..D-3 taken by MC; mockups below await sign-off before code.**
+Depends on M7. Branch: `feat/m8-guided-setup`. Status: **Parts A–D implemented 2026-09-11; Part E is MC's manual pass on real hardware.**
 
 ## Why
 
@@ -159,31 +159,31 @@ Priority when several checks fail: error before warning before info; within a le
 
 ## Part A — the webview shell
 
-- [ ] `package.json`: change the `sensibleDefaults.health` view to `"type": "webview"`; add a second, hidden-by-default tree view `sensibleDefaults.details` for the disclosure (a webview cannot host a native tree, so Details toggles the second view's visibility via `setContext`).
-- [ ] `src/ui/panel/provider.ts`: `WebviewViewProvider` with `retainContextWhenHidden: false` (state is tiny and lives in the extension; rebuilding is cheap and avoids the memory cost the docs warn about).
-- [ ] `src/ui/panel/html.ts`: the page as a template string. CSP `default-src 'none'; style-src ${cspSource} 'nonce-…'; script-src 'nonce-…'; img-src ${cspSource}`. No remote content, no `unsafe-inline`, nonce regenerated per render. Uses VS Code's CSS variables (`--vscode-button-background` etc.) so it matches every theme with no colour of its own.
-- [ ] `src/ui/panel/state.ts`: a pure reducer `(report, credential, setupProgress) → PanelState` with the three states and the interruption priority above. This is where the tests live; the HTML is a function of it.
-- [ ] `src/ui/panel/messages.ts`: the typed message protocol both ways. Webview→extension: `setup.start`, `key.changed` (shape check only, value not logged), `key.submit`, `test.run`, `console.open`, `details.toggle`, `action.run {command}`. Extension→webview: `state {PanelState}`.
-- [ ] The key value crosses `postMessage` once, on submit, and is passed straight to `store`. It is never echoed back, never put in state, never logged. Redaction test: mutate the provider to include the key in the `state` message and assert a test fails.
+- [x] `package.json`: change the `sensibleDefaults.health` view to `"type": "webview"`; add a second, hidden-by-default tree view `sensibleDefaults.details` for the disclosure (a webview cannot host a native tree, so Details toggles the second view's visibility via `setContext`).
+- [x] `src/ui/panel/provider.ts`: `WebviewViewProvider` with `retainContextWhenHidden: false` (state is tiny and lives in the extension; rebuilding is cheap and avoids the memory cost the docs warn about).
+- [x] `src/ui/panel/html.ts`: the page as a template string. CSP `default-src 'none'; style-src ${cspSource} 'nonce-…'; script-src 'nonce-…'; img-src ${cspSource}`. No remote content, no `unsafe-inline`, nonce regenerated per render. Uses VS Code's CSS variables (`--vscode-button-background` etc.) so it matches every theme with no colour of its own.
+- [x] `src/ui/panel/state.ts`: a pure reducer `(report, credential, setupProgress) → PanelState` with the three states and the interruption priority above. This is where the tests live; the HTML is a function of it.
+- [x] `src/ui/panel/messages.ts`: the typed message protocol both ways. Webview→extension: `setup.start`, `key.changed` (shape check only, value not logged), `key.submit`, `test.run`, `console.open`, `details.toggle`, `action.run {command}`. Extension→webview: `state {PanelState}`.
+- [x] The key value crosses `postMessage` once, on submit, and is passed straight to `store`. It is never echoed back, never put in state, never logged. Redaction test: mutate the provider to include the key in the `state` message and assert a test fails.
 
 ## Part B — the flows, refactored to be UI-agnostic
 
-- [ ] Split `enterToken` in `flows.ts` into `saveToken(deps, token)` (store + mirror, no UI) and the existing input-box wrapper that calls it. The webview calls `saveToken`; the palette command is unchanged. Same for `testConnection`: the result already comes back as a value; the toast stays on the command path only.
-- [ ] `adoptToken` becomes the target of *Check my setup* in state A.
-- [ ] Silent region write: `applyDefaults` already writes `AWS_REGION` from the manifest. Confirm the setup path calls it (it must, to write the other eight keys) and that no prompt fires. The `config.region` check keeps validating the value is a real region string.
+- [x] Split `enterToken` in `flows.ts` into `saveToken(deps, token)` (store + mirror, no UI) and the existing input-box wrapper that calls it. The webview calls `saveToken`; the palette command is unchanged. Same for `testConnection`: the result already comes back as a value; the toast stays on the command path only.
+- [x] `adoptToken` becomes the target of *Check my setup* in state A.
+- [x] Silent region write: `applyDefaults` already writes `AWS_REGION` from the manifest. Confirm the setup path calls it (it must, to write the other eight keys) and that no prompt fires. The `config.region` check keeps validating the value is a real region string.
 
 ## Part C — the details disclosure
 
-- [ ] Reuse `HealthTreeProvider` unchanged on the `sensibleDefaults.details` view.
-- [ ] The disclosure header counts levels from `report.counts` so "18 checks, 1 warning" is derived, not maintained.
+- [x] Reuse `HealthTreeProvider` unchanged on the `sensibleDefaults.details` view.
+- [x] The disclosure header counts levels from `report.counts` so "18 checks, 1 warning" is derived, not maintained.
 
 ## Part D — tests
 
-- [ ] `state.test.ts`: every transition in the reducer, the interruption priority (error > warning > info; cred > config > install), and that a healthy report with zero non-pass checks yields state C with no interruption.
-- [ ] `html.test.ts`: render each state and assert (a) the CSP header is present with a nonce, (b) no `<a href="http`, (c) the key never appears in output for any state, (d) exactly one element has the primary-button class.
-- [ ] `messages.test.ts`: the reducer rejects malformed messages from the webview without throwing; an `action.run` with a command id outside the allowlist is dropped and logged.
-- [ ] Mutation pass, as every milestone: blind the shape check, drop the CSP, echo the key into state, break the priority order. Each must fail a named test.
-- [ ] Integration (`test/integration-vscode`): the view resolves, receives a `state` message on activation, and a synthetic `setup.start` produces a step-1 render. The host cannot see pixels; what it can see is the message stream.
+- [x] `state.test.ts`: every transition in the reducer, the interruption priority (error > warning > info; cred > config > install), and that a healthy report with zero non-pass checks yields state C with no interruption.
+- [x] `html.test.ts`: render each state and assert (a) the CSP header is present with a nonce, (b) no `<a href="http`, (c) the key never appears in output for any state, (d) exactly one element has the primary-button class.
+- [x] `messages.test.ts`: the reducer rejects malformed messages from the webview without throwing; an `action.run` with a command id outside the allowlist is dropped and logged.
+- [x] Mutation pass, as every milestone: blind the shape check, drop the CSP, echo the key into state, break the priority order. Each must fail a named test.
+- [x] Integration (`test/integration-vscode`): the view resolves, receives a `state` message on activation, and a synthetic `setup.start` produces a step-1 render. The host cannot see pixels; what it can see is the message stream.
 
 ## Part E — manual, on MC's Mac (cannot be automated)
 
@@ -195,8 +195,8 @@ Priority when several checks fail: error before warning before info; within a le
 
 ## Open questions
 
-- **Q-AL Where does the drift info row go?** Today "Some settings have been changed since the recommended setup" is an info row with a per-key reset. In state C it is a candidate interruption at the lowest priority, with *Reset to recommended* as the action. Or it stays in Details only. Leaning: Details only — a non-technical user did not change those settings on purpose, Claude Code's own `/setup-bedrock` did, and telling them about it invites a click they don't understand.
-- **Q-AM Should the panel steal focus on first install?** `viewsWelcome` cannot; a webview can `show({preserveFocus:false})` from activation. Leaning: reveal but preserve focus. A panel that appears is helpful; one that grabs the cursor is not.
+- **Q-AL (resolved: Details only)** Where does the drift info row go? Today "Some settings have been changed since the recommended setup" is an info row with a per-key reset. In state C it is a candidate interruption at the lowest priority, with *Reset to recommended* as the action. Or it stays in Details only. Leaning: Details only — a non-technical user did not change those settings on purpose, Claude Code's own `/setup-bedrock` did, and telling them about it invites a click they don't understand.
+- **Q-AM (resolved: reveal, preserve focus)** Should the panel steal focus on first install? `viewsWelcome` cannot; a webview can `show({preserveFocus:false})` from activation. Leaning: reveal but preserve focus. A panel that appears is helpful; one that grabs the cursor is not.
 
 ## Not in M8
 

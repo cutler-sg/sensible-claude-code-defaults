@@ -8,6 +8,7 @@ import type { CredentialFlowDeps } from "./ui/flows.js";
 import { createHealthRunner } from "./ui/healthRunner.js";
 import { createHost } from "./ui/host.js";
 import { createManifestHolder, DEFAULT_MANIFEST_URL } from "./ui/manifestHolder.js";
+import { DETAILS_VIEW_ID, PANEL_VIEW_ID, PanelProvider } from "./ui/panel/provider.js";
 import { HealthTreeProvider } from "./ui/treeProvider.js";
 import { watchSettings } from "./ui/watcher.js";
 import { Logger } from "./util/log.js";
@@ -33,8 +34,10 @@ export function activate(context: vscode.ExtensionContext): void {
     cache: createManifestCache(context.globalState),
     log,
   });
+  // M8: the sidebar's primary surface is the guided panel; the check tree
+  // lives behind its Details disclosure as a second view, shown by context.
   const provider = new HealthTreeProvider();
-  const view = vscode.window.createTreeView("sensibleDefaults.health", {
+  const view = vscode.window.createTreeView(DETAILS_VIEW_ID, {
     treeDataProvider: provider,
     showCollapseAll: false,
   });
@@ -114,6 +117,7 @@ export function activate(context: vscode.ExtensionContext): void {
         provider.errorCount > 0
           ? { value: provider.errorCount, tooltip: `${provider.errorCount} problem(s) to fix` }
           : undefined;
+      panel?.refresh();
     },
   });
 
@@ -139,13 +143,13 @@ export function activate(context: vscode.ExtensionContext): void {
     suppress: () => Date.now() < suppressUntil,
   });
 
-  const commands = registerCommands({
+  // One `FlowDeps` for both writers — the palette commands and the panel —
+  // so they share a session and a plan made by one is checked for staleness
+  // against a commit made by the other.
+  const flowDeps = {
     env: host.env,
     session: createSession(),
     manifest: () => manifests.current().manifest,
-    refreshManifest: (options) => manifests.refresh(options),
-    settingsFile: host.settingsFile,
-    backupsDir: backupsDir(host.claudeDir),
     log,
     runHealth,
     markWrite: () => {
@@ -155,6 +159,24 @@ export function activate(context: vscode.ExtensionContext): void {
       watcher.rearm();
     },
     credential,
+  };
+  const panel = new PanelProvider({
+    flows: flowDeps,
+    log,
+    report: () => lastReport,
+    lastTestedAt: () => lastTest?.at,
+    consoleUrl: () => manifests.current().manifest.credential.consoleUrl,
+    execute: (command) => vscode.commands.executeCommand(command),
+    openExternal: (url) => vscode.env.openExternal(vscode.Uri.parse(url)),
+    setContext: (key, value) => vscode.commands.executeCommand("setContext", key, value),
+  });
+  const panelView = vscode.window.registerWebviewViewProvider(PANEL_VIEW_ID, panel);
+
+  const commands = registerCommands({
+    ...flowDeps,
+    refreshManifest: (options) => manifests.refresh(options),
+    settingsFile: host.settingsFile,
+    backupsDir: backupsDir(host.claudeDir),
     extensionVersion: String(context.extension.packageJSON.version),
     diagnostics: {
       manifest: () => manifests.current().status,
@@ -163,7 +185,7 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
 
-  context.subscriptions.push(channel, view, commands, watcher);
+  context.subscriptions.push(channel, view, panelView, commands, watcher);
   // §13: activation must add < 100 ms to startup, so the first run happens
   // after `activate` returns rather than inside it. The opt-out is read here,
   // not around the toast: someone who turns the startup check off is asking us
