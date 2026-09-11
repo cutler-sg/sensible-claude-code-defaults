@@ -34,6 +34,26 @@ Two conventions used below:
 
 ---
 
+## 0. Connection test, any platform (added 2026-09-11 after the first real-hardware run)
+
+The first real test of *Test Bedrock Connection* came back as "an answer we
+didn't understand" in 214 ms. 0.1.0 logged only the outcome kind, so the cause
+could not be told apart from the log. 0.1.1 records the HTTP status in the
+Output channel and on the panel row's tooltip.
+
+- [ ] Save a key you know is **valid**, run *Test Bedrock Connection*.
+      Expected: "Your Bedrock API key works".
+- [ ] Save a key you know is **wrong** (edit one character), run the test.
+      Expected: "Amazon wouldn't accept your Bedrock API key". Not "didn't
+      understand". Bedrock answers this with a 403 whose body says
+      `Authentication failed`; the classifier's bare-403 fallback covers it.
+- [ ] If the result is ever "didn't understand", open Output →
+      *Sensible Claude Code Defaults* and note the line
+      `Connection test: unknown (HTTP nnn)`, and hover the panel row for the
+      same code. Report the code. A 200 means something between you and
+      Bedrock answered with a page that is not Bedrock's; a 4xx/5xx is a body
+      the classifier has not seen.
+
 ## 1. macOS (Apple Silicon)
 
 **Verifies:** Keychain round-trip, POSIX modes, homedir resolution.
