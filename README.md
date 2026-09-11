@@ -1,5 +1,7 @@
 # Sensible Claude Code Defaults
 
+[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=cutler-sg.sensible-claude-code-defaults)
+
 Sets up Claude Code to run on AWS Bedrock, then keeps checking that the setup
 still works. It writes a short, fixed list of keys to your own
 `~/.claude/settings.json`, keeps your Bedrock API key in your computer's
