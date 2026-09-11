@@ -88,10 +88,12 @@ export async function buildContext(input: BuildContextInput): Promise<CheckConte
   const permissions = await repairPermissions(env).catch(
     (error: unknown): CheckContext["permissions"] => ({ kind: "failed", error: message(error) }),
   );
-  // Only `repaired` touched the file: `ok`, `absent`, `unsupported` and
-  // `failed` all leave it exactly as it was, and suppressing the watcher for
-  // those would drop a real edit that raced with the run.
-  if (permissions.kind === "repaired") input.onSelfWrite?.();
+  // Only a repair touched the file — the mode on POSIX, the DACL on Windows.
+  // Every other outcome leaves it exactly as it was, and suppressing the
+  // watcher for those would drop a real edit that raced with the run.
+  if (permissions.kind === "repaired" || permissions.kind === "aclRepaired") {
+    input.onSelfWrite?.();
+  }
 
   const planned: PlanResult = await plan(env, desiredFromManifest(manifest));
   const [snapshot, detection, credential] = await Promise.all([

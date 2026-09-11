@@ -5,6 +5,7 @@
  * `src/ui/`.
  */
 
+import type { ModeRepair } from "../config/index.js";
 import type { Drift, ManagedKey, PlanResult, ReadResult, Snapshot } from "../config/types.js";
 import type { ScanOutcome } from "../credential/leakScan.js";
 import type { ConnectionResult, TokenPresence } from "../credential/types.js";
@@ -174,13 +175,14 @@ export interface CheckContext {
   drift: Drift[];
   detection: ClaudeCodeDetection;
   credential: CredentialContext;
-  /** Outcome of the silent FR-2.8 repair run before the checks (plan Q-N). */
-  permissions:
-    | { kind: "repaired"; before: number }
-    | { kind: "ok"; before: number }
-    | { kind: "absent" }
-    | { kind: "unsupported" }
-    | { kind: "failed"; error: string };
+  /**
+   * Outcome of the silent FR-2.8 repair run before the checks (plan Q-N).
+   *
+   * The writer's `ModeRepair` — POSIX mode bits, or the Windows DACL verdict
+   * (M6 Part B) — plus `failed`, which only this layer can produce: the repair
+   * throwing is a state of the *run*, not an answer about the file.
+   */
+  permissions: ModeRepair | { kind: "failed"; error: string };
 }
 
 export interface Check {

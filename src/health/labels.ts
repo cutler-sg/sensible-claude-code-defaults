@@ -36,10 +36,21 @@ export const LABELS = {
     malformed: "Your settings are damaged and Claude Code can't read them",
     skipped: "Nothing to check until Claude Code has been set up",
   },
+  /**
+   * The Windows arm (M6 Part B) says the same things as the POSIX one, because
+   * to the reader they are the same things: who else can open this file.
+   *
+   * `unverifiable` is the label Q-AG exists to make possible. Before M6 an
+   * unreadable ACL was reported as "nothing to check here" — indistinguishable
+   * from a pass, on the file holding the key. It is now its own story, and it
+   * is a warning: not knowing is not the same as being fine.
+   */
   "config.perms": {
     pass: "Your settings are private to you",
     skipped: "Nothing to check until Claude Code has been set up",
-    unsupported: "Windows manages file privacy differently — nothing to check here",
+    unsupported: "This computer doesn't offer a way to check who can read your settings",
+    unverifiable: "We couldn't tell who else can read your settings on this computer",
+    loose: "Other people using this computer can read your settings",
     failed: "Other people using this computer may be able to read your settings",
   },
   "config.bedrock": {
