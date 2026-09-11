@@ -1,0 +1,43 @@
+name: Marketplace identity
+
+# Run by hand, once. Signs in as the publishing identity and prints the Azure
+# DevOps profile id the Marketplace needs in order to add it as a publisher
+# member. That id is not the client id, the object id, or the resource id: it is
+# minted the first time the identity touches Azure DevOps, which is what the
+# `az rest` call below does. Nothing else can obtain it, because a managed
+# identity can only sign in from a workload the federated credential trusts.
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    environment: marketplace-publish
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Register with Azure DevOps and print the profile id
+        run: |
+          profile=$(az rest \
+            --uri https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798 \
+            --query '{id:id, displayName:displayName}' -o json)
+          echo "$profile"
+          {
+            echo "## Marketplace publisher member"
+            echo
+            echo "Add this id as a **Contributor** under Members at"
+            echo "https://marketplace.visualstudio.com/manage/publishers/cutler-sg"
+            echo
+            echo '```json'
+            echo "$profile"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
