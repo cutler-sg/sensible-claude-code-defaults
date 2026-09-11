@@ -26,8 +26,8 @@ A new, unverified publisher asking non-technical users for an AWS credential is 
 ## Part C — publishing, which is mostly account work MC must do
 
 Blocked on MC, and stated as blocked rather than worked around:
-- [ ] **Create the `cutler-sg` publisher in the Marketplace management portal.** The verified badge needs the publisher account *and* the domain to be six months old; `cutler.sg` is verified live already, so the publisher account is the clock that has not started. Do this before anything else in M7.
-- [ ] **Entra ID workload identity federation** for `vsce publish --azure-credential` (§8). Global Azure DevOps PATs retire 2026-12-01, ~11 weeks out; building the pipeline on a PAT means rebuilding it almost immediately. If a PAT is used as a stopgap it needs `Marketplace (Manage)` scope and **"All accessible organizations"** — the single-org default fails with an unhelpful error.
+- [x] **Create the `cutler-sg` publisher in the Marketplace management portal.** *(MC, 2026-09-11.)* The verified badge needs the publisher account *and* the domain to be six months old; `cutler.sg` is verified live already, so the publisher account is the clock that has not started. Do this before anything else in M7.
+- [ ] **Entra ID workload identity federation** — *repo side done 2026-09-11 (PR #12): managed identity not app registration, environment-bound credential, `allow-no-subscriptions`, one-shot `marketplace-identity` workflow prints the Azure DevOps profile id. Blocked on an `az login` as michael@cutler.sg to create the identity.* Original note: for `vsce publish --azure-credential` (§8). Global Azure DevOps PATs retire 2026-12-01, ~11 weeks out; building the pipeline on a PAT means rebuilding it almost immediately. If a PAT is used as a stopgap it needs `Marketplace (Manage)` scope and **"All accessible organizations"** — the single-org default fails with an unhelpful error.
 - [ ] **Open VSX namespace** via `ovsx create-namespace cutler-sg`, plus its GitHub-linked token.
 - [ ] Register `cutler.sg` for eventual domain verification against the publisher.
 
