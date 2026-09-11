@@ -1,6 +1,6 @@
 # Sensible Claude Code Defaults — Product & Engineering Requirements
 
-**Status:** Draft v1.1
+**Status:** Draft v1.2 (amended 2026-09-10 after M0/M1 verification — see §19)
 **Owner:** MC
 **Display name:** `Sensible Claude Code Defaults`
 **Package name:** `sensible-claude-code-defaults`
@@ -119,7 +119,7 @@ Component 3 exists because MCP servers, hooks, and permission rules are exactly 
 | `permissions.allow` / `.deny` (baseline) | `~/.claude/settings.json` | Extension | Defaults manifest |
 | `extraKnownMarketplaces`, `enabledPlugins` | `~/.claude/settings.json` | Extension, once | Plugin repo |
 | Bedrock bearer token | OS keychain (canonical) + `env` block (derived) | Extension | User, via command |
-| Last-applied snapshot | VS Code `globalState` | Extension | Every apply |
+| Last-applied snapshot | `<claudeDir>/sensible-defaults/state.json` (mode 0600) | Extension | Every apply |
 | MCP servers, hooks, commands, skills | Claude Code plugin | Plugin repo | `git push` |
 
 ---
@@ -130,7 +130,7 @@ Component 3 exists because MCP servers, hooks, and permission rules are exactly 
 
 **FR-1.1** Activate on `onStartupFinished`. Never `*`. Activation must not block the window.
 
-**FR-1.2** On activation, resolve the Claude Code home directory as `path.join(os.homedir(), '.claude')`. `os.homedir()` correctly resolves `%USERPROFILE%` on Windows and `$HOME` on macOS/Linux — do not branch on platform.
+**FR-1.2** On activation, resolve the Claude Code home directory as `$CLAUDE_CONFIG_DIR` when that variable is set in the extension host's environment (trimmed, `~/` expanded, made absolute), otherwise `path.join(os.homedir(), '.claude')`. `os.homedir()` correctly resolves `%USERPROFILE%` on Windows and `$HOME` on macOS/Linux — do not branch on platform. *(Amended 2026-09-10: Claude Code honours `CLAUDE_CONFIG_DIR` for settings, plugins, and credentials; ignoring it would write a file Claude Code never reads.)*
 
 **FR-1.3** The extension **must not** declare `"extensionKind": ["ui"]`. In WSL, Remote-SSH, and devcontainer scenarios the extension host must run on the same side as the Claude Code binary. Default (workspace) placement is correct. Add an explicit test for this (§14).
 
@@ -167,7 +167,7 @@ const MANAGED_KEYS = [
 
 Everything outside this list is read, preserved byte-for-byte in ordering where possible, and written back untouched.
 
-**FR-2.2 — Three-way merge.** Maintain a *last-applied snapshot* in `globalState` recording the exact value the extension last wrote for each managed key. On each apply, per key:
+**FR-2.2 — Three-way merge.** Maintain a *last-applied snapshot* in `<claudeDir>/sensible-defaults/state.json` recording the exact value the extension last wrote for each managed key *(amended 2026-09-10 from `globalState`: a file next to the settings it describes is editor-agnostic — VS Code stable, Insiders, and Cursor on one machine would otherwise flag each other's applies as drift — and survives a `.vscode-server` wipe)*. For the list/map keys (`permissions.deny`, `extraKnownMarketplaces`, `enabledPlugins`) ownership is per element: the snapshot records the elements the extension wrote, user-added elements are preserved and are not drift. A managed key absent from the manifest is removed only if its current value equals the snapshot; otherwise it is preserved and reported as drift. On each apply, per key:
 
 | Current value vs. last-applied | Meaning | Action |
 |---|---|---|
@@ -188,7 +188,7 @@ await fs.rename(tmp, target);
 
 A truncated `settings.json` does not degrade Claude Code — it breaks it, for a user who cannot recover manually.
 
-**FR-2.4 — Backups.** Before the first write of a session, copy the existing `settings.json` to `~/.claude/.backups/settings.<ISO8601>.json`. Retain the 10 most recent. Expose "Restore previous configuration" as a command.
+**FR-2.4 — Backups.** Before the first write of a session (one VS Code window), copy the existing `settings.json` byte-for-byte to `<claudeDir>/sensible-defaults/backups/settings.<ISO8601>.json` at mode `0600`. Retain the 10 most recent. Expose "Restore previous configuration" as a command. Restoring drops the last-applied snapshot so the next apply cannot silently re-apply what the user rolled back. *(Amended 2026-09-10: Claude Code already owns `~/.claude/backups/`; the extension's state lives under its own `sensible-defaults/` directory alongside `state.json`.)*
 
 **FR-2.5 — Malformed input.** If `settings.json` exists but does not parse: do **not** overwrite. Raise a fail-level health check offering (a) open the file, (b) restore from backup, (c) reset to defaults with a confirmation dialog that names the backup path.
 
@@ -441,7 +441,7 @@ sensible-claude-code-defaults/
   "repository": { "type": "git", "url": "https://github.com/<owner>/<repo>" },
   "icon": "media/icon.png",
   "categories": ["Other"],
-  "engines": { "vscode": "^1.98.0" },     // Claude Code's own floor is 1.98.0
+  "engines": { "vscode": "^1.98.0" },     // our own API floor; anthropic.claude-code 2.1.267 declares ^1.94.0
   "extensionDependencies": ["anthropic.claude-code"],
   "activationEvents": ["onStartupFinished"],
   "main": "./dist/extension.js",
@@ -600,7 +600,7 @@ This is not ship-and-forget. Bedrock model IDs move, Claude Code's settings sche
 
 Externally verified, but re-check against current Claude Code documentation before coding against any of them.
 
-**Bedrock configuration.** `CLAUDE_CODE_USE_BEDROCK=1` enables Bedrock. `AWS_REGION` is required — Claude Code does not read it from `~/.aws/config`. Model selection uses `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` with Bedrock inference profile IDs. `AWS_BEARER_TOKEN_BEDROCK` carries a Bedrock API key.
+**Bedrock configuration.** `CLAUDE_CODE_USE_BEDROCK=1` enables Bedrock. Since Claude Code v2.1.172 the region resolves `AWS_REGION` → `AWS_DEFAULT_REGION` → the active AWS profile's `region` → `us-east-1`; the extension still writes `AWS_REGION` because the target users have no `~/.aws`. *(Amended 2026-09-10.)* Model selection uses `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` with Bedrock inference profile IDs. `AWS_BEARER_TOKEN_BEDROCK` carries a Bedrock API key.
 
 **Credential precedence.** Cloud-provider credentials (when `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY` is set) → `ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` → `apiKeyHelper` → subscription OAuth. This is why `apiKeyHelper` is unreachable under Bedrock.
 
@@ -610,7 +610,25 @@ Externally verified, but re-check against current Claude Code documentation befo
 
 **Settings hierarchy** (highest first): enterprise managed settings → CLI arguments → `.claude/settings.local.json` (project, personal) → `.claude/settings.json` (project, shared) → `~/.claude/settings.json` (user).
 
-**Claude Code extension.** ID `anthropic.claude-code`. Platform-specific builds (`…-darwin-arm64`, `…-win32-x64`, etc.) each bundling a native binary. Minimum host version 1.98.0. Available on the VS Code Marketplace and reportedly on Open VSX. The CLI installs/updates the extension itself when run in VS Code's integrated terminal, so it may already be present and may update independently of anything this extension does.
+**Claude Code extension.** ID `anthropic.claude-code`. Platform-specific builds (`…-darwin-arm64`, `…-win32-x64`, etc.) each bundling a native binary. Declared engine floor `^1.94.0` as of 2.1.267 (verified 2026-09-10). Available on the VS Code Marketplace and reportedly on Open VSX. The CLI installs/updates the extension itself when run in VS Code's integrated terminal, so it may already be present and may update independently of anything this extension does.
 
 **Marketplace mechanics.** No human review. Automated scan, live in minutes. Global Azure DevOps PATs retire 2026-12-01. Verified badge requires apex-domain ownership plus six months of publisher and domain age. Non-trusted publishers' updates are held client-side about two hours.
 
+
+---
+
+## 18. Verified deltas (2026-09-10)
+
+Facts checked against live Claude Code, AWS, and Marketplace documentation while building M0/M1. Newer-dated information wins over §17 where they disagree.
+
+- **Claude Code now ships `/setup-bedrock`** (and a startup prompt that offers to update pinned model IDs). Both write `env.AWS_REGION`, the `ANTHROPIC_DEFAULT_*_MODEL` pins, and `AWS_BEARER_TOKEN_BEDROCK` into the user `settings.json`. Claude Code is therefore a third writer of the extension's managed keys. The merge engine treats this as drift; the health panel wording is "Claude Code changed the … model", not "you changed", and the credential flow offers to *adopt* a token found in the file (M3 plan).
+- **Claude Code does not enforce mode `0600` on `settings.json`** (only on `.credentials.json`); after any Claude Code write the file is typically `0664`. FR-2.8's repair therefore runs silently on every health check and reports `pass`, never a warning — a "Repair" button would be a treadmill.
+- **Settings files are strict JSON.** A `//` comment or trailing comma is a syntax error to Claude Code too, so a file the extension cannot parse is one Claude Code cannot parse either; `JSON.parse` is the correct parser.
+- **Bedrock API keys.** Used as `Authorization: Bearer <key>` against `bedrock-runtime`; do not pass through the AWS provider chain. Short-term keys last ≤12 h and inherit the caller's IAM permissions (AWS's recommendation for production); long-term keys are an IAM user + service-specific credential with an expiry chosen at creation, which AWS describes as "for exploration only". The key format is undocumented. The extension cannot read a key's expiry, so `cred.age` is a proxy; the README must state the trade-off and recommend the admin cap `iam:ServiceSpecificCredentialAgeDays`.
+- **Credential precedence** in §17 is confirmed verbatim in current docs (cloud provider → `ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` → `apiKeyHelper` → `CLAUDE_CODE_OAUTH_TOKEN` → profiles → `/login`). D4 stands.
+- **`enabledPlugins` values** are `boolean | string[]` per the published settings schema; the merge engine tolerates both.
+- **Registry state.** `sensible-claude-code-defaults` is free on the VS Code Marketplace and Open VSX; publisher/namespace `cutler`, `carrotly-ai`, `carrotly`, `cotdp` are all free on both.
+
+## 19. Change log
+
+- **2026-09-10 v1.2** — FR-1.2 honours `CLAUDE_CONFIG_DIR`; FR-2.2 snapshot moved from `globalState` to `sensible-defaults/state.json`, element-level ownership and removal semantics added; FR-2.4 backup path moved under `sensible-defaults/backups/`, restore drops the snapshot; §4.2 table and §7 engine comment corrected; §17 region and engine-floor facts corrected; §18 added. Rationale and the full decision log: `plans/feat-m0-scaffold.md`.
