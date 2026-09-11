@@ -4,20 +4,27 @@ import { join } from "node:path";
 import { defineConfig } from "@vscode/test-cli";
 
 /**
- * A throwaway HOME per run.
+ * Isolation without redirecting HOME.
  *
- * The suite exercises the real read/apply paths, so it needs a home directory
- * that is not the developer's. It used to get that by setting
- * `CLAUDE_CONFIG_DIR` — which isolated the run, but at the cost of steering
- * every test down the one branch of `resolveClaudeDir` that FR-1.2 does *not*
- * describe. Redirecting the home instead isolates just as completely and leaves
- * `path.join(os.homedir(), '.claude')` — the path a real user takes, and the
- * one `resolution.spec.ts` is about — as the thing under test.
+ * The suite exercises the real read/apply paths, so it needs a Claude
+ * directory that is not the developer's. An earlier version got that by
+ * redirecting HOME to a temp directory, which had a cost the Linux and
+ * Windows legs never showed: on macOS the Electron host blocks during startup
+ * under a foreign HOME and never reaches the first test. Pre-seeding
+ * `~/Library` under the redirected home did not change that, so it is not a
+ * missing-directory problem; whatever macOS consults under the real home
+ * during app launch (Keychain, LaunchServices, the sandbox) is not something a
+ * test config should be second-guessing.
  *
- * `USERPROFILE` is set alongside `HOME` because that is what `os.homedir()`
- * reads on Windows.
+ * `CLAUDE_CONFIG_DIR` is the isolation mechanism Claude Code itself provides,
+ * and `resolveClaudeDir` honours it (plan Q-F). The plain-homedir branch is
+ * covered by `test/unit/paths.test.ts` and `test/unit/remoteResolution.test.ts`,
+ * which drive the function directly; the integration suite's job is to show
+ * the extension reading and writing the directory the *host* resolves, which
+ * this still does — see `resolution.spec.ts`, whose expected path is derived
+ * from the same variable the host reads.
  */
-const home = mkdtempSync(join(tmpdir(), "scd-home-"));
+const claudeDir = mkdtempSync(join(tmpdir(), "scd-claude-"));
 
 /**
  * The extension host's user-data directory, kept short and out of the checkout.
@@ -41,17 +48,10 @@ export default defineConfig({
   workspaceFolder: mkdtempSync(join(tmpdir(), "scd-itest-ws-")),
   launchArgs: [`--user-data-dir=${userDataDir}`],
   env: {
-    HOME: home,
-    USERPROFILE: home,
-    // Explicitly cleared, not merely unset: a developer who exports
-    // CLAUDE_CONFIG_DIR in their shell would otherwise have the suite read and
-    // rewrite their real Claude Code configuration. `spawn` drops keys whose
-    // value is `undefined`, which is how the value is removed rather than
-    // blanked.
-    CLAUDE_CONFIG_DIR: undefined,
-    // The home of the process *launching* VS Code, recorded before the
-    // redirection above takes effect. `resolution.spec.ts` uses it to prove the
-    // extension resolved against the host's own home rather than the launcher's.
+    CLAUDE_CONFIG_DIR: claudeDir,
+    // The home of the process launching VS Code. `resolution.spec.ts` uses it
+    // to prove the extension never resolved into `~/.claude` of the launcher —
+    // which, with HOME no longer redirected, is the developer's real one.
     SCD_LAUNCHER_HOME: homedir(),
   },
   mocha: { ui: "bdd", timeout: 60_000 },
