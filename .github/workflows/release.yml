@@ -21,7 +21,7 @@ jobs:
       HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' }}
       HAS_OVSX: ${{ secrets.OVSX_PAT != '' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
