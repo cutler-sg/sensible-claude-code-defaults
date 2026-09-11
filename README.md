@@ -44,6 +44,44 @@ wrote, the panel reports it — "Claude Code changed the Opus model" — and lea
 value alone. Use *Reset to Recommended* on that row if you want the recommended
 value back; nothing is overwritten until you do.
 
+## If you use WSL, Remote-SSH, or a dev container
+
+**The settings are written on the machine Claude Code runs on, not the machine
+your screen is attached to.** This is the right thing, but it surprises people,
+so here it is spelled out.
+
+When you open a folder with *WSL*, *Remote-SSH*, or *Dev Containers*, VS Code
+splits itself across two machines: the window stays on your own computer, and
+everything that runs code moves to the other side — the Linux distribution, the
+server you connected to, the container. Claude Code goes with it. So does this
+extension.
+
+That means the file being managed is the one over there:
+
+| You are using | Your settings file is | Not |
+|---|---|---|
+| WSL (Ubuntu, Debian, …) | `/home/<you>/.claude/settings.json` *inside the Linux distribution* | `C:\Users\<you>\.claude\settings.json` |
+| Remote-SSH | `/home/<you>/.claude/settings.json` *on the server you connected to* | anything on your laptop |
+| A dev container | `/home/<you>/.claude/settings.json` *inside the container* | anything on the host machine |
+| No remote — an ordinary window | `~/.claude/settings.json` on your own computer | — |
+
+A few consequences worth knowing:
+
+- **Windows users on WSL: nothing is written to your `C:` drive.** If you go
+  looking in `C:\Users\<you>\.claude` you will find nothing, or something old.
+  That is expected, not a failure.
+- **Each machine keeps its own settings and its own key.** Connecting to a
+  second server means setting your Bedrock API key there too. They are separate
+  computers, and a keychain does not travel.
+- **A local window and a remote window are configuring different files.** If you
+  fix something and it seems not to have applied, check which one you were in.
+  VS Code shows it in the bottom-left corner: `WSL: Ubuntu`, `SSH: myserver`, or
+  nothing at all for a local window.
+
+Not sure which file you are looking at? Run *Check Configuration*, then *Copy
+Diagnostics for Support* — the report names the exact path, and a **Remote** row
+saying `wsl`, `ssh-remote`, `dev-container` or `local`.
+
 ## Where your Bedrock API key is stored
 
 Your key lives in **your operating system's keychain** — Keychain on macOS,

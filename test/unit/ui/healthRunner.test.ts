@@ -20,6 +20,7 @@ import {
 } from "../../../src/ui/healthRunner.js";
 import type { ResolvedManifest } from "../../../src/ui/manifestHolder.js";
 import { APPLY_ACTION, DETAILS_ACTION } from "../../../src/ui/notify.js";
+import { aclFake } from "../config/windowsAclFake.js";
 import { messages, reset, state } from "./commandsHost.js";
 import { FakeTerminalEnv } from "./credentialDeps.js";
 
@@ -55,6 +56,7 @@ let env: ConfigEnv;
 let logged: string[];
 let reports: HealthReport[];
 let notified: NotifiedStore;
+let acl: ReturnType<typeof aclFake>;
 
 const log = {
   info: (message: string) => logged.push(`info ${message}`),
@@ -77,11 +79,16 @@ function runner(overrides: Partial<HealthRunnerDeps> = {}): () => Promise<void> 
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "scd-health-"));
+  acl = aclFake(dir);
   env = {
     claudeDir: dir,
     workspaceFolders: [],
     snapshotStore: new MemorySnapshotStore(),
     platform: process.platform,
+    // Only consulted on win32. Injected so the Windows leg's permission repair
+    // is deterministic rather than a function of the runner image's temp-dir
+    // DACL — see `windowsAclFake.ts`.
+    acl: acl.deps,
   };
   logged = [];
   reports = [];
@@ -398,12 +405,29 @@ describe("reading the resolved manifest afresh on every run", () => {
 
 describe("wiring the panel to the watcher and welcome view", () => {
   it("forwards the silent permission repair to onSelfWrite", async () => {
+    // Seeded loose on both kinds of host: 0o664 on POSIX, and on Windows the
+    // injected `icacls` reports a world-readable DACL until the repair runs.
+    // Either way the repair touches the file we are also watching, and the
+    // watcher must be told or the panel refreshes itself forever (F14).
     await seed({ env: { CLAUDE_CODE_USE_BEDROCK: "1" } }, 0o664);
     const onSelfWrite = vi.fn();
 
     await runner({ onSelfWrite })();
 
     expect(onSelfWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call onSelfWrite when the file was already private", async () => {
+    // The other half: `ok`/`aclOk` leave the file exactly as it was, and
+    // suppressing the watcher for those would drop a real edit that raced
+    // with the run.
+    env.acl = aclFake(dir, true).deps;
+    await seed({ env: { CLAUDE_CODE_USE_BEDROCK: "1" } }, 0o600);
+    const onSelfWrite = vi.fn();
+
+    await runner({ onSelfWrite })();
+
+    expect(onSelfWrite).not.toHaveBeenCalled();
   });
 
   it("sets needsSetup when Claude Code is installed but nothing is configured", async () => {

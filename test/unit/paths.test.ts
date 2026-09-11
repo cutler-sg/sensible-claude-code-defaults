@@ -18,7 +18,9 @@ describe("resolveClaudeDir (plan Q-F)", () => {
   });
 
   it("honours CLAUDE_CONFIG_DIR when set", () => {
-    expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "/opt/claude" }, HOME)).toBe("/opt/claude");
+    expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "/opt/claude" }, HOME)).toBe(
+      path.resolve("/opt/claude"),
+    );
   });
 
   it("ignores an empty or whitespace-only CLAUDE_CONFIG_DIR", () => {
@@ -27,21 +29,25 @@ describe("resolveClaudeDir (plan Q-F)", () => {
   });
 
   it("trims surrounding whitespace", () => {
-    expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "  /opt/claude  " }, HOME)).toBe("/opt/claude");
+    expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "  /opt/claude  " }, HOME)).toBe(
+      path.resolve("/opt/claude"),
+    );
   });
 
   it("expands a leading ~/ the way a shell would", () => {
     expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "~/cfg/claude" }, HOME)).toBe(
-      path.join(HOME, "cfg/claude"),
+      path.resolve(path.join(HOME, "cfg/claude")),
     );
   });
 
   it("expands a bare ~", () => {
-    expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "~" }, HOME)).toBe(HOME);
+    expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "~" }, HOME)).toBe(path.resolve(HOME));
   });
 
   it("does not expand a tilde that is part of a name", () => {
-    expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "/opt/~claude" }, HOME)).toBe("/opt/~claude");
+    expect(resolveClaudeDir({ CLAUDE_CONFIG_DIR: "/opt/~claude" }, HOME)).toBe(
+      path.resolve("/opt/~claude"),
+    );
   });
 
   it("resolves a relative CLAUDE_CONFIG_DIR to an absolute path", () => {
@@ -52,7 +58,7 @@ describe("resolveClaudeDir (plan Q-F)", () => {
     const previous = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = "/tmp/from-process-env";
     try {
-      expect(resolveClaudeDir()).toBe("/tmp/from-process-env");
+      expect(resolveClaudeDir()).toBe(path.resolve("/tmp/from-process-env"));
     } finally {
       if (previous === undefined) {
         delete process.env.CLAUDE_CONFIG_DIR;
@@ -66,17 +72,20 @@ describe("resolveClaudeDir (plan Q-F)", () => {
 describe("derived paths (plan Q-D / Q-H)", () => {
   const claudeDir = "/home/u/.claude";
 
+  // These are `path.join`, so the separator is whatever the host uses. The
+  // claim under test is the *shape* — which directory each artefact lands in —
+  // not that a Windows box spells it with forward slashes.
   it("puts settings.json at the root of the Claude dir", () => {
-    expect(settingsPath(claudeDir)).toBe("/home/u/.claude/settings.json");
+    expect(settingsPath(claudeDir)).toBe(path.join(claudeDir, "settings.json"));
   });
 
   it("namespaces our state under sensible-defaults", () => {
-    expect(stateDir(claudeDir)).toBe("/home/u/.claude/sensible-defaults");
-    expect(snapshotPath(claudeDir)).toBe("/home/u/.claude/sensible-defaults/state.json");
+    expect(stateDir(claudeDir)).toBe(path.join(claudeDir, "sensible-defaults"));
+    expect(snapshotPath(claudeDir)).toBe(path.join(claudeDir, "sensible-defaults", "state.json"));
   });
 
   it("keeps backups out of Claude Code's own ~/.claude/backups", () => {
-    expect(backupsDir(claudeDir)).toBe("/home/u/.claude/sensible-defaults/backups");
+    expect(backupsDir(claudeDir)).toBe(path.join(claudeDir, "sensible-defaults", "backups"));
     expect(backupsDir(claudeDir)).not.toBe(path.join(claudeDir, "backups"));
   });
 });

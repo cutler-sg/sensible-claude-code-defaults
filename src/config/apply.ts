@@ -35,7 +35,7 @@ import {
 } from "./types.js";
 import {
   backupSettings,
-  ensureMode0600,
+  ensurePrivate,
   type ModeRepair,
   pruneBackups,
   restoreBackup,
@@ -321,16 +321,17 @@ async function forgetOwnership(env: ConfigEnv): Promise<void> {
 
 /**
  * FR-2.8: Claude Code rewrites `settings.json` itself and does not preserve its
- * mode, so this runs on every health check rather than only after our writes.
+ * permissions, so this runs on every health check rather than only after our
+ * writes.
  *
  * The writer's outcome is passed through unchanged, `absent` included: the
  * first health check of a fresh install runs before the user has applied
  * anything, and "there is no file yet" is a state the panel reports rather than
- * a failure that should throw out of it. Windows ACL repair is M6 (plan Q-K);
- * mode bits mean nothing there, so it reports `unsupported`.
+ * a failure that should throw out of it. On Windows the same question is asked
+ * of the DACL instead of the mode bits (M6 Part B, closing plan Q-K).
  */
 export async function repairPermissions(env: ConfigEnv): Promise<ModeRepair> {
-  return ensureMode0600(settingsPath(env.claudeDir), env.platform ?? process.platform);
+  return ensurePrivate(settingsPath(env.claudeDir), env.platform ?? process.platform, env.acl);
 }
 
 async function backupOnce(
@@ -358,6 +359,9 @@ function writeOptions(env: ConfigEnv): WriteOptions & { platform: NodeJS.Platfor
   return {
     workspaceFolders: env.workspaceFolders,
     platform: env.platform ?? process.platform,
+    // Threaded through so every write from this engine tightens the file the
+    // same way, on both kinds of host, without each call site knowing which.
+    ...(env.acl === undefined ? {} : { acl: env.acl }),
   };
 }
 

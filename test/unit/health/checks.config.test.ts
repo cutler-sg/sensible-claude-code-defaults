@@ -8,6 +8,7 @@ import { configModelsCheck } from "../../../src/health/checks/config.models.js";
 import { configParsesCheck } from "../../../src/health/checks/config.parses.js";
 import { configPermsCheck } from "../../../src/health/checks/config.perms.js";
 import { configRegionCheck } from "../../../src/health/checks/config.region.js";
+import { LABELS } from "../../../src/health/labels.js";
 import { makeCtx, okRead, okSettings, SETTINGS_FILE } from "./fixture.js";
 
 const ABSENT: ReadResult = { kind: "absent" };
@@ -111,10 +112,53 @@ describe("config.perms", () => {
     );
   });
 
-  it("skips on Windows", () => {
+  it("skips only when the host cannot answer the question at all", () => {
     expect(configPermsCheck.run(makeCtx({ permissions: { kind: "unsupported" } })).level).toBe(
       "skipped",
     );
+  });
+
+  it("passes a Windows file whose ACL is already user-only", () => {
+    const result = configPermsCheck.run(makeCtx({ permissions: { kind: "aclOk" } }));
+    expect(result.level).toBe("pass");
+    expect(result.detail).toBeUndefined();
+    // One label on both kinds of host: the reader is being told who can open
+    // their file, not which mechanism enforces it.
+    expect(result.label).toBe(LABELS["config.perms"].pass);
+  });
+
+  it("passes a repaired Windows ACL and names the principals by SID", () => {
+    const result = configPermsCheck.run(
+      makeCtx({ permissions: { kind: "aclRepaired", before: ["S-1-1-0", "S-1-5-32-545"] } }),
+    );
+    expect(result.level).toBe("pass");
+    // SIDs in the tooltip, never display names: the detail has to mean the
+    // same thing on a German machine as on an English one (plan Q-AG).
+    expect(result.detail).toContain("S-1-1-0");
+    expect(result.detail).toContain("S-1-5-32-545");
+  });
+
+  it("warns when the ACL is still loose after the repair", () => {
+    const result = configPermsCheck.run(
+      makeCtx({ permissions: { kind: "aclLoose", found: ["S-1-1-0"] } }),
+    );
+    expect(result.level).toBe("warning");
+    expect(result.detail).toContain("S-1-1-0");
+    expect(result.fix).toMatchObject({ command: "sensibleDefaults.repairPermissions" });
+  });
+
+  it("never reports an unreadable ACL as a pass or a skip (plan Q-AG)", () => {
+    // The whole reason `unverifiable` exists. Before M6 this arrived as
+    // `unsupported` — a grey "nothing to check here" row on the file holding
+    // the Bedrock key. Not knowing is not the same as being fine.
+    const result = configPermsCheck.run(
+      makeCtx({ permissions: { kind: "unverifiable", reason: "icacls exited 5" } }),
+    );
+    expect(result.level).toBe("warning");
+    expect(result.label).not.toBe(LABELS["config.perms"].pass);
+    expect(result.label).not.toBe(LABELS["config.perms"].unsupported);
+    expect(result.detail).toContain("icacls");
+    expect(result.fix).toMatchObject({ command: "sensibleDefaults.repairPermissions" });
   });
 
   it("warns only when the repair itself failed", () => {

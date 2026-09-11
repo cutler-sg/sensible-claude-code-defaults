@@ -10,6 +10,7 @@ import type { HealthReport } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import type { Manifest } from "../../../src/manifest/types.js";
 import { registerCommands } from "../../../src/ui/commands.js";
+import { aclFake } from "../config/windowsAclFake.js";
 import { messages, reset, run, state } from "./commandsHost.js";
 import { fakeCredentialDeps } from "./credentialDeps.js";
 
@@ -102,6 +103,9 @@ beforeEach(async () => {
     workspaceFolders: [],
     snapshotStore: new MemorySnapshotStore(),
     platform: process.platform,
+    // Only consulted on win32, where permissions are a DACL question. Injected
+    // so the Windows leg says the same thing every run — see `windowsAclFake`.
+    acl: aclFake(dir).deps,
   };
   session = { backedUp: false };
   logged = [];
@@ -750,6 +754,9 @@ describe("repairPermissions", () => {
   });
 
   it("reports that the file was already private when it is", async () => {
+    // One wording on every platform: "private to you" is the same promise
+    // whether a mode bit or a DACL keeps it, and naming the mechanism would
+    // only send the user looking for something their machine does not have.
     await seed({});
     await run("sensibleDefaults.repairPermissions");
     reset();
@@ -757,11 +764,7 @@ describe("repairPermissions", () => {
 
     await run("sensibleDefaults.repairPermissions");
 
-    const expected =
-      process.platform === "win32"
-        ? "File permissions work differently on this system; nothing to change."
-        : "Your settings file was already private to you.";
-    expect(messages()).toEqual([expected]);
+    expect(messages()).toEqual(["Your settings file was already private to you."]);
   });
 
   it("reports a repair once the file exists", async () => {
@@ -769,11 +772,25 @@ describe("repairPermissions", () => {
 
     await run("sensibleDefaults.repairPermissions");
 
-    const expected =
-      process.platform === "win32"
-        ? "File permissions work differently on this system; nothing to change."
-        : "Your settings file is now readable only by you.";
-    expect(messages()).toEqual([expected]);
+    expect(messages()).toEqual(["Your settings file is now readable only by you."]);
+  });
+
+  it("warns rather than reassures when the ACL could not be read", async () => {
+    // Plan Q-AG, at the command surface. An information toast is the same
+    // shape as success, so an unreadable ACL on the file holding the token
+    // must not arrive as one.
+    await seed({});
+    env.platform = "win32";
+    env.acl = { scratchDir: dir, run: async () => ({ kind: "ok", code: 5, stdout: "" }) };
+
+    await run("sensibleDefaults.repairPermissions");
+
+    // `messages()` flattens every level, so the assertion is on the level
+    // itself: that is the whole point of this test.
+    expect(state.warn.map((shown) => shown.message)).toEqual([
+      "We couldn't tell who else can read your settings file on this computer.",
+    ]);
+    expect(state.info).toEqual([]);
   });
 });
 

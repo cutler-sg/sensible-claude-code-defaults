@@ -17,6 +17,7 @@ import * as path from "node:path";
 import { assertOutsideWorkspace } from "./paths.js";
 import { serialize } from "./reader.js";
 import { type BackupInfo, ConfigError, type FileStyle, type Settings } from "./types.js";
+import { ensureWindowsAcl, type WindowsAclDeps } from "./windowsAcl.js";
 
 const MODE_0600 = 0o600;
 const BACKUP_PREFIX = "settings.";
@@ -35,14 +36,35 @@ export interface WriteOptions {
   workspaceFolders: readonly string[];
   /** Injected for tests. Defaults to `process.platform`. */
   platform?: NodeJS.Platform;
+  /**
+   * How to reach `icacls`, for the win32 tightening after a write. Injected so
+   * the Windows path is exercisable from a Linux test run, and so a test that
+   * only sets `platform: "win32"` does not spawn a real process.
+   */
+  acl?: WindowsAclDeps;
 }
 
-/** Outcome of a permission repair. `before` exists only when there was a mode to read. */
+/**
+ * Outcome of a permission repair, on either kind of host.
+ *
+ * POSIX arm: `before` is the mode we found, and exists only when there was one
+ * to read. Windows arm (`acl*`): the file has no mode bits, so the same
+ * question — "can anybody but this user read the token?" — is answered from the
+ * DACL, and `before`/`found` carry the broad principals by SID.
+ *
+ * `absent` and `unsupported` are shared, and deliberately distinct:
+ * `unsupported` means we could not ask, `absent` means there is no file to ask
+ * about. A caller that cannot tell those apart tells the user the wrong thing.
+ */
 export type ModeRepair =
   | { kind: "repaired"; before: number }
   | { kind: "ok"; before: number }
   | { kind: "absent" }
-  | { kind: "unsupported" };
+  | { kind: "unsupported" }
+  | { kind: "aclOk" }
+  | { kind: "aclRepaired"; before: readonly string[] }
+  | { kind: "aclLoose"; found: readonly string[]; reason?: string }
+  | { kind: "unverifiable"; reason: string };
 
 /** Serialize `data` in the file's own style and replace the file atomically. */
 export async function writeSettingsAtomic(
@@ -83,24 +105,31 @@ async function writeBytesAtomic(file: string, bytes: Buffer, opts: WriteOptions)
   // into a workspace folder (F1).
   assertOutsideWorkspace(target, opts.workspaceFolders, platform);
 
-  await atomicReplace(target, bytes, platform);
+  await atomicReplace(target, bytes, platform, opts.acl);
 }
 
 /**
- * FR-2.8: re-assert mode 0600. Claude Code rewrites this file itself and can
- * reset its permissions. Windows ACL repair is deferred to M6 (plan Q-K).
+ * FR-2.8: re-assert that only this user can read `file`. Claude Code rewrites
+ * it itself and does not preserve what we set.
  *
- * A fresh install has no `settings.json` yet, and a health check that runs
- * before the first apply must not fail on that — hence `absent` rather than a
- * thrown ENOENT (F10).
+ * One entry point, two mechanisms: mode bits where they exist, the DACL on
+ * Windows (plan Q-K, closed by Q-AF/Q-AG — see `windowsAcl.ts`). Callers get
+ * one union back and do not branch on platform themselves; nothing above this
+ * line should have to know which mechanism a host uses.
+ *
+ * The existence check happens *before* the platform split, and that ordering is
+ * load-bearing. A fresh install has no `settings.json` yet and the first health
+ * check runs before the first apply, so ENOENT is the normal case, not an
+ * error (F10) — and it is the normal case on Windows too. Short-circuiting to
+ * `unsupported` on win32 before the stat, as this used to, made a fresh Windows
+ * install indistinguishable from one where we could not read the ACL, and every
+ * caller above said the wrong thing about it.
  */
-export async function ensureMode0600(
+export async function ensurePrivate(
   file: string,
   platform: NodeJS.Platform = process.platform,
+  acl: WindowsAclDeps = {},
 ): Promise<ModeRepair> {
-  if (platform === "win32") {
-    return { kind: "unsupported" };
-  }
   let stats: Awaited<ReturnType<typeof fs.stat>>;
   try {
     stats = await fs.stat(file);
@@ -110,6 +139,14 @@ export async function ensureMode0600(
     }
     throw error;
   }
+
+  if (platform === "win32") {
+    // `fs.stat().mode` on Windows is a fiction (0o666, or 0o444 for a
+    // read-only file) that says nothing about who can read the file, so the
+    // mode we just read is deliberately discarded here.
+    return ensureWindowsAcl(file, acl);
+  }
+
   const before = stats.mode & 0o777;
   if (before === MODE_0600) {
     return { kind: "ok", before };
@@ -156,7 +193,7 @@ export async function backupSettings(
 
   await fs.mkdir(backupsDir, { recursive: true });
   const target = path.join(backupsDir, backupName(now));
-  await atomicReplace(target, bytes, platform);
+  await atomicReplace(target, bytes, platform, opts?.acl);
   return { path: target, createdAt: now };
 }
 
@@ -225,6 +262,7 @@ async function atomicReplace(
   target: string,
   bytes: Buffer,
   platform: NodeJS.Platform,
+  acl?: WindowsAclDeps,
 ): Promise<void> {
   const dir = path.dirname(target);
   await fs.mkdir(dir, { recursive: true });
@@ -247,10 +285,10 @@ async function atomicReplace(
     } finally {
       await handle.close();
     }
-    await fs.rename(tmp, target);
+    await renameReplacing(tmp, target, platform);
     // rename preserves the temp file's mode, but the destination may have
     // pre-existed at a looser mode on some filesystems — be explicit (FR-2.8).
-    await chmod0600(target, platform);
+    await tighten(target, platform, acl);
     await syncDirectory(dir);
   } catch (error) {
     // Only ours to remove: before `open` succeeded, `tmp` is either absent or
@@ -278,11 +316,85 @@ async function resolveTarget(file: string): Promise<string> {
   }
 }
 
-async function chmod0600(target: string, platform: NodeJS.Platform): Promise<void> {
-  // Windows has no POSIX mode bits; ACL hardening is M6 (plan Q-K).
+/**
+ * Make the file we just wrote private to this user, by whichever mechanism the
+ * host has: mode bits, or the DACL (M6 Part B).
+ *
+ * The Windows arm is best-effort *by design*, and the asymmetry is deliberate.
+ * A failed `chmod` means the filesystem refused an operation we own the file
+ * for, and failing the write is right. An `icacls` that could not answer means
+ * we could not read an ACL that may well already be correct — the bytes are on
+ * disk either way, and turning that into ATOMIC_WRITE_FAILED would tell the
+ * caller the write did not happen when it did.
+ *
+ * It is not silent: `config.perms` re-asks the same question on every health
+ * check and is the one place the answer is reported. This is the tightening,
+ * not the telling.
+ */
+/**
+ * `rename`, with a bounded retry on Windows.
+ *
+ * On POSIX `rename(2)` over an existing file is atomic and cannot fail because
+ * somebody else is reading it. Windows has no such guarantee: `MoveFileEx`
+ * needs exclusive access to the destination for the instant it swaps, and any
+ * other handle on it — a concurrent writer mid-swap, Claude Code reading its
+ * own settings, an indexer, an antivirus scanner — makes the call fail with a
+ * sharing violation instead.
+ *
+ * The Windows CI leg found this: of three concurrent writers to one path, one
+ * was rejected while the other two succeeded. Each failure surfaces to the user
+ * as a settings write that did not happen, for no reason they can act on, and
+ * Claude Code writing the same file is the common case rather than a contrived
+ * one.
+ *
+ * A sharing violation is transient by nature — the other handle closes — so a
+ * short backoff is the whole fix. The retry is deliberately narrow: only the
+ * error codes Windows raises for a busy destination, and never on POSIX, where
+ * these codes would mean something real.
+ */
+async function renameReplacing(
+  tmp: string,
+  target: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  if (platform !== "win32") {
+    await fs.rename(tmp, target);
+    return;
+  }
+  const TRANSIENT = new Set(["EPERM", "EACCES", "EBUSY"]);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.rename(tmp, target);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (attempt >= RENAME_RETRIES || !TRANSIENT.has(code)) {
+        throw error;
+      }
+      // 5ms, 10ms, 20ms, 40ms, 80ms: ~155ms in total, far below anything a
+      // user perceives, and long enough for a peer's handle to close.
+      await delay(5 * 2 ** attempt);
+    }
+  }
+}
+
+/** Five retries: generous for a handle that is closing, short enough to fail fast. */
+const RENAME_RETRIES = 5;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function tighten(
+  target: string,
+  platform: NodeJS.Platform,
+  acl?: WindowsAclDeps,
+): Promise<void> {
   if (platform !== "win32") {
     await fs.chmod(target, MODE_0600);
+    return;
   }
+  await ensureWindowsAcl(target, acl ?? {}).catch(() => undefined);
 }
 
 /**

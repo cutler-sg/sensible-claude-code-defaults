@@ -1,0 +1,7 @@
+C:\Users\mcutler\.claude\settings.json NT-AUTORITÄT\SYSTEM:(I)(F)
+                                       VORDEFINIERT\Administratoren:(I)(F)
+                                       DESKTOP-7F2K1\mcutler:(I)(F)
+                                       VORDEFINIERT\Benutzer:(I)(RX)
+                                       Jeder:(I)(F)
+
+1 Dateien erfolgreich verarbeitet, bei 0 Dateien ist ein Verarbeitungsfehler aufgetreten.

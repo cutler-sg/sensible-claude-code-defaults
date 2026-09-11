@@ -5,6 +5,8 @@
  * needs the editor (Memento, workspace folders, homedir) is injected.
  */
 
+import type { WindowsAclDeps } from "./windowsAcl.js";
+
 /** Dotted key into settings.json, e.g. `env.AWS_REGION`, `permissions.deny`. */
 export const MANAGED_KEYS = [
   "env.CLAUDE_CODE_USE_BEDROCK",
@@ -132,6 +134,13 @@ export interface ConfigEnv {
   snapshotStore: SnapshotStore;
   /** Injected for tests. Defaults to `process.platform`. */
   platform?: NodeJS.Platform;
+  /**
+   * How the win32 ACL work reaches `icacls` (M6 Part B). Injected for tests, so
+   * the Windows behaviour is exercisable from a Linux run and a Windows run
+   * can stage a loosened DACL without one; the real host leaves it unset and
+   * gets a real spawn.
+   */
+  acl?: WindowsAclDeps;
   now?: () => Date;
 }
 

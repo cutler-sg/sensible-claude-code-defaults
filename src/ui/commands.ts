@@ -15,6 +15,7 @@ import {
   type ConfigEnv,
   commit,
   listBackups,
+  type ModeRepair,
   plan,
   type ReadyPlan,
   redactChanges,
@@ -395,22 +396,49 @@ async function applyRegion(deps: CommandDeps, region: string, attempt: number): 
 
 async function repairPermissionsCommand(deps: CommandDeps): Promise<void> {
   const outcome = await repairPermissions(deps.env);
-  const message = permissionMessage(outcome.kind);
   deps.log.info(`Permission repair: ${outcome.kind}`);
-  await vscode.window.showInformationMessage(message);
+  // A verdict the user cannot act on is still information, but the three that
+  // mean "we did not make this file private" are warnings, not notices: an
+  // information toast is the same shape as success and reads as one.
+  const settled = outcome.kind === "repaired" || outcome.kind === "aclRepaired";
+  const show =
+    settled || outcome.kind === "ok" || outcome.kind === "aclOk" || outcome.kind === "absent"
+      ? vscode.window.showInformationMessage
+      : vscode.window.showWarningMessage;
+  await show(permissionMessage(outcome));
   await deps.runHealth();
 }
 
-function permissionMessage(kind: "repaired" | "ok" | "absent" | "unsupported"): string {
-  switch (kind) {
+/**
+ * One sentence per outcome, in the user's terms rather than the platform's.
+ *
+ * Windows and POSIX share wording wherever they share a meaning: "private to
+ * you" is the same promise whether it was kept by a mode bit or a DACL, and
+ * naming the mechanism would only invite the user to go looking for a thing
+ * their machine does not have.
+ *
+ * The two that are new in M6 are the ones that must not sound reassuring.
+ * `unverifiable` used to be folded into "nothing to change", which told a user
+ * whose ACL we could not read that everything was fine (plan Q-AG). Nothing
+ * here quotes a path or an ACL entry — that detail belongs in the panel row's
+ * tooltip, and the file's contents never reach a message at all (hard rule 4).
+ */
+function permissionMessage(outcome: ModeRepair): string {
+  switch (outcome.kind) {
     case "repaired":
+    case "aclRepaired":
       return "Your settings file is now readable only by you.";
     case "ok":
+    case "aclOk":
       return "Your settings file was already private to you.";
     case "absent":
       return "There's no settings file yet, so there's nothing to protect.";
+    case "aclLoose":
+      return "Other people using this computer can still read your settings file, and we couldn't change that.";
+    case "unverifiable":
+      return "We couldn't tell who else can read your settings file on this computer.";
     case "unsupported":
-      return "File permissions work differently on this system; nothing to change.";
+      return "This computer doesn't offer a way to check who can read your settings file.";
   }
 }
 

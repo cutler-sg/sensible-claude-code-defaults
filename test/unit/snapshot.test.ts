@@ -376,7 +376,7 @@ describe("FileSnapshotStore honours the workspace guard (F14)", () => {
     const workspace = join(dir, "proj");
     await mkdir(workspace, { recursive: true });
     const link = join(dir, "state-dir");
-    await symlink(workspace, link);
+    await symlink(workspace, link, "dir");
     const store = new FileSnapshotStore(join(link, "state.json"), {
       workspaceFolders: [workspace],
     });

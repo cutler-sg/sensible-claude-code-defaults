@@ -74,10 +74,19 @@ export {
   EMPTY_SNAPSHOT,
   MANAGED_KEYS,
 } from "./types.js";
+export type { AclOutcome, CommandRunner, WindowsAclDeps } from "./windowsAcl.js";
+export {
+  AUTHENTICATED_USERS,
+  BROAD_PRINCIPALS,
+  BUILTIN_USERS,
+  EVERYONE,
+  ensureWindowsAcl,
+  parseDacl,
+} from "./windowsAcl.js";
 export type { ModeRepair, WriteOptions } from "./writer.js";
 export {
   backupSettings,
-  ensureMode0600,
+  ensurePrivate,
   listBackups,
   pruneBackups,
   restoreBackup,

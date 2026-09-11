@@ -9,6 +9,7 @@ import type { CredentialDeps, DetectDeps } from "../../../src/health/context.js"
 import { buildContext, detectClaudeCode } from "../../../src/health/context.js";
 import type { ClaudeCodeDetection } from "../../../src/health/types.js";
 import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
+import { aclFake } from "../config/windowsAclFake.js";
 
 /**
  * `ensureMode0600` only rejects for host reasons that are impractical to stage
@@ -128,15 +129,19 @@ describe("buildContext", () => {
     expect((await build()).permissions).toEqual({ kind: "ok", before: 0o600 });
   });
 
-  it("reports Windows as unsupported rather than repairing", async () => {
+  it("answers the Windows question from the DACL, not from mode bits", async () => {
+    // M6 Part B: `unsupported` used to be the *only* Windows answer, which
+    // made "we cannot check" and "it is fine" the same row on the file holding
+    // the token. The DACL now answers, and `unsupported` is reserved for a host
+    // with no `icacls` at all.
     await writeSettings("{}");
     const ctx = await buildContext({
-      env: { ...env, platform: "win32" },
+      env: { ...env, platform: "win32", acl: aclFake(dir).deps },
       manifest: BUNDLED_MANIFEST,
       platform: "win32",
       detect: async () => DETECTED,
     });
-    expect(ctx.permissions).toEqual({ kind: "unsupported" });
+    expect(ctx.permissions).toEqual({ kind: "aclRepaired", before: ["S-1-1-0"] });
     expect(ctx.platform).toBe("win32");
   });
 
@@ -377,17 +382,32 @@ describe("self-write notification", () => {
     expect(onSelfWrite).not.toHaveBeenCalled();
   });
 
-  it("stays quiet on a platform where the repair does not apply", async () => {
+  it("stays quiet on a Windows file that was already private", async () => {
     await writeSettings("{}");
     const onSelfWrite = vi.fn();
     await buildContext({
-      env: { ...env, platform: "win32" },
+      env: { ...env, platform: "win32", acl: aclFake(dir, true).deps },
       manifest: BUNDLED_MANIFEST,
       platform: "win32",
       detect: async () => DETECTED,
       onSelfWrite,
     });
     expect(onSelfWrite).not.toHaveBeenCalled();
+  });
+
+  it("announces a Windows ACL repair, which is a write like any other", async () => {
+    // The DACL change is a change to the file we are also watching, so the
+    // suppression window has to open for it too (F14).
+    await writeSettings("{}");
+    const onSelfWrite = vi.fn();
+    await buildContext({
+      env: { ...env, platform: "win32", acl: aclFake(dir).deps },
+      manifest: BUNDLED_MANIFEST,
+      platform: "win32",
+      detect: async () => DETECTED,
+      onSelfWrite,
+    });
+    expect(onSelfWrite).toHaveBeenCalledTimes(1);
   });
 
   it.runIf(POSIX)("runs without one, since the caller may not be watching", async () => {
