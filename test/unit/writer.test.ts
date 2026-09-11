@@ -50,9 +50,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { readSettings } from "../../src/config/reader.js";
 import { ConfigError, DEFAULT_STYLE, type Settings } from "../../src/config/types.js";
+import type { WindowsAclDeps } from "../../src/config/windowsAcl.js";
 import {
   backupSettings,
-  ensureMode0600,
+  ensurePrivate,
   listBackups,
   pruneBackups,
   restoreBackup,
@@ -85,6 +86,63 @@ async function mode(target: string): Promise<number> {
   return (await fs.stat(target)).mode & 0o777;
 }
 
+/**
+ * `fs.stat().mode` on Windows is a fiction — 0o666 for any writable file,
+ * regardless of who can actually read it — so the POSIX assertions below are
+ * meaningless there and are gated on `POSIX`.
+ *
+ * They are not *dropped* there. §10.4's property is "nobody but this user can
+ * read the file holding the token", and on Windows that is a DACL question, so
+ * each gated assertion has an ACL-shaped twin asserting the same property
+ * through `opts.acl`. `windowsAcl.test.ts` covers the parser and the repair;
+ * what these prove is that the writer asks the question at all.
+ */
+const POSIX = process.platform !== "win32";
+
+/** The SID a repair would grant, and the loose DACL a fresh write inherits. */
+const USER_SID = "S-1-5-21-1004336348-1177238915-682003330-1001";
+const LOOSE_DACL = `D:AI(A;ID;FA;;;SY)(A;ID;FA;;;${USER_SID})(A;ID;0x1200a9;;;WD)`;
+const TIGHT_DACL = `D:PAI(A;;FA;;;SY)(A;;FA;;;${USER_SID})`;
+
+/**
+ * An `icacls` stand-in for the writer's win32 tightening: it reports the file
+ * as world-readable until a repair runs, and user-only afterwards. `saves`
+ * counts the DACL reads, so a test can prove the writer looked.
+ */
+function aclFake(): {
+  deps: Required<Pick<WindowsAclDeps, "run" | "scratchDir">>;
+  repairs: string[][];
+  saves: number;
+} {
+  const state = { tight: false };
+  const record: { repairs: string[][]; saves: number } = { repairs: [], saves: 0 };
+  const deps = {
+    scratchDir: dir,
+    run: async (cmd: string, args: readonly string[]) => {
+      if (cmd === "whoami") {
+        return { kind: "ok" as const, code: 0, stdout: `"HOST\\me","${USER_SID}"` };
+      }
+      const saveAt = args.indexOf("/save");
+      if (saveAt !== -1) {
+        record.saves += 1;
+        const sddl = `C:\\settings.json\r\n${state.tight ? TIGHT_DACL : LOOSE_DACL}\r\n`;
+        await fs.writeFile(
+          args[saveAt + 1] as string,
+          Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(sddl, "utf16le")]),
+        );
+        return { kind: "ok" as const, code: 0, stdout: "" };
+      }
+      record.repairs.push([...args]);
+      state.tight = true;
+      return { kind: "ok" as const, code: 0, stdout: "" };
+    },
+  };
+  return Object.defineProperties({ deps } as never, {
+    repairs: { get: () => record.repairs },
+    saves: { get: () => record.saves },
+  });
+}
+
 async function tempFiles(target = dir): Promise<string[]> {
   return (await fs.readdir(target)).filter((name) => name.endsWith(".tmp"));
 }
@@ -109,18 +167,46 @@ describe("writeSettingsAtomic (FR-2.3)", () => {
     expect((await readSettings(nested)).kind).toBe("ok");
   });
 
-  it("leaves the file at mode 0600 (§10.4)", async () => {
+  it.runIf(POSIX)("leaves the file at mode 0600 (§10.4)", async () => {
     await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
     expect(await mode(file)).toBe(0o600);
   });
 
-  it("tightens a pre-existing 0664 file to 0600", async () => {
+  it.runIf(POSIX)("tightens a pre-existing 0664 file to 0600", async () => {
     await fs.writeFile(file, "{}\n");
     // Explicit chmod: `mode:` on writeFile is masked by umask (022 on CI runners).
     await fs.chmod(file, 0o664);
     expect(await mode(file)).toBe(0o664);
     await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS);
     expect(await mode(file)).toBe(0o600);
+  });
+
+  it("leaves the file private to this user on win32 too (§10.4)", async () => {
+    // The Windows half of the two assertions above: no mode bits to check, so
+    // the property is asserted through the DACL the writer tightened.
+    const acl = aclFake();
+    await writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, {
+      workspaceFolders: [],
+      platform: "win32",
+      acl: acl.deps,
+    });
+
+    expect(acl.saves).toBeGreaterThan(0);
+    expect(acl.repairs[0]).toContain("/inheritance:r");
+    expect(acl.repairs[0]).toContain(`*${USER_SID}:F`);
+    expect(await fs.readFile(file, "utf8")).toContain("us-east-1");
+  });
+
+  it("still writes when the ACL cannot be read, rather than failing the write", async () => {
+    // The bytes are on disk by the time the DACL is asked about; reporting
+    // ATOMIC_WRITE_FAILED would tell the caller a write that happened did not.
+    // `config.perms` is where an unreadable ACL gets said out loud.
+    await writeRawAtomic(file, "{}\n", {
+      workspaceFolders: [],
+      platform: "win32",
+      acl: { scratchDir: dir, run: async () => ({ kind: "missing" }) },
+    });
+    expect(await fs.readFile(file, "utf8")).toBe("{}\n");
   });
 
   it("leaves no temp files behind", async () => {
@@ -188,44 +274,96 @@ describe("writeSettingsAtomic (FR-2.3)", () => {
     }
   });
 
-  it("skips chmod on win32 but still writes (plan Q-K)", async () => {
+  it("tightens the ACL instead of the mode on win32 (plan Q-K, closed in M6)", async () => {
     hooks.chmodCalls = 0;
-    await writeRawAtomic(file, "{}\n", { workspaceFolders: [], platform: "win32" });
+    const acl = aclFake();
+    await writeRawAtomic(file, "{}\n", {
+      workspaceFolders: [],
+      platform: "win32",
+      acl: acl.deps,
+    });
     expect(hooks.chmodCalls).toBe(0);
+    expect(acl.repairs).not.toEqual([]);
     expect(await fs.readFile(file, "utf8")).toBe("{}\n");
   });
 });
 
-describe("ensureMode0600 (FR-2.8)", () => {
-  it("reports ok when the file is already 0600", async () => {
+describe("ensurePrivate (FR-2.8)", () => {
+  // The POSIX arm is passed `"linux"` explicitly, so these run everywhere and
+  // only the *filesystem* underneath them differs. `chmod` is close to a no-op
+  // on Windows, which is why the two that read a mode back are gated.
+  it.runIf(POSIX)("reports ok when the file is already 0600", async () => {
     await fs.writeFile(file, "{}\n");
     await fs.chmod(file, 0o600);
-    expect(await ensureMode0600(file, "linux")).toEqual({ kind: "ok", before: 0o600 });
+    expect(await ensurePrivate(file, "linux")).toEqual({ kind: "ok", before: 0o600 });
   });
 
-  it("repairs a world-readable file and reports the previous mode", async () => {
+  it.runIf(POSIX)("repairs a world-readable file and reports the previous mode", async () => {
     await fs.writeFile(file, "{}\n");
     await fs.chmod(file, 0o644);
-    expect(await ensureMode0600(file, "linux")).toEqual({ kind: "repaired", before: 0o644 });
+    expect(await ensurePrivate(file, "linux")).toEqual({ kind: "repaired", before: 0o644 });
     expect(await mode(file)).toBe(0o600);
   });
 
-  it("reports unsupported on win32 rather than a fabricated mode (plan Q-K, F10)", async () => {
+  it("reads the DACL on win32 rather than a fabricated mode (plan Q-K, F10)", async () => {
+    // `fs.stat().mode` is 0o666 here whatever the ACL says, so the mode is
+    // discarded and the DACL answers instead. The pre-M6 behaviour — a flat
+    // `unsupported` — is the thing this replaces.
     await fs.writeFile(file, "{}\n");
-    await fs.chmod(file, 0o644);
-    expect(await ensureMode0600(file, "win32")).toEqual({ kind: "unsupported" });
-    expect(await mode(file)).toBe(0o644);
+    const acl = aclFake();
+    expect(await ensurePrivate(file, "win32", acl.deps)).toEqual({
+      kind: "aclRepaired",
+      before: ["S-1-1-0"],
+    });
   });
 
-  it("reports absent for a missing file rather than throwing (F10)", async () => {
-    expect(await ensureMode0600(file, "linux")).toEqual({ kind: "absent" });
+  it("reports a win32 file that is already user-only as ok, not as unsupported", async () => {
+    await fs.writeFile(file, "{}\n");
+    const acl = aclFake();
+    // Tighten it first, so the first read already sees a user-only DACL.
+    await acl.deps.run("icacls", [file, "/inheritance:r"]);
+    expect(await ensurePrivate(file, "win32", acl.deps)).toEqual({ kind: "aclOk" });
   });
+
+  it("reports unsupported on win32 only when icacls is not there", async () => {
+    await fs.writeFile(file, "{}\n");
+    expect(
+      await ensurePrivate(file, "win32", {
+        scratchDir: dir,
+        run: async () => ({ kind: "missing" }),
+      }),
+    ).toEqual({ kind: "unsupported" });
+  });
+
+  it("never reports an unreadable win32 ACL as fine (plan Q-AG)", async () => {
+    await fs.writeFile(file, "{}\n");
+    const result = await ensurePrivate(file, "win32", {
+      scratchDir: dir,
+      run: async () => ({ kind: "ok", code: 5, stdout: "Access is denied." }),
+    });
+    expect(result).toMatchObject({ kind: "unverifiable" });
+  });
+
+  it.each(["linux", "win32"] as const)(
+    "reports absent for a missing file on %s rather than throwing (F10)",
+    async (platform) => {
+      // Absent is absent on every platform. This used to short-circuit to
+      // `unsupported` on win32 before the stat ran, so a fresh install looked
+      // identical to one where we could not read the ACL — and every caller
+      // above said the wrong thing about it.
+      expect(await ensurePrivate(file, platform)).toEqual({ kind: "absent" });
+    },
+  );
 
   it("propagates an error that is not ENOENT", async () => {
     await fs.writeFile(file, "{}\n");
-    await expect(ensureMode0600(path.join(file, "nested.json"), "linux")).rejects.toMatchObject({
-      code: "ENOTDIR",
-    });
+    // A file path used as a directory: ENOTDIR on POSIX, ENOENT on Windows,
+    // where the stat gives up a level earlier. Both are "not a readable file",
+    // and neither may be swallowed into a verdict about privacy.
+    const nested = path.join(file, "nested.json");
+    await (POSIX
+      ? expect(ensurePrivate(nested, "linux")).rejects.toMatchObject({ code: "ENOTDIR" })
+      : expect(ensurePrivate(nested, "win32")).resolves.toEqual({ kind: "absent" }));
   });
 });
 
@@ -249,7 +387,7 @@ describe("backups (FR-2.4, plan Q-H)", () => {
     expect(path.basename(info.path)).toBe("settings.2026-09-10T12-34-56.000Z.json");
     expect(path.basename(info.path)).not.toContain(":");
     expect(await fs.readFile(info.path, "utf8")).toBe(raw);
-    expect(await mode(info.path)).toBe(0o600);
+    if (POSIX) expect(await mode(info.path)).toBe(0o600);
   });
 
   it("backs up a malformed file byte-for-byte", async () => {
@@ -384,7 +522,7 @@ describe("backups (FR-2.4, plan Q-H)", () => {
     await restoreBackup(info.path, file, OPTS);
 
     expect(await fs.readFile(file, "utf8")).toBe(original);
-    expect(await mode(file)).toBe(0o600);
+    if (POSIX) expect(await mode(file)).toBe(0o600);
   });
 
   it("throws BACKUP_NOT_FOUND for a missing backup", async () => {
@@ -606,18 +744,37 @@ describe("backups are byte-exact and atomic (F9)", () => {
     expect(await fs.readFile(info?.path ?? "")).toEqual(bytes);
   });
 
-  it("writes the backup at mode 0600 even over a pre-existing looser file", async () => {
+  it.runIf(POSIX)(
+    "writes the backup at mode 0600 even over a pre-existing looser file",
+    async () => {
+      await fs.writeFile(file, "{}\n");
+      const at = new Date("2026-09-10T12:34:56.000Z");
+      await fs.mkdir(backups, { recursive: true });
+      const target = path.join(backups, "settings.2026-09-10T12-34-56.000Z.json");
+      await fs.writeFile(target, "stale");
+      await fs.chmod(target, 0o666);
+
+      await backupSettings(file, backups, at);
+
+      expect(await mode(target)).toBe(0o600);
+      expect(await fs.readFile(target, "utf8")).toBe("{}\n");
+    },
+  );
+
+  it("tightens the backup's ACL on win32 too", async () => {
+    // A backup is a verbatim copy of the file holding the token, so the same
+    // "nobody else can read this" property applies to it — and on Windows that
+    // is a DACL, not a mode.
     await fs.writeFile(file, "{}\n");
-    const at = new Date("2026-09-10T12:34:56.000Z");
-    await fs.mkdir(backups, { recursive: true });
-    const target = path.join(backups, "settings.2026-09-10T12-34-56.000Z.json");
-    await fs.writeFile(target, "stale");
-    await fs.chmod(target, 0o666);
+    const acl = aclFake();
 
-    await backupSettings(file, backups, at);
+    await backupSettings(file, backups, new Date("2026-09-10T12:34:56.000Z"), {
+      workspaceFolders: [],
+      platform: "win32",
+      acl: { ...acl.deps, scratchDir: dir },
+    });
 
-    expect(await mode(target)).toBe(0o600);
-    expect(await fs.readFile(target, "utf8")).toBe("{}\n");
+    expect(acl.repairs).not.toEqual([]);
   });
 
   it("leaves no temp file behind in the backups directory", async () => {

@@ -140,6 +140,15 @@ async function mode(target: string): Promise<number> {
   return (await stat(target)).mode & 0o777;
 }
 
+/**
+ * Windows reports 0o666 from `fs.stat` regardless of the DACL, so a POSIX-mode
+ * assertion says nothing there. The security property still holds — it is a
+ * DACL question on Windows, asserted through the injected `icacls` runner in
+ * `test/unit/writer.test.ts` and `test/unit/config/windowsAcl.test.ts` — so
+ * these gates are about the *mechanism*, not about the guarantee.
+ */
+const POSIX = process.platform !== "win32";
+
 async function envValue(key: string): Promise<unknown> {
   return ((await readJson()).env as JsonObject)[key];
 }
@@ -172,7 +181,7 @@ describe("fresh install", () => {
 
     expect(result).toMatchObject({ written: true, backup: undefined });
     expect(await readJson()).toEqual(planned.merge.next);
-    expect(await mode(file)).toBe(0o600);
+    if (POSIX) expect(await mode(file)).toBe(0o600);
 
     const snapshot = await readSnapshotFile();
     expect(Object.keys(snapshot.values)).toHaveLength(9);
@@ -447,26 +456,39 @@ describe("/setup-bedrock-style rewrite", () => {
     expect(planned.noop).toBe(true);
   });
 
-  it("repairs the file mode, and reports the mode it found", async () => {
+  it.runIf(POSIX)("repairs the file mode, and reports the mode it found", async () => {
     expect(await repairPermissions(env)).toEqual({ kind: "repaired", before: 0o664 });
     expect(await mode(file)).toBe(0o600);
     expect(await repairPermissions(env)).toEqual({ kind: "ok", before: 0o600 });
   });
 
-  it("reports Windows as unsupported rather than repairing mode bits", async () => {
-    expect(await repairPermissions({ ...env, platform: "win32" })).toEqual({
-      kind: "unsupported",
+  it("answers from the DACL on Windows rather than from mode bits", async () => {
+    // The Windows half of the assertion above: the same "is this file private
+    // to me" question, asked the only way Windows can answer it (M6 Part B,
+    // closing plan Q-K). An unreadable ACL is never a pass — see the
+    // `unverifiable` cases in `test/unit/config/windowsAcl.test.ts`.
+    const result = await repairPermissions({
+      ...env,
+      platform: "win32",
+      acl: { scratchDir: tmp, run: async () => ({ kind: "missing" }) },
     });
-    expect(await mode(file)).toBe(0o664);
+    expect(result).toEqual({ kind: "unsupported" });
+    if (POSIX) expect(await mode(file)).toBe(0o664);
   });
 });
 
 describe("a fresh install with no settings.json", () => {
-  it("reports the file as absent rather than throwing out of the health check", async () => {
-    // FR-2.8 runs on every health check, and the first one happens before the
-    // user has ever applied anything: ENOENT is the normal case, not an error.
-    expect(await repairPermissions(env)).toEqual({ kind: "absent" });
-  });
+  it.each(["linux", "win32"] as const)(
+    "reports the file as absent on %s rather than throwing out of the health check",
+    async (platform) => {
+      // FR-2.8 runs on every health check, and the first one happens before the
+      // user has ever applied anything: ENOENT is the normal case, not an error.
+      // On win32 this used to report `unsupported` — the platform check ran
+      // before the stat — so a fresh install was indistinguishable from an
+      // unreadable ACL, and the panel said the wrong thing about both.
+      expect(await repairPermissions({ ...env, platform })).toEqual({ kind: "absent" });
+    },
+  );
 });
 
 describe("backup and restore", () => {
