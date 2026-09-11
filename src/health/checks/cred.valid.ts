@@ -25,7 +25,13 @@ export const credValidCheck = {
       return { ...base("skipped", LABELS["cred.valid"].untested), fix: TEST };
     }
     const { level, label } = describe(lastTest.result);
-    return { ...base(level, label), fix: TEST };
+    // The status goes on the tooltip, not the label. The label is the sentence
+    // the user reads; a bare HTTP code there is noise to them (and a test pins
+    // that it never appears). The tooltip is where someone helping them looks,
+    // and on the unknown branch the status is the only lead there is.
+    const detail =
+      lastTest.result.kind === "unknown" ? `HTTP ${lastTest.result.status}` : undefined;
+    return { ...base(level, label), ...(detail === undefined ? {} : { detail }), fix: TEST };
   },
 } satisfies Check;
 

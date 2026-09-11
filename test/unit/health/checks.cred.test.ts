@@ -254,6 +254,13 @@ describe("cred.valid", () => {
     });
   });
 
+  it("puts the status on the tooltip of an unknown result, and nowhere else", () => {
+    // The label stays a sentence; the code is for whoever is helping.
+    expect(withResult({ kind: "unknown", status: 502 }).detail).toBe("HTTP 502");
+    expect(withResult({ kind: "bad-credential", status: 403 }).detail).toBeUndefined();
+    expect(withResult({ kind: "ok", model: "haiku" }).detail).toBeUndefined();
+  });
+
   it("never repeats a status code or a model id at the user", () => {
     const label = withResult({ kind: "unknown", status: 500 }).label;
     expect(label).not.toMatch(/500/);
