@@ -63,6 +63,17 @@ describe("claude directory resolution (FR-1.3)", () => {
   const expectedClaudeDir = path.join(os.homedir(), ".claude");
   const expectedSettings = path.join(expectedClaudeDir, "settings.json");
 
+  /**
+   * Compare paths the way the filesystem does. `Uri.fsPath` hands back a
+   * lower-cased drive letter (`c:\Users\...`) where `os.homedir()` gives an
+   * upper-cased one, and on Windows those are one path. Nothing about which
+   * machine's home was chosen turns on that letter's case, so folding it keeps
+   * the assertion pointed at the thing it is about. POSIX is left alone, where
+   * case is meaningful.
+   */
+  const samePath = (a: string, b: string): boolean =>
+    process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+
   before(async () => {
     const extension = vscode.extensions.getExtension(EXTENSION_ID);
     assert.ok(extension, `${EXTENSION_ID} is not installed in the test host`);
@@ -102,7 +113,8 @@ describe("claude directory resolution (FR-1.3)", () => {
     const opened = vscode.window.activeTextEditor?.document.uri.fsPath;
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 
-    assert.equal(opened, expectedSettings);
+    assert.ok(opened, "no editor was opened");
+    assert.ok(samePath(opened, expectedSettings), `opened ${opened}, expected ${expectedSettings}`);
     assert.ok(
       !opened.startsWith(`${process.env.SCD_LAUNCHER_HOME}${path.sep}`),
       `resolved into the launching machine's home: ${opened}`,
@@ -120,11 +132,23 @@ describe("claude directory resolution (FR-1.3)", () => {
 
     await vscode.commands.executeCommand("sensibleDefaults.runHealthCheck");
 
-    assert.equal(
-      statSync(expectedSettings).mode & 0o777,
-      0o600,
-      "the health run did not repair the mode of the file under the host's home",
-    );
+    // POSIX only, and honestly so. Windows has no mode bits; the equivalent
+    // hardening is the ACL, which `ensureWindowsAcl` applies by shelling out to
+    // `icacls` and which `test/unit/config/windowsAcl.test.ts` covers directly.
+    //
+    // That leaves this test weaker on Windows than on POSIX: it still shows the
+    // health run reading and reporting on the host-local file, but not writing
+    // to it. Closing that would need a write command whose promise settles
+    // headlessly, and every one of them ends on a notification the test host
+    // never dismisses. `docs/manual-verification.md` item 2 covers the Windows
+    // write path on real hardware.
+    if (process.platform !== "win32") {
+      assert.equal(
+        statSync(expectedSettings).mode & 0o777,
+        0o600,
+        "the health run did not repair the mode of the file under the host's home",
+      );
+    }
     // The file it touched is the one we planted, not a same-named file
     // elsewhere that happens to be 0600 already.
     assert.match(readFileSync(expectedSettings, "utf8"), /resolution\.spec/);
@@ -156,7 +180,8 @@ describe("claude directory resolution (FR-1.3)", () => {
     const opened = vscode.window.activeTextEditor?.document.uri.fsPath;
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
 
-    assert.notEqual(opened, decoy, "resolution followed the launching machine's home");
-    assert.equal(opened, expectedSettings);
+    assert.ok(opened, "no editor was opened");
+    assert.ok(!samePath(opened, decoy), "resolution followed the launching machine's home");
+    assert.ok(samePath(opened, expectedSettings), `opened ${opened}, expected ${expectedSettings}`);
   });
 });
