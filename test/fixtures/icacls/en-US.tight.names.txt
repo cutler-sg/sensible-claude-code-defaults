@@ -1,0 +1,5 @@
+C:\Users\mcutler\.claude\settings.json NT AUTHORITY\SYSTEM:(F)
+                                       BUILTIN\Administrators:(F)
+                                       DESKTOP-7F2K1\mcutler:(F)
+
+Successfully processed 1 files; Failed processing 0 files

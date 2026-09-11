@@ -1,0 +1,5 @@
+C:\Users\yamada\.claude\settings.json NT AUTHORITY\SYSTEM:(F)
+                                      BUILTIN\Administrators:(F)
+                                      DESKTOP-7F2K1\yamada:(F)
+
+1 個のファイルが正常に処理されました。0 個のファイルを処理できませんでした

@@ -12,3 +12,8 @@
 *.jpg binary
 *.ico binary
 *.vsix binary
+
+# The `icacls` captures are byte fixtures: UTF-16LE with a BOM, CRLF-terminated,
+# and in the mojibake case not valid UTF-8 at all. The eol=lf rule above would
+# rewrite exactly the bytes the parser tests exist to prove it survives.
+test/fixtures/icacls/** -text
