@@ -10,6 +10,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { ConfigError } from "./types.js";
 
+/** One platform's `path` implementation. Named locally because `@types/node`
+ * 26 dropped `path.PlatformPath` and types `posix`/`win32` as the module. */
+type PlatformPath = typeof path.posix;
+
 /** `~/.claude/sensible-defaults` — our namespace inside Claude Code's home (plan Q-H). */
 const STATE_DIR_NAME = "sensible-defaults";
 
@@ -113,7 +117,7 @@ export function assertOutsideWorkspace(
  * symlink swapped between the check and the rename. A handful of workspace
  * folders per write is not a cost worth a race.
  */
-function rootsFor(folder: string, p: path.PlatformPath): string[] {
+function rootsFor(folder: string, p: PlatformPath): string[] {
   const given = p.resolve(folder);
   // A root that does not exist, or that we cannot stat, is not evidence of
   // safety — fall back to the literal path and let the comparison stand.
@@ -133,7 +137,7 @@ function rootsFor(folder: string, p: path.PlatformPath): string[] {
   return real === given ? [given] : [given, real];
 }
 
-function isAtOrInside(child: string, parent: string, p: path.PlatformPath): boolean {
+function isAtOrInside(child: string, parent: string, p: PlatformPath): boolean {
   const relative = p.relative(parent, child);
   if (relative === "") {
     return true;
