@@ -282,7 +282,12 @@ function classifyThrown(error: unknown, region: string, host: string): Connectio
 }
 
 function isTlsCode(code: string): boolean {
-  return code.includes("CERT") || code.startsWith("ERR_TLS") || code.startsWith("ERR_SSL");
+  return (
+    code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ||
+    code.includes("CERT") ||
+    code.startsWith("ERR_TLS") ||
+    code.startsWith("ERR_SSL")
+  );
 }
 
 interface Link {

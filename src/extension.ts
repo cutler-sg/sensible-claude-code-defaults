@@ -4,6 +4,7 @@ import { readTokenFromSettings } from "./credential/writeThrough.js";
 import type { CredentialContext, HealthReport } from "./health/types.js";
 import { createManifestCache } from "./manifest/cache.js";
 import { registerCommands } from "./ui/commands.js";
+import { failureMessage, reportFailure } from "./ui/failures.js";
 import type { CredentialFlowDeps } from "./ui/flows.js";
 import { createHealthRunner } from "./ui/healthRunner.js";
 import { createHost } from "./ui/host.js";
@@ -117,8 +118,9 @@ export function activate(context: vscode.ExtensionContext): void {
         provider.errorCount > 0
           ? { value: provider.errorCount, tooltip: `${provider.errorCount} problem(s) to fix` }
           : undefined;
-      panel?.refresh();
+      panel?.healthSucceeded();
     },
+    onFailure: (message) => panel?.healthFailed(message),
   });
 
   /**
@@ -135,12 +137,27 @@ export function activate(context: vscode.ExtensionContext): void {
    * file change triggers.
    */
   const runHealth = async (): Promise<void> => {
-    await runChecks();
-    if (await manifests.refresh()) await runChecks();
+    try {
+      await runChecks();
+      if (await manifests.refresh()) await runChecks();
+    } catch (error) {
+      const message = failureMessage(
+        error,
+        "Couldn't refresh the recommended configuration. Check your connection and try again.",
+      );
+      panel?.healthFailed(message);
+      await reportFailure(log, message);
+    }
   };
 
   const watcher = watchSettings(host.claudeDir, host.settingsFile, () => void runHealth(), {
     suppress: () => Date.now() < suppressUntil,
+    onError: () => {
+      void reportFailure(
+        log,
+        "Automatic settings monitoring is unavailable. Use Check Configuration after changing settings, or ask IT to check access to your settings folder.",
+      );
+    },
   });
 
   // One `FlowDeps` for both writers — the palette commands and the panel —
@@ -178,6 +195,7 @@ export function activate(context: vscode.ExtensionContext): void {
     settingsFile: host.settingsFile,
     backupsDir: backupsDir(host.claudeDir),
     extensionVersion: String(context.extension.packageJSON.version),
+    ...(host.windowsTerminal === undefined ? {} : { windowsTerminal: host.windowsTerminal }),
     diagnostics: {
       manifest: () => manifests.current().status,
       report: () => lastReport,
@@ -186,6 +204,27 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   context.subscriptions.push(channel, view, panelView, commands, watcher);
+  if (host.windowsTerminal !== undefined) {
+    const refreshTerminal = (): void => {
+      void host.windowsTerminal
+        ?.refresh()
+        .catch(() =>
+          reportFailure(
+            log,
+            "Couldn't refresh Claude terminal access. Check your configuration and reopen the terminal.",
+          ),
+        );
+    };
+    context.subscriptions.push(
+      vscode.extensions.onDidChange(refreshTerminal),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("sensibleDefaults.enableWindowsTerminalCli"))
+          refreshTerminal();
+      }),
+    );
+    // The opt-in survives a reload; the nonpersistent environment collection does not.
+    setImmediate(refreshTerminal);
+  }
   // §13: activation must add < 100 ms to startup, so the first run happens
   // after `activate` returns rather than inside it. The opt-out is read here,
   // not around the toast: someone who turns the startup check off is asking us

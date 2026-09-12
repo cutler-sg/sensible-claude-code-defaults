@@ -52,6 +52,7 @@ const STATES: PanelState[] = [
     },
   },
   { ...healthy, detailsOpen: true },
+  { kind: "failed", message: "Access denied <script>neverRun()</script>" },
 ];
 
 const html = (state: PanelState) => render(state, { nonce: NONCE, cspSource: CSP });

@@ -296,7 +296,7 @@ ctx.environmentVariableCollection.replace('CLAUDE_CODE_USE_BEDROCK', '1');
 |---|---|---|---|
 | `install.extension` | Claude Code extension installed | error | Install command |
 | `install.version` | Meets minimum version | warning | Open extension page |
-| `install.cli` | `claude` on PATH | info | None (informational only) |
+| `install.cli` | `claude` on PATH | info | On Windows, offer opt-in integrated-terminal repair if the registered extension's bundled executable is verified and no existing CLI/launcher is found; otherwise explain the blocker. Never modify the system PATH. |
 | `config.exists` | `~/.claude/settings.json` present | warning | Apply defaults |
 | `config.parses` | Valid JSON | error | Open file / restore backup |
 | `config.perms` | Mode 0600 / ACL sane | warning | Repair permissions |

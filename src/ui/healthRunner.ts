@@ -21,6 +21,7 @@ import { runAll, transition } from "../health/runner.js";
 import type { Check, ClaudeCodeDetection, HealthReport } from "../health/types.js";
 import type { Manifest } from "../manifest/types.js";
 import type { Logger } from "../util/log.js";
+import { failureMessage, reportFailure } from "./failures.js";
 import type { ResolvedManifest } from "./manifestHolder.js";
 import { APPLY_ACTION, decideNotification, type NotificationKind } from "./notify.js";
 import { needsSetup } from "./treeProvider.js";
@@ -49,6 +50,7 @@ export interface HealthRunnerDeps {
   log: Logger;
   /** Repaint the panel: the tree, the badge, anything else the view owns. */
   present: (report: HealthReport) => void;
+  onFailure?: (message: string) => void;
   /** Survives the window, so a toast fires once per user, not once per window. */
   notified: NotifiedStore;
   /** Called when the silent permission repair touched the file (F14). */
@@ -80,11 +82,10 @@ export interface HealthRunnerDeps {
 
 /**
  * Said when the run itself fails — a `settings.json` that is a directory, a
- * `~/.claude` we cannot stat. It names no path and quotes no error: the detail
- * is in the output channel, and this audience cannot act on an errno.
+ * `~/.claude` we cannot stat. It names no path and quotes no raw exception.
  */
 export const HEALTH_FAILED_MESSAGE =
-  "Couldn't check your Claude Code configuration — see the output log";
+  "Couldn't check your Claude Code configuration. Use Copy Diagnostics for support, then try Check Configuration again.";
 
 /** FR-5.5 bookkeeping, keyed by manifest revision so new advice can speak once. */
 export function notifiedKey(manifestRevision: string): string {
@@ -131,10 +132,15 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
     try {
       await run();
     } catch (error) {
-      deps.log.error(`Health check failed: ${messageOf(error)}`);
-      if (reportedFailure) return;
+      const notify = !reportedFailure;
       reportedFailure = true;
-      await vscode.window.showErrorMessage(HEALTH_FAILED_MESSAGE);
+      const message = failureMessage(error, HEALTH_FAILED_MESSAGE);
+      try {
+        deps.onFailure?.(message);
+      } catch {
+        // A failed renderer must not prevent the independent notification.
+      }
+      await reportFailure(deps.log, message, notify);
     }
   };
 }

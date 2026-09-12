@@ -35,6 +35,28 @@ full list of checks behind *Details* for whoever is helping you. Every panel
 action is also in the command palette under *Sensible Defaults*, for people who
 prefer it.
 
+## Corporate Windows devices
+
+If Claude works in the sidebar but not in the terminal, open the command palette
+and run **Sensible Defaults: Enable Claude in VS Code Terminals**. The extension
+checks the existing command search path and the installed Claude Code binary,
+then asks before adding the binary directory to **new integrated terminals**.
+Reopen your terminal and run `claude --version` before using *Launch in terminal*.
+
+This does not install another Claude copy, create launcher scripts, modify the
+system PATH, or bypass application controls. Existing executables and script
+launchers are preserved. **Disable Claude Terminal Repair** reverses the preference;
+reopen terminals afterwards. External terminals still need an IT-approved standalone
+CLI installation. The repair is native-Windows only, not a change to the Windows
+host from WSL or a remote Linux window.
+
+If a device blocks settings writes or secure key storage, setup shows the failure
+and keeps your input for retry. Use **Copy Diagnostics for Support** to collect a
+redacted report. A certificate error may indicate TLS inspection, but does not
+prove a specific proxy vendor: ask IT to check the trusted CA configuration. The
+extension does not import certificates, change `NODE_EXTRA_CA_CERTS`, or disable
+certificate verification; existing CA settings are preserved.
+
 ## What this extension writes
 
 Everything is written to your **user profile**, never inside a project folder:
@@ -44,6 +66,10 @@ Everything is written to your **user profile**, never inside a project folder:
 | Settings | `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`) |
 | Backups (10 most recent) | `~/.claude/sensible-defaults/backups/` |
 | Record of what we last wrote | `~/.claude/sensible-defaults/state.json` |
+
+Opting into Windows terminal repair also saves the
+`sensibleDefaults.enableWindowsTerminalCli` preference in your VS Code user settings.
+The terminal PATH addition itself is nonpersistent and is revalidated after reload.
 
 Inside `settings.json` it manages nine keys and nothing else. The rest of the
 file — your own settings, their order, your indentation — is left exactly as it

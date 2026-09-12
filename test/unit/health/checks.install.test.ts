@@ -54,6 +54,28 @@ describe("install.version", () => {
 });
 
 describe("install.cli", () => {
+  it.each(["available", "enabled"] as const)("offers a reversible Windows %s action", (kind) => {
+    const ctx = makeCtx();
+    ctx.detection.windowsTerminal = { kind, version: "2.1.267" };
+    const result = installCliCheck.run(ctx);
+    expect(result.level).toBe(kind === "enabled" ? "pass" : "info");
+    expect(result.fix).toMatchObject({
+      kind: "command",
+      command: `sensibleDefaults.${kind === "enabled" ? "disable" : "enable"}WindowsTerminalCli`,
+    });
+  });
+
+  it.each(["path", "launcher", "execution", "bundle", "environment"] as const)(
+    "explains %s without claiming repair",
+    (reason) => {
+      const ctx = makeCtx();
+      ctx.detection.windowsTerminal = { kind: "blocked", reason };
+      const result = installCliCheck.run(ctx);
+      expect(result.level).toBe("info");
+      expect(result.detail).toBeTruthy();
+      expect(result.fix).toMatchObject({ command: "sensibleDefaults.runHealthCheck" });
+    },
+  );
   it("passes when the CLI is on PATH", () => {
     const result = installCliCheck.run(makeCtx());
     expect(result).toMatchObject({ level: "pass", detail: "Version 2.1.267" });

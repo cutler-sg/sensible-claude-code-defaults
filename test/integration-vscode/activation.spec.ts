@@ -23,6 +23,8 @@ describe("activation", () => {
     const commands = new Set(await vscode.commands.getCommands(true));
     for (const id of [
       "sensibleDefaults.runHealthCheck",
+      "sensibleDefaults.enableWindowsTerminalCli",
+      "sensibleDefaults.disableWindowsTerminalCli",
       "sensibleDefaults.applyDefaults",
       "sensibleDefaults.checkForUpdates",
       "sensibleDefaults.openSettings",

@@ -9,6 +9,7 @@
  */
 
 import type { ManagedKey } from "../config/types.js";
+import type { ConnectionResult } from "../credential/types.js";
 
 export const LABELS = {
   /** Used by the runner when a check body throws (never by a check itself). */
@@ -131,6 +132,8 @@ export const LABELS = {
     modelNotEnabled: "Amazon accepted your key, but the Claude models aren't turned on for you",
     wrongRegion: "The Claude models aren't available in the Amazon region you chose",
     network: "Couldn't reach Amazon to try your Bedrock API key",
+    tls: "A certificate problem blocked the secure connection to Amazon",
+    proxy: "Your network proxy requires sign-in before Amazon can be reached",
     unknown: "Amazon gave an answer we didn't understand when we tried your key",
     unrecognised: "We couldn't tell how the last test of your Bedrock API key went — try it again",
   },
@@ -198,6 +201,28 @@ const KEY_DISPLAY_NAMES: Record<ManagedKey, string> = {
   extraKnownMarketplaces: "plugin marketplace list",
   enabledPlugins: "enabled plugins list",
 };
+
+export function networkGuidance(reason: Extract<ConnectionResult, { kind: "network" }>["reason"]): {
+  sentence: string;
+  hint: string;
+} {
+  if (reason === "tls") {
+    return {
+      sentence: LABELS["cred.valid"].tls,
+      hint: "Your company may inspect encrypted connections. Ask IT to check its trusted certificates and your Claude Code version. We haven't changed certificate trust or disabled certificate checks.",
+    };
+  }
+  if (reason === "proxy") {
+    return {
+      sentence: LABELS["cred.valid"].proxy,
+      hint: "Sign in to your company network or ask IT to configure proxy access, then try again.",
+    };
+  }
+  return {
+    sentence: LABELS["cred.valid"].network,
+    hint: "Check your internet connection, then try again.",
+  };
+}
 
 export function keyDisplayName(key: ManagedKey): string {
   return KEY_DISPLAY_NAMES[key];

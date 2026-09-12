@@ -5,6 +5,7 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
+import { realpath, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
@@ -20,6 +21,7 @@ import { SecretTokenStore } from "../credential/store.js";
 import type { TokenStore } from "../credential/types.js";
 import { detectClaudeCode } from "../health/context.js";
 import type { ClaudeCodeDetection } from "../health/types.js";
+import { WindowsTerminalCli } from "../terminal/windows.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -32,6 +34,7 @@ export interface Host {
   store: TokenStore;
   /** FR-4.3: the integrated-terminal collection, with `persistent` off. */
   terminal: TerminalTokenEnv;
+  windowsTerminal: WindowsTerminalCli | undefined;
   /**
    * FR-4.8's scan inputs, read per call. `isTrusted` in particular must not be
    * captured: VS Code grants trust to a running window, so a value read at
@@ -80,6 +83,30 @@ export function createHost(context: vscode.ExtensionContext): Host {
   const claudeDir = resolveClaudeDir();
   const workspaceFolders = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
   const platform = process.platform;
+  const pathVariable =
+    Object.keys(process.env)
+      .sort()
+      .find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const windowsTerminal =
+    platform === "win32"
+      ? new WindowsTerminalCli({
+          path: () => process.env[pathVariable] ?? "",
+          pathExt: () => process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+          extensionPath: () =>
+            vscode.extensions.getExtension("anthropic.claude-code")?.extensionPath,
+          workspaceFolders: () =>
+            vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
+          enabled: () =>
+            vscode.workspace
+              .getConfiguration()
+              .get("sensibleDefaults.enableWindowsTerminalCli", false),
+          stat,
+          realpath,
+          execFile,
+          collection: context.environmentVariableCollection,
+          pathVariable,
+        })
+      : undefined;
 
   const env: ConfigEnv = {
     claudeDir,
@@ -100,6 +127,7 @@ export function createHost(context: vscode.ExtensionContext): Host {
     // if the collection refuses, which is deliberate: a collection VS Code
     // caches to disk must not receive the token at all.
     terminal: new TerminalTokenEnv(context.environmentVariableCollection),
+    windowsTerminal,
     // Read per call, never captured: trust is granted to a running window, and
     // a folder can be added to a window after activation.
     leakScan: () => ({
@@ -107,14 +135,29 @@ export function createHost(context: vscode.ExtensionContext): Host {
       isTrusted: vscode.workspace.isTrusted,
       isTracked: gitTracks,
     }),
-    detect: () =>
-      detectClaudeCode({
+    detect: async () => {
+      if (windowsTerminal !== undefined) {
+        const terminal = await windowsTerminal.refresh();
+        const version =
+          vscode.extensions.getExtension("anthropic.claude-code")?.packageJSON?.version;
+        return {
+          extension:
+            typeof version === "string" ? { installed: true, version } : { installed: false },
+          cli:
+            terminal.kind === "standalone"
+              ? { found: true, version: terminal.version }
+              : { found: false },
+          windowsTerminal: terminal,
+        };
+      }
+      return detectClaudeCode({
         getExtensionVersion: () => {
           const version =
             vscode.extensions.getExtension("anthropic.claude-code")?.packageJSON?.version;
           return typeof version === "string" ? version : undefined;
         },
         execFile,
-      }),
+      });
+    },
   };
 }

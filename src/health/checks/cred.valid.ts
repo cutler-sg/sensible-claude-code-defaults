@@ -8,7 +8,7 @@
  */
 
 import type { ConnectionResult } from "../../credential/types.js";
-import { LABELS } from "../labels.js";
+import { LABELS, networkGuidance } from "../labels.js";
 import type { Check, CheckContext, CheckResult, Level } from "../types.js";
 import { command } from "./shared.js";
 
@@ -70,7 +70,7 @@ function describe(result: ConnectionResult): { level: Level; label: string } {
     case "wrong-region":
       return { level: "error", label: LABELS["cred.valid"].wrongRegion };
     case "network":
-      return { level: "error", label: LABELS["cred.valid"].network };
+      return { level: "error", label: networkGuidance(result.reason).sentence };
     case "unknown":
       return { level: "error", label: LABELS["cred.valid"].unknown };
     default:

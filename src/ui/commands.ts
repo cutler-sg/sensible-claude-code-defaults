@@ -27,9 +27,11 @@ import type { Desired, ManagedKey, PlanResult } from "../config/types.js";
 import { DIAGNOSTICS_EXCLUDES, DIAGNOSTICS_INCLUDES } from "../diagnostics/report.js";
 import { keyDisplayName } from "../health/labels.js";
 import { desiredFromManifest, type Manifest } from "../manifest/types.js";
+import type { WindowsTerminalCli } from "../terminal/windows.js";
 import type { Logger } from "../util/log.js";
 import { redact } from "../util/redact.js";
 import { collectDiagnostics, type DiagnosticsHostDeps } from "./diagnostics.js";
+import { failureMessage, reportFailure } from "./failures.js";
 import {
   adoptToken,
   type CredentialFlowDeps,
@@ -48,9 +50,11 @@ import {
   pluralize,
   relativeAge,
 } from "./present.js";
+import { configureWindowsTerminal } from "./terminal.js";
 import type { Node } from "./treeProvider.js";
 
 export interface CommandDeps {
+  windowsTerminal?: WindowsTerminalCli;
   env: ConfigEnv;
   session: ApplySession;
   /**
@@ -107,6 +111,14 @@ const MAX_STALE_RETRIES = 1;
  * second list for the two to drift apart on.
  */
 const HANDLERS = {
+  "sensibleDefaults.enableWindowsTerminalCli": async (deps) => {
+    await configureWindowsTerminal(deps.windowsTerminal, true);
+    await deps.runHealth();
+  },
+  "sensibleDefaults.disableWindowsTerminalCli": async (deps) => {
+    await configureWindowsTerminal(deps.windowsTerminal, false);
+    await deps.runHealth();
+  },
   "sensibleDefaults.runHealthCheck": (deps) => deps.runHealth(),
   "sensibleDefaults.checkForUpdates": (deps) => checkForUpdates(deps),
   "sensibleDefaults.applyDefaults": (deps) => applyDefaults(deps, 0),
@@ -142,8 +154,10 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable {
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        deps.log.error(`${id} failed: ${message}`);
-        await vscode.window.showErrorMessage(redact(`That didn't work: ${message}`));
+        await reportFailure(
+          deps.log,
+          failureMessage(error, redact(`That didn't work: ${message}`)),
+        );
       }
     });
 

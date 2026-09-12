@@ -36,9 +36,10 @@ export interface SettingsWatcher extends Disposable {
 export type WatchFn = (
   dir: string,
   listener: (event: string, filename: string | Buffer | null) => void,
-) => { close(): void };
+) => { close(): void; on?(event: "error", listener: (error: Error) => void): unknown };
 
 export interface WatchOptions {
+  onError?: () => void;
   /** Coalescing window. A single save can produce several rename/change events. */
   debounceMs?: number;
   /**
@@ -74,6 +75,13 @@ export function watchSettings(
   let closed = false;
   let watcher: { close(): void } | undefined;
   let pending: { close(): void } | undefined;
+  let reported = false;
+
+  function report(): void {
+    if (closed || reported) return;
+    reported = true;
+    options.onError?.();
+  }
 
   function queue(): void {
     if (timer !== undefined) cancel(timer);
@@ -91,7 +99,7 @@ export function watchSettings(
   function arm(): boolean {
     if (closed || watcher !== undefined) return true;
     try {
-      watcher = watch(dir, (_event, filename) => {
+      const active = watch(dir, (_event, filename) => {
         if (closed) return;
         // A null filename means the platform could not tell us which entry
         // changed (it happens on some macOS and Windows paths). Treating it as
@@ -101,7 +109,14 @@ export function watchSettings(
         if (name !== basename) return;
         queue();
       });
-    } catch {
+      active.on?.("error", () => {
+        active.close();
+        if (watcher === active) watcher = undefined;
+        report();
+      });
+      watcher = active;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") report();
       return false;
     }
     pending?.close();
@@ -120,7 +135,7 @@ export function watchSettings(
     // and watching the same directory again would just re-throw.
     if (parent === dir) return;
     try {
-      pending = watch(parent, (_event, filename) => {
+      const active = watch(parent, (_event, filename) => {
         if (closed || watcher !== undefined) return;
         // An unnamed event could be the directory we are waiting for, so try.
         const name = filename === null ? dirname : filename.toString();
@@ -129,11 +144,18 @@ export function watchSettings(
         // listening for it, so arming is itself news: run the checks once.
         if (arm()) queue();
       });
+      active.on?.("error", () => {
+        active.close();
+        if (pending === active) pending = undefined;
+        report();
+      });
+      pending = active;
     } catch {
       // Neither the directory nor its parent is watchable — an unusual home
       // directory, or a platform that refuses. The panel still refreshes on
       // demand, and failing activation over it would be far worse.
       pending = undefined;
+      report();
     }
   }
 
