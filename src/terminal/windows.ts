@@ -6,6 +6,10 @@ export type WindowsTerminalStatus =
   | { kind: "enabled"; version: string }
   | { kind: "blocked"; reason: "path" | "launcher" | "execution" | "bundle" | "environment" };
 
+export type WindowsTerminalLaunch =
+  | { kind: "ready"; file: string; version: string }
+  | Extract<WindowsTerminalStatus, { kind: "blocked" }>;
+
 export interface WindowsTerminalDeps {
   path: () => string;
   pathExt: () => string;
@@ -33,6 +37,18 @@ export class WindowsTerminalCli {
   refresh(): Promise<WindowsTerminalStatus> {
     this.latest = this.inspectAndApply(++this.generation);
     return this.latest;
+  }
+
+  /** Re-resolve on every click, including after an extension update. No PATH mutation. */
+  async prepareLaunch(): Promise<WindowsTerminalLaunch> {
+    try {
+      const result = await inspect(this.deps);
+      return result.kind === "blocked"
+        ? result
+        : { kind: "ready", file: result.file, version: result.version };
+    } catch {
+      return { kind: "blocked", reason: "path" };
+    }
   }
 
   private async inspectAndApply(generation: number): Promise<WindowsTerminalStatus> {
@@ -65,15 +81,16 @@ export class WindowsTerminalCli {
       } catch {}
       return { kind: "blocked", reason: "environment" };
     }
-    return inspected.kind === "available"
-      ? { kind: "available", version: inspected.version }
+    return inspected.kind === "available" || inspected.kind === "standalone"
+      ? { kind: inspected.kind, version: inspected.version }
       : inspected;
   }
 }
 
 type Inspection =
-  | Exclude<WindowsTerminalStatus, { kind: "enabled" } | { kind: "available" }>
-  | { kind: "available"; version: string; directory: string };
+  | Extract<WindowsTerminalStatus, { kind: "blocked" }>
+  | { kind: "standalone"; version: string; file: string }
+  | { kind: "available"; version: string; directory: string; file: string };
 
 async function inspect(deps: WindowsTerminalDeps): Promise<Inspection> {
   const extensions = deps
@@ -98,7 +115,7 @@ async function inspect(deps: WindowsTerminalDeps): Promise<Inspection> {
       const version = await probe(deps, realFile);
       return version === undefined
         ? { kind: "blocked", reason: "execution" }
-        : { kind: "standalone", version };
+        : { kind: "standalone", version, file: realFile };
     }
   }
   const root = deps.extensionPath();
@@ -120,7 +137,7 @@ async function inspect(deps: WindowsTerminalDeps): Promise<Inspection> {
     const version = await probe(deps, realFile);
     return version === undefined
       ? { kind: "blocked", reason: "execution" }
-      : { kind: "available", version, directory: path.dirname(realFile) };
+      : { kind: "available", version, directory: path.dirname(realFile), file: realFile };
   } catch {
     return { kind: "blocked", reason: "bundle" };
   }

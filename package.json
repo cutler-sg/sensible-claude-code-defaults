@@ -3,7 +3,7 @@
   "displayName": "Sensible Claude Code Defaults",
   "description": "Set up and health-check Claude Code on AWS Bedrock: sensible defaults, guided Bedrock API key setup, and a panel that says what is wrong. An independent tool, not affiliated with Anthropic, PBC.",
   "publisher": "cutler-sg",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -80,6 +80,12 @@
       ]
     },
     "commands": [
+      {
+        "command": "sensibleDefaults.openClaudeTerminal",
+        "title": "Open Claude Terminal",
+        "category": "Sensible Defaults",
+        "icon": "$(terminal)"
+      },
       {
         "command": "sensibleDefaults.enableWindowsTerminalCli",
         "title": "Enable Claude in VS Code Terminals",
@@ -209,6 +215,11 @@
     },
     "menus": {
       "view/title": [
+        {
+          "command": "sensibleDefaults.openClaudeTerminal",
+          "when": "isWindows && (view == sensibleDefaults.health || view == sensibleDefaults.details)",
+          "group": "navigation"
+        },
         {
           "command": "sensibleDefaults.runHealthCheck",
           "when": "view == sensibleDefaults.details",

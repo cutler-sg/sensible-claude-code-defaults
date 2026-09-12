@@ -192,18 +192,20 @@ describe("contributed commands", () => {
     }
   });
 
-  it("puts refresh and apply in the view title bar", () => {
+  it("puts the Windows launcher, refresh and apply in the view title bar", () => {
     const title = manifest.contributes.menus["view/title"];
     expect(title.map((e) => e.command)).toEqual([
+      "sensibleDefaults.openClaudeTerminal",
       "sensibleDefaults.runHealthCheck",
       "sensibleDefaults.applyDefaults",
     ]);
     for (const entry of title) {
       expect(entry.group).toBe("navigation");
-      // M8: the tree is the Details view; the primary view is a webview with
-      // its own buttons, and a title-bar icon there would be a second way to
-      // do the same thing.
-      expect(entry.when).toBe("view == sensibleDefaults.details");
+      expect(entry.when).toBe(
+        entry.command === "sensibleDefaults.openClaudeTerminal"
+          ? "isWindows && (view == sensibleDefaults.health || view == sensibleDefaults.details)"
+          : "view == sensibleDefaults.details",
+      );
     }
   });
 

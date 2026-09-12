@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-12
+
+### Fixed
+
+- Windows permission exports support UTF-16 with or without an encoding marker. Empty, malformed and failed exports remain warnings, never a false all-clear.
+- Permission failures include actionable diagnostics instead of a repeated "Make private" action. Repairs verify each Windows command and keep inherited access if granting the current user fails.
+- Permission checks refresh without waiting for notification dismissal.
+
+### Added
+
+- **Sensible Defaults: Open Claude Terminal** launches the verified executable directly on Windows. Available from the Sensible Defaults view title and Command Palette, it avoids the PATH mismatch affecting Claude Code's own launcher without modifying that extension, system PATH, shell profiles or security policy.
+- Native Windows ACL and terminal-process regression coverage, alongside encoding and restricted-device tests.
+
+## [0.2.1] - 2026-09-12
+
 ### Fixed
 
 - Key validation and background checks no longer replace the input field. Continue and Enter preserve the pasted key through save failures.

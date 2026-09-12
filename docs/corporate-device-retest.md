@@ -1,7 +1,6 @@
-# Corporate-device retest candidate
+# Corporate-device retest — 0.2.2
 
-The local VSIX is version **0.2.1**, an unpublished test candidate. Install with
-VS Code's **Extensions: Install from VSIX**, then **Developer: Reload Window**.
+Update to Marketplace pre-release **0.2.2**, then **Developer: Reload Window**.
 Do not install it on a device unless its software policy permits it.
 
 ## One-pass Windows checklist
@@ -15,9 +14,17 @@ Do not install it on a device unless its software policy permits it.
   Claude session. A format check or `--version` alone is not proof of authentication.
 - In Details → Installation, use **Enable in VS Code terminals**, or the equivalent
   command-palette command. Accept the explanation and open a new PowerShell
-  terminal. Run `Get-Command claude` and `claude --version`, then try Claude Code's
-  *Launch in terminal*. Repeat in a new cmd terminal with `where claude` and
+  terminal. Run `Get-Command claude` and `claude --version`, then run `claude`.
+  Repeat in a new cmd terminal with `where claude` and
   `claude --version`. Do not paste credentials into terminal commands.
+- Run **Sensible Defaults: Open Claude Terminal** from the Command Palette or the
+  terminal icon in the Sensible Defaults view title. It must launch the verified
+  executable even when Claude Code's own *Launch in terminal* button rejects PATH.
+  That upstream button is unchanged. Confirm a real Claude session, not just a
+  version response. No extra permission-bypass flags are supplied.
+- Check Configuration → settings permissions. A readable supported ACL must be
+  verified; unreadable/empty/malformed exports must remain warnings with diagnostics,
+  not an ineffective "Make private" action. Never send the settings file to support.
 - Existing CLI or `.cmd`/`.bat`/`.ps1` launchers must be left alone. A found-but-blocked
   executable must not trigger an override. Shell aliases and profile PATH changes
   can differ from the extension-host environment; terminal verification is required.
@@ -48,7 +55,7 @@ does not retroactively change TLS trust in the already-running VS Code extension
 host. Verify Claude and this extension's connection test separately.
 [Node documentation](https://nodejs.org/api/cli.html#node_extra_ca_certsfile)
 
-This candidate classifies TLS/proxy failures and alerts the user; it does not
+This release classifies TLS/proxy failures and alerts the user; it does not
 automatically identify Zscaler, extract/import CAs, rewrite trust settings, set
 `NODE_TLS_REJECT_UNAUTHORIZED=0`, or bypass application controls. Proxy environment
 variables and issuer names alone are not proof of interception. Automatic CA
@@ -64,6 +71,9 @@ layout fails visibly. The PATH directory is appended through the nonpersistent
 terminal environment collection, never written into a random writable directory.
 No executable files, shell profiles, registry entries or global PATH values are
 created or changed. No separate launcher needs quoting or lifecycle management.
+The direct launch command uses the verified absolute executable as the terminal
+process, not text sent to PowerShell/cmd. It re-resolves the registered extension
+on each click and reports blocked creation or nonzero exit without logging raw output.
 
 This uses an internal binary layout, not a public launcher contract. Anthropic's
 supported route for terminal use remains the standalone CLI installation.
@@ -82,8 +92,10 @@ supported route for terminal use remains the standalone CLI installation.
   policies, real credentials or the corporate TLS path work.
 - Automated DOM tests execute the actual webview script, including pending
   notifications, secure-save progress, retries and background refresh failures.
-  Windows path/command cases use injected dependencies on Linux; native Windows
-  terminal and corporate controls still require the checklist above.
+  Windows path/command cases use injected dependencies on Linux. Native Windows CI
+  additionally exercises real icacls and a bundled CLI version invocation through
+  a real VS Code terminal. Corporate controls and interactive sessions still require
+  the checklist above.
 
 For desktop testing, use isolated `--user-data-dir`, `--extensions-dir`, and
 `CLAUDE_CONFIG_DIR` locations. Never disable X11 authorization or OS encryption to

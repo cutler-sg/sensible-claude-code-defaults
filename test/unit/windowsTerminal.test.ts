@@ -43,6 +43,41 @@ function fixture() {
 }
 
 describe("Windows terminal repair", () => {
+  it("resolves the bundled binary for direct launch without changing any environment", async () => {
+    const f = fixture();
+    expect(await f.support.prepareLaunch()).toEqual({
+      kind: "ready",
+      file: BINARY,
+      version: "2.1.267",
+    });
+    expect(f.deps.collection.append).not.toHaveBeenCalled();
+    expect(f.deps.collection.delete).not.toHaveBeenCalled();
+  });
+
+  it("re-resolves an updated extension before every launch", async () => {
+    const f = fixture();
+    await f.support.prepareLaunch();
+    const root = ROOT.replace("2.1.267", "2.1.269");
+    const binary = path.join(root, "resources", "native-binary", "claude.exe");
+    f.files.delete(BINARY);
+    f.files.add(binary);
+    f.deps.extensionPath = () => root;
+    expect(await f.support.prepareLaunch()).toMatchObject({ kind: "ready", file: binary });
+    expect(f.deps.execFile).toHaveBeenLastCalledWith(binary, ["--version"], expect.anything());
+  });
+
+  it("does not return a launch path when it cannot verify the executable", async () => {
+    const f = fixture();
+    f.files.delete(BINARY);
+    expect(await f.support.prepareLaunch()).toEqual({ kind: "blocked", reason: "bundle" });
+  });
+
+  it("preserves a standalone executable during direct launch", async () => {
+    const f = fixture();
+    const file = "C:\\Windows\\System32\\claude.exe";
+    f.files.add(file);
+    expect(await f.support.prepareLaunch()).toEqual({ kind: "ready", file, version: "2.1.267" });
+  });
   it("offers the registered bundle without modifying PATH before consent", async () => {
     const f = fixture();
     expect(await f.support.refresh()).toEqual({ kind: "available", version: "2.1.267" });

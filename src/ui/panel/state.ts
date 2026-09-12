@@ -68,6 +68,7 @@ export interface Inputs {
  * a command it was never meant to.
  */
 export const ALLOWED_ACTIONS: ReadonlySet<string> = new Set([
+  "sensibleDefaults.openClaudeTerminal",
   "sensibleDefaults.enableWindowsTerminalCli",
   "sensibleDefaults.disableWindowsTerminalCli",
   "sensibleDefaults.testConnection",

@@ -31,7 +31,7 @@
  *
  * Detection fails *closed*. An `icacls` that runs but yields no descriptor we
  * can parse reports `unverifiable`, which the panel shows as a warning with a
- * repair button — never as a pass. Only `icacls` being absent entirely is
+ * diagnostic action — never as a pass. Only `icacls` being absent entirely is
  * `unsupported`, and that is the one state where there is genuinely nothing to
  * say.
  */
@@ -158,13 +158,32 @@ export async function ensureWindowsAcl(
     return { kind: "aclLoose", found: loose, reason: "could not determine the current user" };
   }
 
-  // Inheritance first: the broad grant is almost always inherited from the
-  // profile directory, and removing the ACE without breaking inheritance would
-  // let the next inheritance propagation put it straight back.
-  await run("icacls", [file, "/inheritance:r", "/grant", `*${sid}:F`, "/q", "/c"]);
+  // Secure this user's grant before removing inheritance, so a failed grant
+  // cannot leave them locked out. Then remove inherited and explicit broad grants.
+  const grant = await run("icacls", [file, "/grant", `*${sid}:F`, "/q"]);
+  if (grant.kind === "missing" || grant.code !== 0)
+    return {
+      kind: "aclLoose",
+      found: loose,
+      reason: "Windows could not grant access to the current user; inheritance was left unchanged",
+    };
+  const inheritance = await run("icacls", [file, "/inheritance:r", "/q"]);
+  if (inheritance.kind === "missing" || inheritance.code !== 0)
+    return { kind: "aclLoose", found: loose, reason: "Windows could not disable inherited access" };
   // …and then the explicit form, for the case where somebody granted it
   // directly on the file, which `/inheritance:r` leaves untouched.
-  await run("icacls", [file, "/remove", ...BROAD_PRINCIPALS.map((s) => `*${s}`), "/q", "/c"]);
+  const remove = await run("icacls", [
+    file,
+    "/remove:g",
+    ...BROAD_PRINCIPALS.map((s) => `*${s}`),
+    "/q",
+  ]);
+  if (remove.kind === "missing" || remove.code !== 0)
+    return {
+      kind: "aclLoose",
+      found: loose,
+      reason: "Windows could not remove broad access grants",
+    };
 
   const after = await readDacl(file, run, scratchDir);
   if (after.kind === "missing") {
@@ -194,20 +213,42 @@ async function readDacl(file: string, run: CommandRunner, scratchDir: string): P
     if (outcome.kind === "missing") {
       return { kind: "missing" };
     }
-
-    let raw: string;
-    try {
-      raw = decode(await fs.readFile(scratch));
-    } catch {
+    if (outcome.code !== 0) {
       return {
         kind: "unverifiable",
-        reason: `icacls exited ${outcome.code} without writing a security descriptor`,
+        reason: `icacls could not export the permissions (exit ${outcome.code}). Ask IT to check access to the settings file and the temporary directory.`,
       };
     }
 
+    let bytes: Buffer;
+    try {
+      bytes = await fs.readFile(scratch);
+    } catch {
+      return {
+        kind: "unverifiable",
+        reason:
+          "The icacls permissions export could not be read from the temporary directory. Ask IT to check temporary-file access.",
+      };
+    }
+
+    if (bytes.length === 0)
+      return {
+        kind: "unverifiable",
+        reason:
+          "icacls produced an empty permissions export. Ask IT to check access to the settings file.",
+      };
+    const raw = decode(bytes);
+    if (raw === undefined)
+      return {
+        kind: "unverifiable",
+        reason: `The icacls permissions export has an unsupported or malformed encoding (${bytes.length} bytes). Copy diagnostics for support.`,
+      };
     const dacl = parseDacl(raw);
     return dacl === undefined
-      ? { kind: "unverifiable", reason: "no access control list in the icacls output" }
+      ? {
+          kind: "unverifiable",
+          reason: `No complete access control list could be read from the icacls export (${bytes.length} bytes). Copy diagnostics for support.`,
+        }
       : { kind: "acl", principals: dacl };
   } finally {
     await fs.rm(scratch, { force: true }).catch(() => {});
@@ -224,8 +265,11 @@ async function readDacl(file: string, run: CommandRunner, scratchDir: string): P
  * ACE types we have never seen all fall through without matching.
  */
 export function parseDacl(raw: string): readonly string[] | undefined {
-  const match = DACL.exec(raw.replaceAll("\r", "\n"));
-  if (match === null) {
+  const match = raw
+    .split(/[\r\n]+/)
+    .map((line) => DACL.exec(line.trim()))
+    .find((hit) => hit !== null);
+  if (match === undefined) {
     return undefined;
   }
   const flags = match[1] ?? "";
@@ -241,7 +285,8 @@ export function parseDacl(raw: string): readonly string[] | undefined {
     const fields = (body ?? "").split(";");
     const type = (fields[0] ?? "").trim().toUpperCase();
     const principal = (fields[5] ?? "").trim();
-    if (principal === "" || NON_GRANT_ACE_TYPES.has(type)) {
+    if (fields.length !== 6 || !/^(?:S-1-(?:\d+-)*\d+|[A-Z]{2})$/.test(principal)) return undefined;
+    if (NON_GRANT_ACE_TYPES.has(type)) {
       continue;
     }
     principals.push(normalizeSid(principal));
@@ -250,14 +295,11 @@ export function parseDacl(raw: string): readonly string[] | undefined {
 }
 
 /**
- * `D:` then its flag letters then its ACEs. Anchored on the `D:` marker rather
- * than on line position, because `/save` interleaves file names with
- * descriptors and a descriptor may carry an owner and group ahead of the DACL.
- *
- * The ACE run stops at the first character that is not `(`, which is what keeps
- * a trailing `S:` SACL out of the DACL's entries.
+ * Match a complete descriptor line, not a D: drive path or a truncated ACE.
+ * Conditional/nested ACEs are deliberately unverifiable rather than partially parsed.
  */
-const DACL = /D:([A-Z_]*)((?:\([^()]*\))*)/;
+const DACL =
+  /^(?:O:(?:S-1-[\d-]+|[A-Z]{2}))?(?:G:(?:S-1-[\d-]+|[A-Z]{2}))?D:((?:P|AI|AR|NO_ACCESS_CONTROL)*)((?:\([^()]*\))*)(?:S:[A-Z]*(?:\([^()]*\))*)?$/;
 const ACE = /\(([^()]*)\)/g;
 
 /** An SDDL principal is a literal SID or a two-letter alias; both end as a SID. */
@@ -270,23 +312,21 @@ function normalizeSid(principal: string): string {
 }
 
 /**
- * `icacls /save` writes UTF-16LE with a BOM. Decoded by the bytes actually
- * present rather than by that promise: a host that wrote UTF-8 would otherwise
- * decode to mojibake, the DACL would not match, and a readable file would be
- * reported as unverifiable.
+ * Accept UTF-16 with or without a BOM and UTF-8. A BOM-less Unicode export
+ * contains NULs in the ASCII D: marker; never strip NULs or decode lossily.
  */
-function decode(bytes: Buffer): string {
-  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
-    return bytes.subarray(2).toString("utf16le");
+function decode(bytes: Buffer): string | undefined {
+  let encoding = "utf-8";
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = "utf-16le";
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = "utf-16be";
+  else if (bytes.indexOf(Buffer.from([0x44, 0, 0x3a, 0])) % 2 === 0) encoding = "utf-16le";
+  else if (bytes.indexOf(Buffer.from([0, 0x44, 0, 0x3a])) % 2 === 0) encoding = "utf-16be";
+  try {
+    const decoded = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+    return decoded.includes("\0") ? undefined : decoded;
+  } catch {
+    return undefined;
   }
-  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
-    // Big-endian: swap in place on a copy, then decode as LE.
-    return Buffer.from(bytes.subarray(2)).swap16().toString("utf16le");
-  }
-  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
-    return bytes.subarray(3).toString("utf8");
-  }
-  return bytes.toString("utf8");
 }
 
 /**
