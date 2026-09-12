@@ -754,9 +754,7 @@ describe("repairPermissions", () => {
   });
 
   it("reports that the file was already private when it is", async () => {
-    // One wording on every platform: "private to you" is the same promise
-    // whether a mode bit or a DACL keeps it, and naming the mechanism would
-    // only send the user looking for something their machine does not have.
+    // Windows checks specific broad groups, not every possible principal.
     await seed({});
     await run("sensibleDefaults.repairPermissions");
     reset();
@@ -764,7 +762,11 @@ describe("repairPermissions", () => {
 
     await run("sensibleDefaults.repairPermissions");
 
-    expect(messages()).toEqual(["Your settings file was already private to you."]);
+    expect(messages()).toEqual([
+      process.platform === "win32"
+        ? "Windows permissions were verified: no access grants to broad user groups were found."
+        : "Your settings file was already private to you.",
+    ]);
   });
 
   it("reports a repair once the file exists", async () => {
@@ -772,7 +774,11 @@ describe("repairPermissions", () => {
 
     await run("sensibleDefaults.repairPermissions");
 
-    expect(messages()).toEqual(["Your settings file is now readable only by you."]);
+    expect(messages()).toEqual([
+      process.platform === "win32"
+        ? "Windows permissions were repaired and verified: broad user groups no longer have access grants."
+        : "Your settings file is now readable only by you.",
+    ]);
   });
 
   it("warns rather than reassures when the ACL could not be read", async () => {

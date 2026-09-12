@@ -31,3 +31,9 @@ Windows ACL test on Linux). Lint, typecheck and VSIX packaging passed. Impeccabl
 hardening guidance informed actionable warnings; its detector reported no findings.
 The upstream Claude terminal button is not patched or overridden. The new explicit
 launcher is accessible in our view and never changes process/global PATH.
+
+PR: https://github.com/cutler-sg/sensible-claude-code-defaults/pull/30
+First Windows CI pass exercised all 44 ACL tests, including native icacls,
+successfully. Two older UI assertions still expected POSIX-only wording on
+Windows; corrected those exact expectations. No assertion was removed or skipped.
+Linux extension-host validation: 7 passed, the native Windows terminal case skipped.
