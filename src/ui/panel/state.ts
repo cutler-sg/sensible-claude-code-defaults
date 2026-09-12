@@ -10,13 +10,13 @@
  */
 
 import type { ConnectionResult, StoredToken } from "../../credential/types.js";
-import { LABELS } from "../../health/labels.js";
+import { LABELS, networkGuidance } from "../../health/labels.js";
 import { needsSetup } from "../../health/setup.js";
 import type { CheckGroup, CheckResult, HealthReport, Level } from "../../health/types.js";
 
 /** Where the user is in the two-step flow, held by the provider between renders. */
 export type SetupProgress =
-  | { step: "key"; shape: ShapeFeedback; problem?: string }
+  | { step: "key"; shape: ShapeFeedback; problem?: string; busy?: boolean }
   | { step: "testing" }
   | { step: "result"; result: ConnectionResult };
 
@@ -34,6 +34,7 @@ export interface Action {
 
 export type PanelState =
   | { kind: "loading" }
+  | { kind: "failed"; message: string }
   | { kind: "unconfigured" }
   | { kind: "setup"; progress: SetupProgress; consoleUrl: string }
   | {
@@ -67,6 +68,8 @@ export interface Inputs {
  * a command it was never meant to.
  */
 export const ALLOWED_ACTIONS: ReadonlySet<string> = new Set([
+  "sensibleDefaults.enableWindowsTerminalCli",
+  "sensibleDefaults.disableWindowsTerminalCli",
   "sensibleDefaults.testConnection",
   "sensibleDefaults.rotateToken",
   "sensibleDefaults.selectRegion",
@@ -201,10 +204,9 @@ export function resultView(result: ConnectionResult): ResultView {
     case "network":
       return {
         ok: false,
-        sentence: L.network,
-        hint: "Check your internet connection, then try again.",
+        ...networkGuidance(result.reason),
         primary: { label: "Test again", message: "setup.retest" },
-        secondary: undefined,
+        secondary: { command: "sensibleDefaults.copyDiagnostics", title: "Copy diagnostics" },
       };
     case "unknown":
       return {
@@ -217,7 +219,7 @@ export function resultView(result: ConnectionResult): ResultView {
   }
 }
 
-/** Webview → extension. The key crosses exactly once, in `key.submit`, and is never sent back. */
+/** Webview → extension. The key is validated/submitted and is never sent back. */
 export type WebviewInbound =
   | { type: "ready" }
   | { type: "setup.start" }
@@ -232,7 +234,9 @@ export type WebviewInbound =
   | { type: "action.run"; command: string };
 
 /** Extension → webview. */
-export type WebviewOutbound = { type: "state"; state: PanelState };
+export type WebviewOutbound =
+  | { type: "state"; state: PanelState }
+  | ({ type: "key.feedback" } & Extract<SetupProgress, { step: "key" }>);
 
 const INBOUND_TYPES: ReadonlySet<string> = new Set([
   "ready",

@@ -129,6 +129,26 @@ describe("a successful run", () => {
 });
 
 describe("a run that throws", () => {
+  it("sends safe failure state to the panel even after earlier success", async () => {
+    const onFailure = vi.fn();
+    const run = runner({ onFailure });
+    await run();
+    await mkdir(settingsPath(dir));
+    await run();
+    expect(onFailure).toHaveBeenCalledWith(HEALTH_FAILED_MESSAGE);
+  });
+
+  it("still alerts if the failure renderer itself throws", async () => {
+    await mkdir(settingsPath(dir));
+    await expect(
+      runner({
+        onFailure: () => {
+          throw new Error("renderer unavailable");
+        },
+      })(),
+    ).resolves.toBeUndefined();
+    expect(state.error).toHaveLength(1);
+  });
   /** `settings.json` as a directory: `readSettings` propagates EISDIR. */
   async function breakSettings(): Promise<void> {
     await mkdir(settingsPath(dir), { recursive: true });
@@ -139,7 +159,7 @@ describe("a run that throws", () => {
 
     await expect(runner()()).resolves.toBeUndefined();
 
-    expect(logged.some((line) => line.startsWith("error Health check failed:"))).toBe(true);
+    expect(logged).toContain(`error ${HEALTH_FAILED_MESSAGE}`);
     expect(messages()).toEqual([HEALTH_FAILED_MESSAGE]);
   });
 
@@ -161,7 +181,8 @@ describe("a run that throws", () => {
       runner({ detect: () => Promise.reject({ secret: "value" }) })(),
     ).resolves.toBeUndefined();
 
-    expect(logged).toContain("error Health check failed: an unexpected failure");
+    expect(logged).toContain(`error ${HEALTH_FAILED_MESSAGE}`);
+    expect(logged.join("\n")).not.toContain("value");
   });
 
   it("presents nothing when the run failed", async () => {

@@ -265,13 +265,13 @@ async function atomicReplace(
   acl?: WindowsAclDeps,
 ): Promise<void> {
   const dir = path.dirname(target);
-  await fs.mkdir(dir, { recursive: true });
 
   // A UUID, not pid+ms: two windows of the same extension host share a pid
   // clock, and a collision made one writer delete the other's temp (F8).
   const tmp = path.join(dir, `.${path.basename(target)}.${randomUUID()}.tmp`);
   let created = false;
   try {
+    await fs.mkdir(dir, { recursive: true });
     // `wx` fails rather than clobbering, so two concurrent writers cannot
     // interleave into one temp file.
     const handle = await fs.open(tmp, "wx", MODE_0600);

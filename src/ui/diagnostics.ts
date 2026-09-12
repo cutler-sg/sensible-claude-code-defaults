@@ -59,7 +59,7 @@ function claudeCodeVersion(): string | undefined {
 }
 
 /**
- * A file we cannot even stat reads as absent rather than throwing. The report
+ * A file we cannot access reads as unreadable rather than throwing. The report
  * is what a user reaches for when something is broken, so it must be
  * obtainable in the states where reading the file is the broken thing —
  * `config.parses` and `config.exists` are the checks that say which.
@@ -69,7 +69,7 @@ async function readSettingsForReport(file: string): Promise<SettingsForReport> {
   try {
     read = await readSettings(file);
   } catch {
-    return { kind: "absent" };
+    return { kind: "unreadable" };
   }
   switch (read.kind) {
     case "ok":

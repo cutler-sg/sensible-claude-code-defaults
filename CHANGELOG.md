@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Key validation and background checks no longer replace the input field. Continue and Enter preserve the pasted key through save failures.
+- Sidebar setup no longer waits for dismissal of a success notification before testing the connection. Secure saves show progress and prevent duplicate submissions.
+- File-access, storage, keychain and watcher failures have actionable recovery messages. Failed health checks replace the loading screen; diagnostics distinguish inaccessible settings from absent settings.
+- Connection tests refuse malformed or unreadable settings instead of testing a silently substituted region. Certificate and proxy-authentication failures have distinct guidance.
+
+### Added
+
+- Opt-in Windows integrated-terminal repair using the registered Claude Code extension's verified binary. It preserves existing commands, refreshes after extension changes, and has a disable command. No launcher files or system PATH changes.
+
 ## [0.2.0] - 2026-09-11
 
 ### Added

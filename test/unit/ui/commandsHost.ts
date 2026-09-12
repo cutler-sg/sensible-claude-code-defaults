@@ -154,11 +154,20 @@ export const workspace = {
     return { uri };
   },
   getConfiguration: () => ({
+    update: async (key: string, value: unknown) => {
+      state.configuration.set(key, value);
+    },
     get: <T>(key: string, fallback: T): T =>
       state.configuration.has(key) ? (state.configuration.get(key) as T) : fallback,
   }),
   workspaceFolders: undefined,
 };
+
+export enum ConfigurationTarget {
+  Global = 1,
+  Workspace = 2,
+  WorkspaceFolder = 3,
+}
 
 export const commands = {
   registerCommand: (id: string, handler: (...args: unknown[]) => Promise<void>) => {

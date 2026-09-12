@@ -8,10 +8,9 @@
  * Everything else — the report, the stored key's timestamp, the last test —
  * comes from the host on every render.
  *
- * The token crosses `postMessage` once, in `key.submit`, and goes straight to
- * `saveToken`. It is never put in state, never echoed to the page, never
- * logged. `key.changed` carries the value too, for the live shape check, and
- * is handled the same way: read, judged, discarded.
+ * The token reaches the host for validation and submission. It is never put
+ * in state, echoed to the page, or logged. Feedback updates preserve the
+ * input element; replacing webview.html would discard the user's key.
  */
 
 import { randomBytes } from "node:crypto";
@@ -21,6 +20,7 @@ import { normalizeToken, SHAPE_MESSAGES, validateTokenShape } from "../../creden
 import type { HealthReport } from "../../health/types.js";
 import { desiredFromManifest } from "../../manifest/types.js";
 import type { Logger } from "../../util/log.js";
+import { failureMessage, reportFailure } from "../failures.js";
 import type { FlowDeps } from "../flows.js";
 import { runConnectionTest, saveToken } from "../flows.js";
 import { render } from "./html.js";
@@ -32,6 +32,7 @@ import {
   type SetupProgress,
   type ShapeFeedback,
   type WebviewInbound,
+  type WebviewOutbound,
 } from "./state.js";
 
 export const PANEL_VIEW_ID = "sensibleDefaults.health";
@@ -56,26 +57,52 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private progress: SetupProgress | undefined;
   private detailsOpen = false;
   private inFlight = false;
+  private showingKey = false;
+  private failure: string | undefined;
 
   constructor(private readonly deps: PanelDeps) {}
 
+  healthFailed(message: string): void {
+    if (this.progress?.step === "key") {
+      this.progress = { ...this.progress, problem: message };
+    } else {
+      this.failure = message;
+    }
+    this.refresh();
+  }
+
+  healthSucceeded(): void {
+    this.failure = undefined;
+    this.refresh();
+  }
+
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
+    this.showingKey = false;
+    if (this.progress?.step === "key") {
+      this.progress = { ...this.progress, shape: { kind: "empty" } };
+    }
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     view.webview.onDidReceiveMessage((raw: unknown) => void this.receive(raw));
     view.onDidDispose(() => {
       if (this.view === view) this.view = undefined;
     });
-    this.paint();
+    this.refresh();
   }
 
   /** Called by the host after every health run. */
   refresh(): void {
-    this.paint();
+    void this.paint().catch((error: unknown) =>
+      reportFailure(
+        this.deps.log,
+        failureMessage(error, "Couldn't update the setup panel. Try opening it again."),
+      ),
+    );
   }
 
   /** The state the page is showing, for tests and for the details view's context. */
   current(): PanelState {
+    if (this.failure !== undefined) return { kind: "failed", message: this.failure };
     return derive(this.inputs());
   }
 
@@ -109,7 +136,18 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       // the report says.
       this.storedStamp = undefined;
     }
-    const state = derive(this.inputs());
+    if (this.view !== view) return;
+    const state = this.current();
+    const keyProgress =
+      state.kind === "setup" && state.progress.step === "key" ? state.progress : undefined;
+    if (keyProgress !== undefined && this.showingKey) {
+      await view.webview.postMessage({
+        type: "key.feedback",
+        ...keyProgress,
+      } satisfies WebviewOutbound);
+      return;
+    }
+    this.showingKey = keyProgress !== undefined;
     view.webview.html = render(state, {
       nonce: randomBytes(16).toString("base64"),
       cspSource: view.webview.cspSource,
@@ -123,7 +161,17 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       this.deps.log.warn("The panel sent a message the extension does not accept; ignored.");
       return;
     }
-    await this.handle(message);
+    try {
+      if (message.type !== "ready") this.failure = undefined;
+      await this.handle(message);
+    } catch (error) {
+      this.failure = failureMessage(
+        error,
+        "That action couldn't finish. Check your configuration and try again.",
+      );
+      this.refresh();
+      await reportFailure(this.deps.log, this.failure);
+    }
   }
 
   private async handle(message: WebviewInbound): Promise<void> {
@@ -132,6 +180,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         return;
       case "setup.start":
       case "setup.restart":
+        this.showingKey = false;
         this.progress = { step: "key", shape: { kind: "empty" } };
         return this.paint();
       case "setup.check":
@@ -140,7 +189,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         await this.deps.execute("sensibleDefaults.adoptToken");
         return;
       case "key.changed":
-        if (this.progress?.step !== "key") return;
+        if (this.progress?.step !== "key" || this.inFlight) return;
         this.progress = { step: "key", shape: judge(message.value) };
         return this.paint();
       case "key.submit":
@@ -177,14 +226,21 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     }
     this.inFlight = true;
     try {
+      this.progress = { step: "key", shape: judge(value), busy: true };
+      await this.paint();
       // The eight non-secret keys first (plan D-1: the region is written
       // silently here, from the manifest, never asked), then the key. The
       // palette's `applyDefaults` previews the change list; here the user has
       // just read "Where does it go?" and clicked Continue, and a JSON diff is
       // the thing this audience cannot read. Hard rule 3 still holds: `commit`
       // refuses to overwrite a managed value that drifted from the snapshot.
-      await this.applyDefaultsSilently();
-      const mirrored = await saveToken(this.deps.flows, value);
+      const problem = await this.applyDefaultsSilently();
+      if (problem !== undefined) {
+        this.progress = { step: "key", shape: judge(value), problem };
+        return this.paint();
+      }
+      // Notification promises settle on dismissal, not when the toast appears.
+      const mirrored = await saveToken(this.deps.flows, value, false);
       if (!mirrored) {
         this.progress = {
           step: "key",
@@ -196,11 +252,12 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
       await this.test();
     } catch (error) {
-      this.deps.log.error(`Saving the key from the panel failed: ${messageOf(error)}`);
+      const problem = failureMessage(error, "Something went wrong saving your key. Try again.");
+      this.deps.log.error(`Saving the key from the panel failed: ${problem}`);
       this.progress = {
         step: "key",
         shape: judge(value),
-        problem: "Something went wrong saving your key. Try again.",
+        problem,
       };
       return this.paint();
     } finally {
@@ -208,11 +265,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async applyDefaultsSilently(): Promise<void> {
+  private async applyDefaultsSilently(): Promise<string | undefined> {
     const flows = this.deps.flows;
     const manifest = flows.manifest();
     const planned = await plan(flows.env, desiredFromManifest(manifest));
-    if (planned.kind !== "ready" || planned.noop) return;
+    if (planned.kind !== "ready") {
+      return "Your settings file is damaged. Use Check Configuration to repair it before continuing setup.";
+    }
+    if (planned.noop) return;
     flows.markWrite();
     const result = await commit(flows.env, flows.session, planned, {
       manifestRevision: manifest.revision,
@@ -222,6 +282,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         ? `Panel setup wrote ${result.changes.length} recommended setting(s).`
         : `Panel setup wrote nothing (${result.reason ?? "unknown"}).`,
     );
+    if (result.reason === "stale") {
+      return "Your settings changed while setup was saving them. Try again.";
+    }
   }
 
   private async test(): Promise<void> {
@@ -245,8 +308,4 @@ export function judge(raw: string): ShapeFeedback {
   const verdict = validateTokenShape(value);
   if (verdict === undefined) return { kind: "ok" };
   return { kind: verdict.severity, message: SHAPE_MESSAGES[verdict.problem] };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : "an unexpected failure";
 }

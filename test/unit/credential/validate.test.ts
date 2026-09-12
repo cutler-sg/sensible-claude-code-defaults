@@ -488,6 +488,11 @@ describe("testConnection transport failures", () => {
     expect(result).toEqual({ kind: "network", reason: "tls" });
   });
 
+  it("an unverifiable leaf signature is a TLS failure", async () => {
+    const { result } = await run([nodeError("fetch failed", "UNABLE_TO_VERIFY_LEAF_SIGNATURE")]);
+    expect(result).toEqual({ kind: "network", reason: "tls" });
+  });
+
   it("an expired certificate is a TLS failure", async () => {
     const { result } = await run([nodeError("fetch failed", "CERT_HAS_EXPIRED")]);
     expect(result).toEqual({ kind: "network", reason: "tls" });

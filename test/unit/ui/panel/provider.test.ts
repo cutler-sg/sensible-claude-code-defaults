@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createSession } from "../../../../src/config/apply.js";
 import { settingsPath } from "../../../../src/config/paths.js";
 import { MemorySnapshotStore } from "../../../../src/config/snapshot.js";
@@ -10,6 +10,7 @@ import { type CheckResult, countLevels, type HealthReport } from "../../../../sr
 import { BUNDLED_MANIFEST } from "../../../../src/manifest/bundled.js";
 import type { FlowDeps } from "../../../../src/ui/flows.js";
 import { judge, PanelProvider } from "../../../../src/ui/panel/provider.js";
+import { window as hostWindow } from "../commandsHost.js";
 import { bedrockOk, type FakeCredentialDeps, fakeCredentialDeps } from "../credentialDeps.js";
 
 vi.mock("vscode", async () => await import("../commandsHost.js"));
@@ -43,6 +44,11 @@ function fakeView() {
       onDidReceiveMessage(handler: (raw: unknown) => void) {
         this.handler = handler;
         return { dispose() {} };
+      },
+      messages: [] as unknown[],
+      async postMessage(message: unknown) {
+        this.messages.push(message);
+        return true;
       },
     },
     onDidDispose() {
@@ -124,6 +130,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await chmod(dir, 0o700);
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -136,6 +143,261 @@ async function mount(p: PanelProvider) {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/** Assigning webview.html replaces the document, just as it does in VS Code. */
+async function mountPage(p: PanelProvider) {
+  const { Window } = await import("happy-dom");
+  const view = fakeView();
+  let page: InstanceType<typeof Window>;
+  let source = "";
+  Object.defineProperty(view.webview, "html", {
+    get: () => source,
+    set: (html: string) => {
+      source = html;
+      page?.close();
+      // Only our own renderer's script executes here, never external content.
+      page = new Window({
+        settings: {
+          enableJavaScriptEvaluation: true,
+          suppressInsecureJavaScriptEnvironmentWarning: true,
+        },
+      });
+      Object.defineProperty(page, "acquireVsCodeApi", {
+        value: () => ({ postMessage: (message: unknown) => view.webview.handler?.(message) }),
+      });
+      page.document.write(html);
+    },
+  });
+  view.webview.postMessage = async (message: unknown) => {
+    view.webview.messages.push(message);
+    page.dispatchEvent(new page.MessageEvent("message", { data: message }));
+    return true;
+  };
+  p.resolveWebviewView(view as never);
+  await tick();
+  onTestFinished(() => page.close());
+  return {
+    view,
+    page: () => page,
+    input() {
+      const input = page.document.querySelector("input");
+      if (input === null) throw new Error("The key input is missing");
+      return input;
+    },
+    button(selector: string) {
+      const button = page.document.querySelector(selector);
+      if (!(button instanceof page.HTMLButtonElement))
+        throw new Error(`Missing button: ${selector}`);
+      return button;
+    },
+  };
+}
+
+describe("PanelProvider: live webview lifecycle", () => {
+  it("advances without waiting for a success notification to be dismissed", async () => {
+    const notification = vi
+      .spyOn(hostWindow, "showInformationMessage")
+      .mockImplementation(() => new Promise(() => {}));
+    onTestFinished(() => notification.mockRestore());
+    const p = provider();
+    const ui = await mountPage(p);
+    await p.receive({ type: "setup.start" });
+    ui.input().value = TOKEN;
+    ui.input().dispatchEvent(new (ui.page().Event)("input"));
+    await tick();
+    ui.button("#continue").click();
+    await vi.waitFor(() =>
+      expect(p.current()).toMatchObject({
+        kind: "setup",
+        progress: { step: "result", result: { kind: "ok" } },
+      }),
+    );
+    expect(notification).not.toHaveBeenCalled();
+  });
+
+  it("shows secure-save progress and prevents duplicate submissions while the keychain waits", async () => {
+    let reject!: (error: Error) => void;
+    const save = vi.spyOn(credential.store, "set").mockImplementation(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    const p = provider();
+    const ui = await mountPage(p);
+    await p.receive({ type: "setup.start" });
+    const pending = p.receive({ type: "key.submit", value: TOKEN });
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(ui.button("#continue").disabled).toBe(true);
+    expect(ui.page().document.querySelector("#key-saving")?.hasAttribute("hidden")).toBe(false);
+    await p.receive({ type: "key.submit", value: TOKEN });
+    expect(save).toHaveBeenCalledTimes(1);
+    reject(new Error("keychain unavailable"));
+    await pending;
+    expect(ui.button("#continue").disabled).toBe(false);
+    expect(ui.page().document.body.textContent).toContain("couldn't be saved securely");
+  });
+  it("preserves input when a background health check fails", async () => {
+    report = UNCONFIGURED;
+    const p = provider();
+    const ui = await mountPage(p);
+    ui.button('[data-msg="setup.start"]').click();
+    await tick();
+    const key = ui.input();
+    key.value = TOKEN;
+    key.dispatchEvent(new (ui.page().Event)("input"));
+    await tick();
+    p.healthFailed("Settings access denied. Ask IT to check access.");
+    await tick();
+    expect(ui.input()).toBe(key);
+    expect(key.value).toBe(TOKEN);
+    expect(ui.page().document.querySelector("#key-problem")?.textContent).toContain(
+      "access denied",
+    );
+  });
+
+  it("replaces an initial failed health check with actionable recovery and can recover", async () => {
+    const p = provider();
+    const ui = await mountPage(p);
+    p.healthFailed("Settings access denied.");
+    await tick();
+    expect(ui.page().document.body.textContent).toContain("Settings access denied.");
+    expect(ui.button('[data-action="sensibleDefaults.runHealthCheck"]')).toBeDefined();
+    report = UNCONFIGURED;
+    p.healthSucceeded();
+    await tick();
+    expect(ui.button('[data-msg="setup.start"]')).toBeDefined();
+  });
+  it.each(["click", "Enter"])(
+    "preserves the key through validation/refresh and submits with %s",
+    async (submit) => {
+      report = UNCONFIGURED;
+      const p = provider();
+      const ui = await mountPage(p);
+      ui.button('[data-msg="setup.start"]').click();
+      await tick();
+      const page = ui.page();
+      const key = ui.input();
+      key.value = TOKEN;
+      key.dispatchEvent(new page.Event("input"));
+      await tick();
+      expect(ui.input().value).toBe(TOKEN);
+      expect(page.document.querySelector("#shape")?.textContent).toContain(
+        "That looks like a Bedrock key",
+      );
+      p.refresh();
+      await tick();
+      expect(ui.page()).toBe(page);
+      expect(page.document.activeElement).toBe(key);
+      expect(key.value).toBe(TOKEN);
+      if (submit === "click") ui.button("#continue").click();
+      else key.dispatchEvent(new page.KeyboardEvent("keydown", { key: "Enter" }));
+      await vi.waitFor(() =>
+        expect(ui.page().document.body.textContent).toContain("Your Bedrock API key works"),
+      );
+      expect(credential.requests).toHaveLength(1);
+      expect((await credential.store.get())?.token).toBe(TOKEN);
+      expect(JSON.stringify(ui.view.webview.messages)).not.toContain(TOKEN);
+      expect(ui.view.webview.html).not.toContain(TOKEN);
+    },
+  );
+
+  it("keeps invalid input editable and updates feedback while typing", async () => {
+    const p = provider();
+    const ui = await mountPage(p);
+    await p.receive({ type: "setup.start" });
+    const page = ui.page();
+    const key = ui.input();
+    for (const value of ["AKIAIOSFODNN7EXAMPLE", "ABSK", TOKEN, ""]) {
+      key.value = value;
+      key.dispatchEvent(new page.Event("input"));
+      await tick();
+      expect(ui.page()).toBe(page);
+      expect(key.value).toBe(value);
+      expect(ui.button("#continue").disabled).toBe(value === "" || value.startsWith("AKIA"));
+    }
+    expect(credential.requests).toHaveLength(0);
+  });
+
+  it("preserves the key and shows a recoverable save failure", async () => {
+    vi.spyOn(credential.store, "set").mockRejectedValue(new Error("test keychain unavailable"));
+    const p = provider();
+    const ui = await mountPage(p);
+    await p.receive({ type: "setup.start" });
+    const page = ui.page();
+    const key = ui.input();
+    key.value = TOKEN;
+    key.dispatchEvent(new page.Event("input"));
+    await tick();
+    ui.button("#continue").click();
+    await vi.waitFor(() =>
+      expect(ui.page().document.body.textContent).toContain("couldn't be saved securely"),
+    );
+    expect(ui.page()).toBe(page);
+    expect(key.value).toBe(TOKEN);
+    expect(ui.button("#continue").disabled).toBe(false);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "reports an unwritable settings directory without saving or testing the key",
+    async () => {
+      const p = provider();
+      const ui = await mountPage(p);
+      await p.receive({ type: "setup.start" });
+      const key = ui.input();
+      key.value = TOKEN;
+      key.dispatchEvent(new (ui.page().Event)("input"));
+      await tick();
+      await chmod(dir, 0o500);
+      ui.button("#continue").click();
+      await vi.waitFor(() =>
+        expect(ui.page().document.body.textContent).toContain("Your device blocked access"),
+      );
+      expect(ui.input()).toBe(key);
+      expect(key.value).toBe(TOKEN);
+      expect(await credential.store.get()).toBeUndefined();
+      expect(credential.requests).toHaveLength(0);
+    },
+  );
+
+  it("reports a failed snapshot save without proceeding with credential setup", async () => {
+    vi.spyOn(env.snapshotStore, "save").mockRejectedValue(
+      Object.assign(new Error("state write blocked"), { code: "EACCES" }),
+    );
+    const p = provider();
+    const ui = await mountPage(p);
+    await p.receive({ type: "setup.start" });
+    await p.receive({ type: "key.submit", value: TOKEN });
+    expect(ui.page().document.body.textContent).toContain("Your device blocked access");
+    expect(await credential.store.get()).toBeUndefined();
+    expect(credential.requests).toHaveLength(0);
+  });
+
+  it("refuses setup over malformed settings instead of saving a key anyway", async () => {
+    await writeFile(settingsPath(dir), "broken JSON");
+    const p = provider();
+    const ui = await mountPage(p);
+    await p.receive({ type: "setup.start" });
+    await p.receive({ type: "key.submit", value: TOKEN });
+    expect(ui.page().document.body.textContent).toContain("settings file is damaged");
+    expect(await readFile(settingsPath(dir), "utf8")).toBe("broken JSON");
+    expect(await credential.store.get()).toBeUndefined();
+    expect(credential.requests).toHaveLength(0);
+  });
+
+  it("contains a failed retest and replaces the spinner with a recovery action", async () => {
+    const p = provider();
+    const ui = await mountPage(p);
+    vi.spyOn(credential.store, "get").mockRejectedValue(new Error("keychain unavailable"));
+    await expect(p.receive({ type: "setup.retest" })).resolves.toBeUndefined();
+    await tick();
+    expect(ui.page().document.body.textContent).toContain("That action couldn't finish");
+    expect(ui.button('[data-action="sensibleDefaults.runHealthCheck"]').textContent).toBe(
+      "Check configuration",
+    );
+    expect(ui.page().document.querySelector(".spinner")).toBeNull();
+  });
+});
 
 describe("PanelProvider: resolve and paint", () => {
   it("locks the webview down: scripts on, no local resources, CSP nonce'd", async () => {
@@ -190,12 +452,18 @@ describe("PanelProvider: the two-step setup", () => {
     const p = provider();
     const view = await mount(p);
     await p.receive({ type: "setup.start" });
+    const html = view.webview.html;
     await p.receive({ type: "key.changed", value: "AKIAIOSFODNN7EXAMPLE" });
-    expect(view.webview.html).toContain("looks like an AWS access key ID");
-    expect(view.webview.html).toMatch(/id="continue"[^>]*disabled/);
+    expect(view.webview.messages.at(-1)).toMatchObject({
+      type: "key.feedback",
+      shape: { kind: "error", message: expect.stringContaining("looks like an AWS access key ID") },
+    });
     await p.receive({ type: "key.changed", value: TOKEN });
-    expect(view.webview.html).toContain("That looks like a Bedrock key");
-    expect(view.webview.html).not.toMatch(/id="continue"[^>]*disabled/);
+    expect(view.webview.messages.at(-1)).toMatchObject({
+      type: "key.feedback",
+      shape: { kind: "ok" },
+    });
+    expect(view.webview.html).toBe(html);
   });
 
   it("submit writes the defaults and the key, tests it, and lands on Done", async () => {

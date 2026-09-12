@@ -63,6 +63,45 @@ const CLAUDE_DIR = "/home/u/.claude";
 const SETTINGS = "/home/u/.claude/settings.json";
 
 describe("watchSettings", () => {
+  it("reports inaccessible directories once without failing activation", () => {
+    const onError = vi.fn();
+    const watcher = watchSettings(CLAUDE_DIR, SETTINGS, vi.fn(), {
+      watch: () => {
+        throw Object.assign(new Error("denied"), { code: "EACCES" });
+      },
+      onError,
+    });
+    watcher.rearm();
+    expect(onError).toHaveBeenCalledTimes(1);
+    watcher.dispose();
+  });
+
+  it("handles asynchronous watcher errors and allows a later rearm", () => {
+    let error!: (error: Error) => void;
+    const close = vi.fn();
+    const watch = vi.fn(() => ({
+      close,
+      on: (_event: "error", listener: (e: Error) => void) => {
+        error = listener;
+      },
+    }));
+    const onError = vi.fn();
+    const watcher = watchSettings(CLAUDE_DIR, SETTINGS, vi.fn(), { watch, onError });
+    error(new Error("device unavailable"));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    watcher.rearm();
+    expect(watch).toHaveBeenCalledTimes(2);
+    watcher.dispose();
+  });
+
+  it("does not alert merely because a fresh settings directory is absent", () => {
+    const fake = fakeWatch([CLAUDE_DIR]);
+    const onError = vi.fn();
+    const watcher = watchSettings(CLAUDE_DIR, SETTINGS, vi.fn(), { watch: fake.watch, onError });
+    expect(onError).not.toHaveBeenCalled();
+    watcher.dispose();
+  });
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 

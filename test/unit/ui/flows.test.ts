@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -73,6 +73,21 @@ beforeEach(async () => {
   writes = 0;
   reset();
 });
+
+it.each(["malformed", "directory"])(
+  "does not test a fallback region when settings are %s",
+  async (kind) => {
+    if (kind === "malformed") await writeFile(settingsPath(dir), "{not-json");
+    else await mkdir(settingsPath(dir));
+    const fetch = vi.fn();
+    const d = deps();
+    d.credential.fetch = fetch;
+    await expect(
+      flows.runConnectionTest(d, { token: TOKEN, setAt: NOW.toISOString() }),
+    ).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);
 
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -769,14 +784,12 @@ describe("testConnection", () => {
     );
   });
 
-  it("uses the recommended region when the settings file cannot be read", async () => {
+  it("refuses to claim a successful connection for malformed settings", async () => {
     await writeFile(settingsPath(dir), "{,}", "utf8");
 
-    await flows.testConnection(deps());
-
-    expect(credential.requests[0]?.url).toContain(
-      `bedrock-runtime.${BUNDLED_MANIFEST.defaults.env.AWS_REGION}.amazonaws.com`,
-    );
+    await expect(flows.testConnection(deps())).rejects.toThrow("cannot be parsed");
+    expect(credential.requests).toHaveLength(0);
+    expect(credential.recorded).toHaveLength(0);
   });
 
   it("records the result for cred.valid and reruns the checks", async () => {
@@ -799,7 +812,7 @@ describe("testConnection", () => {
 
   it.each([
     ["wrong region", 404, "{}", /region/],
-    ["a proxy in the way", 407, "", /Couldn't reach Amazon/],
+    ["a proxy in the way", 407, "", /proxy requires sign-in/],
     ["an answer we don't understand", 500, "{}", /didn't understand/],
   ])("reports %s", async (_name, status, body, expected) => {
     respondWith(status, body);

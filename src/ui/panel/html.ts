@@ -7,7 +7,7 @@
  *   through `console.open`, which the extension resolves with `openExternal`.
  * - The token never appears here. The reducer never has it; the only place the
  *   value exists on the page is the input the user typed it into, and it leaves
- *   by `postMessage` once.
+ *   by `postMessage` for validation and submission.
  *
  * Every colour is a VS Code theme variable, so the page matches light, dark and
  * high-contrast with no palette of its own.
@@ -45,6 +45,10 @@ function body(state: PanelState): string {
   switch (state.kind) {
     case "loading":
       return `<p class="muted">Checking your Claude Code configuration…</p>`;
+    case "failed":
+      return `<p class="feedback error" role="alert">${esc(state.message)}</p>
+<button class="primary" data-action="sensibleDefaults.runHealthCheck">Check configuration</button>
+<button class="link" data-action="sensibleDefaults.copyDiagnostics">Copy diagnostics</button>`;
     case "unconfigured":
       return unconfigured();
     case "setup":
@@ -90,15 +94,17 @@ ${secondary}`;
 
 function stepKey(progress: Extract<SetupProgress, { step: "key" }>, consoleUrl: string): string {
   const feedback = shapeLine(progress.shape);
-  const canContinue = progress.shape.kind === "ok" || progress.shape.kind === "warning";
+  const canContinue =
+    !progress.busy && (progress.shape.kind === "ok" || progress.shape.kind === "warning");
   return `${stepHeader(1, "Your Bedrock API key")}
 <label for="key">Paste your key below.</label>
 <div class="field">
-  <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="Bedrock API key" aria-describedby="shape">
+  <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="Bedrock API key" aria-describedby="shape" ${progress.busy ? "disabled" : ""}>
   <button class="icon" id="reveal" type="button" aria-label="Show or hide the key" title="Show or hide">👁</button>
 </div>
-<p id="shape" class="feedback ${progress.shape.kind}">${feedback}</p>
-${progress.problem ? `<p class="feedback error">${esc(progress.problem)}</p>` : ""}
+<p id="shape" class="feedback ${progress.shape.kind}" aria-live="polite">${feedback}</p>
+<p id="key-problem" class="feedback error" role="alert" ${progress.problem ? "" : "hidden"}>${esc(progress.problem ?? "")}</p>
+<p id="key-saving" role="status" ${progress.busy ? "" : "hidden"}>Saving securely… Check for a system keychain prompt.</p>
 <details id="create">
   <summary>Don't have one? Create a key</summary>
   <ol>
@@ -114,7 +120,7 @@ ${progress.problem ? `<p class="feedback error">${esc(progress.problem)}</p>` : 
   <summary>Where does it go?</summary>
   <p>Your computer's keychain, and <code>~/.claude/settings.json</code> so Claude Code can read it. It is never sent anywhere except Amazon.</p>
 </details>
-<button class="primary" id="continue" data-msg="key.submit" ${canContinue ? "" : "disabled"}>Continue</button>`;
+<button class="primary" id="continue" data-msg="key.submit" ${canContinue ? "" : "disabled"}>${progress.busy ? "Saving…" : "Continue"}</button>`;
 }
 
 function shapeLine(shape: Extract<SetupProgress, { step: "key" }>["shape"]): string {
@@ -220,14 +226,31 @@ code { font-family: var(--vscode-editor-font-family); background: var(--vscode-t
 
 /**
  * Wiring only. Every click posts a message; the extension decides what happens
- * and sends back a whole new state. The page keeps no state of its own except
- * the text in the key field, which is never sent anywhere but `key.submit`.
+ * and sends back a new screen or feedback for the existing key field. The
+ * key stays in that field until setup advances; it is never persisted by the page.
  */
 const SCRIPT = `
 (function () {
   var vscode = acquireVsCodeApi();
   var root = document.getElementById('root');
   function post(m) { vscode.postMessage(m); }
+
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.type !== 'key.feedback') return;
+    var feedback = document.getElementById('shape');
+    var button = document.getElementById('continue');
+    var problem = document.getElementById('key-problem');
+    if (!feedback || !button || !problem) return;
+    feedback.className = 'feedback ' + m.shape.kind;
+    feedback.textContent = m.shape.kind === 'ok' ? '✓ That looks like a Bedrock key' : (m.shape.message || '');
+    button.disabled = !!m.busy || (m.shape.kind !== 'ok' && m.shape.kind !== 'warning');
+    button.textContent = m.busy ? 'Saving…' : 'Continue';
+    document.getElementById('key').disabled = !!m.busy;
+    document.getElementById('key-saving').hidden = !m.busy;
+    problem.textContent = m.problem || '';
+    problem.hidden = !m.problem;
+  });
 
   root.addEventListener('click', function (e) {
     var t = e.target.closest('button');

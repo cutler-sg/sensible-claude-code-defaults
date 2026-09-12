@@ -11,6 +11,7 @@ import type { ScanOutcome } from "../credential/leakScan.js";
 import type { ConnectionResult, TokenPresence } from "../credential/types.js";
 import type { ManifestSource } from "../manifest/resolve.js";
 import type { CredentialPolicy, Manifest } from "../manifest/types.js";
+import type { WindowsTerminalStatus } from "../terminal/windows.js";
 
 export type CheckGroup = "Installation" | "Configuration" | "Credential" | "Plugins";
 
@@ -85,6 +86,7 @@ export interface DriftChild {
 }
 
 export interface ClaudeCodeDetection {
+  windowsTerminal?: WindowsTerminalStatus;
   /** `vscode.extensions.getExtension('anthropic.claude-code')` — FR-1.4 signal 1. */
   extension: { installed: false } | { installed: true; version: string };
   /** `claude --version` on PATH — signal 2. Failure here is informational only. */

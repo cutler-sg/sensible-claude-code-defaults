@@ -3,7 +3,7 @@
   "displayName": "Sensible Claude Code Defaults",
   "description": "Set up and health-check Claude Code on AWS Bedrock: sensible defaults, guided Bedrock API key setup, and a panel that says what is wrong. An independent tool, not affiliated with Anthropic, PBC.",
   "publisher": "cutler-sg",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -80,6 +80,16 @@
       ]
     },
     "commands": [
+      {
+        "command": "sensibleDefaults.enableWindowsTerminalCli",
+        "title": "Enable Claude in VS Code Terminals",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.disableWindowsTerminalCli",
+        "title": "Disable Claude Terminal Repair",
+        "category": "Sensible Defaults"
+      },
       {
         "command": "sensibleDefaults.runHealthCheck",
         "title": "Check Configuration",
@@ -178,6 +188,12 @@
     "configuration": {
       "title": "Sensible Defaults",
       "properties": {
+        "sensibleDefaults.enableWindowsTerminalCli": {
+          "type": "boolean",
+          "scope": "application",
+          "default": false,
+          "description": "On Windows, add the verified Claude Code extension binary directory to new VS Code terminals when no existing Claude command is found. Does not change the system PATH or external terminals."
+        },
         "sensibleDefaults.manifestUrl": {
           "type": "string",
           "scope": "application",
@@ -265,6 +281,7 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.0",
     "esbuild": "^0.28.2",
+    "happy-dom": "^20.14.3",
     "mocha": "^12.0.0",
     "ovsx": "^1.1.1",
     "typescript": "^7.0.2",

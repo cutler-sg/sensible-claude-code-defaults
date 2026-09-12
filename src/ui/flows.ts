@@ -32,9 +32,10 @@ import {
   syncTokenToSettings,
   TOKEN_SETTINGS_KEY,
 } from "../credential/writeThrough.js";
-import { LABELS } from "../health/labels.js";
+import { LABELS, networkGuidance } from "../health/labels.js";
 import type { Manifest } from "../manifest/types.js";
 import type { Logger } from "../util/log.js";
+import { KeychainSaveError } from "./failures.js";
 
 /** The credential-specific half of what the flows need, injected by the host. */
 export interface CredentialFlowDeps {
@@ -125,10 +126,10 @@ async function enterToken(
  * `mirror` reports it, so a caller does not follow a failed mirror with an
  * offer that assumes it worked.
  */
-export async function saveToken(deps: FlowDeps, token: string): Promise<boolean> {
+export async function saveToken(deps: FlowDeps, token: string, announce = true): Promise<boolean> {
   await store(deps, token);
   deps.log.info("Saved a Bedrock API key to the system keychain.");
-  return await mirror(deps, token);
+  return await mirror(deps, token, announce);
 }
 
 /**
@@ -412,8 +413,13 @@ function modelsToTry(manifest: Manifest): string[] {
  * setup that does not exist.
  */
 async function region(deps: FlowDeps): Promise<string> {
-  const read = await readSettings(settingsPath(deps.env.claudeDir)).catch(() => undefined);
-  const value = read?.kind === "ok" ? getPath(read.data, "env.AWS_REGION") : undefined;
+  const read = await readSettings(settingsPath(deps.env.claudeDir));
+  if (read.kind === "malformed") {
+    throw new Error(
+      "Your Claude Code settings cannot be parsed. Fix the settings file before testing the connection.",
+    );
+  }
+  const value = read.kind === "ok" ? getPath(read.data, "env.AWS_REGION") : undefined;
   return typeof value === "string" && value !== ""
     ? value
     : (deps.manifest().defaults.env.AWS_REGION ?? "");
@@ -444,9 +450,11 @@ async function announce(result: ConnectionResult): Promise<void> {
     case "wrong-region":
       await vscode.window.showErrorMessage(labels.wrongRegion);
       return;
-    case "network":
-      await vscode.window.showErrorMessage(labels.network);
+    case "network": {
+      const guidance = networkGuidance(result.reason);
+      await vscode.window.showErrorMessage(`${guidance.sentence}. ${guidance.hint}`);
       return;
+    }
     case "unknown":
       await vscode.window.showErrorMessage(labels.unknown);
       return;
@@ -470,7 +478,11 @@ async function offerTest(deps: FlowDeps): Promise<void> {
 /** Keychain first, terminals second: the canonical copy is written before any derived one. */
 async function store(deps: FlowDeps, token: string): Promise<void> {
   const now = (deps.now ?? (() => new Date()))();
-  await deps.credential.store.set({ token, setAt: now.toISOString() });
+  try {
+    await deps.credential.store.set({ token, setAt: now.toISOString() });
+  } catch (cause) {
+    throw new KeychainSaveError(cause);
+  }
   deps.credential.terminal.apply(token);
   deps.credential.onTokenChanged?.();
 }
@@ -490,7 +502,7 @@ async function store(deps: FlowDeps, token: string): Promise<void> {
  * the user can settle. Returns whether the file now holds the token, so callers
  * do not follow a failed mirror with an offer that assumes it worked.
  */
-async function mirror(deps: FlowDeps, token: string): Promise<boolean> {
+async function mirror(deps: FlowDeps, token: string, announce = true): Promise<boolean> {
   const result = await sync(deps, token);
   if (result === undefined || result.reason === "stale") return false;
 
@@ -500,7 +512,8 @@ async function mirror(deps: FlowDeps, token: string): Promise<boolean> {
   }
 
   deps.log.info("Copied the saved Bedrock API key into the settings file.");
-  await vscode.window.showInformationMessage("Claude Code can now see your Bedrock API key.");
+  if (announce)
+    await vscode.window.showInformationMessage("Claude Code can now see your Bedrock API key.");
   return true;
 }
 

@@ -1066,7 +1066,7 @@ describe("the command wrapper", () => {
     await expect(run("sensibleDefaults.runHealthCheck")).resolves.toBeUndefined();
 
     expect(state.error[0]?.message).toBe("That didn't work: the panel exploded");
-    expect(logged).toContain("error sensibleDefaults.runHealthCheck failed: the panel exploded");
+    expect(logged).toContain("error That didn't work: the panel exploded");
   });
 
   it("describes a non-Error throw without stringifying an object", async () => {
@@ -1185,7 +1185,8 @@ describe("copyDiagnostics (FR-7.1)", () => {
 
     await run("sensibleDefaults.copyDiagnostics");
 
-    expect(state.clipboard).toContain("There is no settings file yet.");
+    expect(state.clipboard).toContain("The settings file could not be accessed.");
+    expect(state.clipboard).not.toContain("There is no settings file yet.");
     expect(state.error).toEqual([]);
   });
 

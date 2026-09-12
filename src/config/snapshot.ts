@@ -158,11 +158,13 @@ export class FileSnapshotStore implements SnapshotStore {
     // `env.AWS_BEARER_TOKEN_BEDROCK`, so it is exactly as unwelcome inside a
     // workspace folder as `settings.json` is (F14).
     await this.assertOutside(this.file);
-    await mkdir(dirname(this.file), { recursive: true });
     const body = `${JSON.stringify(snapshot, null, 2)}\n`;
     const temp = `${this.file}.${randomUUID()}.tmp`;
+    let created = false;
     try {
+      await mkdir(dirname(this.file), { recursive: true });
       const handle = await open(temp, "wx", 0o600);
+      created = true;
       try {
         await handle.writeFile(body, "utf8");
         await handle.chmod(0o600);
@@ -172,7 +174,7 @@ export class FileSnapshotStore implements SnapshotStore {
       }
       await rename(temp, this.file);
     } catch (error) {
-      await rm(temp, { force: true });
+      if (created) await rm(temp, { force: true }).catch(() => {});
       throw error;
     }
   }

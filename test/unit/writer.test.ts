@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * calls through this handle instead.
  */
 const hooks = vi.hoisted(() => ({
+  mkdirFailure: null as Error | null,
   renameFailure: null as Error | null,
   /** Fail the next N renames with this error, then let the real one through. */
   renameFailuresLeft: 0,
@@ -24,6 +25,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     default: actual,
+    mkdir: (...args: Parameters<typeof actual.mkdir>) => {
+      if (hooks.mkdirFailure) return Promise.reject(hooks.mkdirFailure);
+      return actual.mkdir(...args);
+    },
     rename: (...args: Parameters<typeof actual.rename>) => {
       hooks.renameCalls += 1;
       const failure = hooks.renameFailure;
@@ -84,6 +89,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  hooks.mkdirFailure = null;
   hooks.renameFailure = null;
   hooks.renameFailuresLeft = 0;
   hooks.renameTransientError = null;
@@ -284,6 +290,17 @@ describe("writeSettingsAtomic (FR-2.3)", () => {
       expect((error as ConfigError).code).toBe("ATOMIC_WRITE_FAILED");
       expect((error as ConfigError).cause).toBe(cause);
     }
+  });
+
+  it("contains a denied directory creation without creating a settings file", async () => {
+    const cause = Object.assign(new Error("directory access denied"), { code: "EACCES" });
+    hooks.mkdirFailure = cause;
+    await expect(writeSettingsAtomic(file, SETTINGS, DEFAULT_STYLE, OPTS)).rejects.toMatchObject({
+      code: "ATOMIC_WRITE_FAILED",
+      cause,
+    });
+    expect(await fs.stat(file).catch(() => undefined)).toBeUndefined();
+    expect(await tempFiles()).toEqual([]);
   });
 
   it("tightens the ACL instead of the mode on win32 (plan Q-K, closed in M6)", async () => {

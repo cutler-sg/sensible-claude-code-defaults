@@ -46,6 +46,7 @@ import {
 export type SettingsForReport =
   | { kind: "ok"; data: unknown }
   | { kind: "absent" }
+  | { kind: "unreadable" }
   | { kind: "malformed"; raw: string };
 
 export interface DiagnosticsDeps {
@@ -153,6 +154,7 @@ function armRegistry(settings: SettingsForReport): void {
       registerSecretsInText(settings.raw, SECRET_LEAVES);
       return;
     case "absent":
+    case "unreadable":
       return;
   }
 }
@@ -199,6 +201,8 @@ function recommendations(manifest: ManifestStatus): string {
 function settingsSection(deps: DiagnosticsDeps): string {
   const heading = "### Your Claude Code settings";
   switch (deps.settings.kind) {
+    case "unreadable":
+      return `${heading}\n\nThe settings file could not be accessed. Its presence and contents could not be verified; ask IT to check file access.`;
     case "absent":
       return `${heading}\n\nThere is no settings file yet.`;
     case "malformed":
