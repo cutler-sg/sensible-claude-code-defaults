@@ -37,11 +37,19 @@ prefer it.
 
 ## Corporate Windows devices
 
-If Claude works in the sidebar but not in the terminal, open the command palette
-and run **Sensible Defaults: Enable Claude in VS Code Terminals**. The extension
+To open Claude in a terminal, run **Sensible Defaults: Open Claude Terminal**
+from the Command Palette or use the terminal icon in the Sensible Defaults view
+title. It launches the verified executable directly, without relying on PATH.
+Review and trust your workspace first; the launcher does not bypass Workspace Trust.
+
+To also make `claude` available in new PowerShell/cmd terminals, run
+**Sensible Defaults: Enable Claude in VS Code Terminals**. The extension
 checks the existing command search path and the installed Claude Code binary,
 then asks before adding the binary directory to **new integrated terminals**.
-Reopen your terminal and run `claude --version` before using *Launch in terminal*.
+Reopen your terminal and run `claude --version`, then `claude`.
+Claude Code's own *Launch in terminal* button checks VS Code's process PATH,
+which terminal-only changes do not affect. That upstream button may still fail;
+use **Sensible Defaults: Open Claude Terminal** instead.
 
 This does not install another Claude copy, create launcher scripts, modify the
 system PATH, or bypass application controls. Existing executables and script
@@ -56,6 +64,12 @@ redacted report. A certificate error may indicate TLS inspection, but does not
 prove a specific proxy vendor: ask IT to check the trusted CA configuration. The
 extension does not import certificates, change `NODE_EXTRA_CA_CERTS`, or disable
 certificate verification; existing CA settings are preserved.
+
+Windows permissions are checked using `icacls`. If its export cannot be read or
+validated, the warning remains and offers diagnostics for support; it does not
+claim your settings are private or blindly change an unknown ACL. The check detects
+grants to Everyone, Users and Authenticated Users, not every possible corporate group
+or administrator. Never attach your settings file to a chat: it contains your key.
 
 ## What this extension writes
 

@@ -210,7 +210,7 @@ describe("writeSettingsAtomic (FR-2.3)", () => {
     });
 
     expect(acl.saves).toBeGreaterThan(0);
-    expect(acl.repairs[0]).toContain("/inheritance:r");
+    expect(acl.repairs[1]).toContain("/inheritance:r");
     expect(acl.repairs[0]).toContain(`*${USER_SID}:F`);
     expect(await fs.readFile(file, "utf8")).toContain("us-east-1");
   });

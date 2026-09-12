@@ -121,10 +121,8 @@ describe("config.perms", () => {
   it("passes a Windows file whose ACL is already user-only", () => {
     const result = configPermsCheck.run(makeCtx({ permissions: { kind: "aclOk" } }));
     expect(result.level).toBe("pass");
-    expect(result.detail).toBeUndefined();
-    // One label on both kinds of host: the reader is being told who can open
-    // their file, not which mechanism enforces it.
-    expect(result.label).toBe(LABELS["config.perms"].pass);
+    expect(result.detail).toContain("corporate-group access is not assessed");
+    expect(result.label).toBe(LABELS["config.perms"].aclPass);
   });
 
   it("passes a repaired Windows ACL and names the principals by SID", () => {
@@ -158,7 +156,8 @@ describe("config.perms", () => {
     expect(result.label).not.toBe(LABELS["config.perms"].pass);
     expect(result.label).not.toBe(LABELS["config.perms"].unsupported);
     expect(result.detail).toContain("icacls");
-    expect(result.fix).toMatchObject({ command: "sensibleDefaults.repairPermissions" });
+    expect(result.fix).toMatchObject({ command: "sensibleDefaults.copyDiagnostics" });
+    expect(result.detail).toContain("not been confirmed safe");
   });
 
   it("warns only when the repair itself failed", () => {

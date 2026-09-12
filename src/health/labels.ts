@@ -48,6 +48,7 @@ export const LABELS = {
    */
   "config.perms": {
     pass: "Your settings are private to you",
+    aclPass: "Windows settings permissions checked",
     skipped: "Nothing to check until Claude Code has been set up",
     unsupported: "This computer doesn't offer a way to check who can read your settings",
     unverifiable: "We couldn't tell who else can read your settings on this computer",

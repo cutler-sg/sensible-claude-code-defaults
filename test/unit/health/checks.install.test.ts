@@ -54,14 +54,17 @@ describe("install.version", () => {
 });
 
 describe("install.cli", () => {
-  it.each(["available", "enabled"] as const)("offers a reversible Windows %s action", (kind) => {
+  it.each(["available", "enabled"] as const)("offers the Windows %s next action", (kind) => {
     const ctx = makeCtx();
     ctx.detection.windowsTerminal = { kind, version: "2.1.267" };
     const result = installCliCheck.run(ctx);
     expect(result.level).toBe(kind === "enabled" ? "pass" : "info");
     expect(result.fix).toMatchObject({
       kind: "command",
-      command: `sensibleDefaults.${kind === "enabled" ? "disable" : "enable"}WindowsTerminalCli`,
+      command:
+        kind === "enabled"
+          ? "sensibleDefaults.openClaudeTerminal"
+          : "sensibleDefaults.enableWindowsTerminalCli",
     });
   });
 

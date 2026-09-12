@@ -50,7 +50,7 @@ import {
   pluralize,
   relativeAge,
 } from "./present.js";
-import { configureWindowsTerminal } from "./terminal.js";
+import { configureWindowsTerminal, openWindowsTerminal } from "./terminal.js";
 import type { Node } from "./treeProvider.js";
 
 export interface CommandDeps {
@@ -111,6 +111,7 @@ const MAX_STALE_RETRIES = 1;
  * second list for the two to drift apart on.
  */
 const HANDLERS = {
+  "sensibleDefaults.openClaudeTerminal": (deps) => openWindowsTerminal(deps.windowsTerminal),
   "sensibleDefaults.enableWindowsTerminalCli": async (deps) => {
     await configureWindowsTerminal(deps.windowsTerminal, true);
     await deps.runHealth();
@@ -410,7 +411,9 @@ async function applyRegion(deps: CommandDeps, region: string, attempt: number): 
 
 async function repairPermissionsCommand(deps: CommandDeps): Promise<void> {
   const outcome = await repairPermissions(deps.env);
-  deps.log.info(`Permission repair: ${outcome.kind}`);
+  deps.log.info(
+    `Permission repair: ${outcome.kind}${"reason" in outcome ? ` — ${outcome.reason}` : ""}`,
+  );
   // A verdict the user cannot act on is still information, but the three that
   // mean "we did not make this file private" are warnings, not notices: an
   // information toast is the same shape as success and reads as one.
@@ -419,7 +422,7 @@ async function repairPermissionsCommand(deps: CommandDeps): Promise<void> {
     settled || outcome.kind === "ok" || outcome.kind === "aclOk" || outcome.kind === "absent"
       ? vscode.window.showInformationMessage
       : vscode.window.showWarningMessage;
-  await show(permissionMessage(outcome));
+  void show(permissionMessage(outcome));
   await deps.runHealth();
 }
 
@@ -440,17 +443,19 @@ async function repairPermissionsCommand(deps: CommandDeps): Promise<void> {
 function permissionMessage(outcome: ModeRepair): string {
   switch (outcome.kind) {
     case "repaired":
-    case "aclRepaired":
       return "Your settings file is now readable only by you.";
+    case "aclRepaired":
+      return "Windows permissions were repaired and verified: broad user groups no longer have access grants.";
     case "ok":
-    case "aclOk":
       return "Your settings file was already private to you.";
+    case "aclOk":
+      return "Windows permissions were verified: no access grants to broad user groups were found.";
     case "absent":
       return "There's no settings file yet, so there's nothing to protect.";
     case "aclLoose":
       return "Other people using this computer can still read your settings file, and we couldn't change that.";
     case "unverifiable":
-      return "We couldn't tell who else can read your settings file on this computer.";
+      return `We couldn't verify who can read your settings. ${outcome.reason} Permissions have not been confirmed safe.`;
     case "unsupported":
       return "This computer doesn't offer a way to check who can read your settings file.";
   }

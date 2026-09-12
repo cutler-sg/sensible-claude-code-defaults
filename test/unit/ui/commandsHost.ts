@@ -49,6 +49,15 @@ export const state = {
   /** The `TextDocumentShowOptions` each `showTextDocument` received, if any. */
   showOptions: [] as unknown[],
   configuration: new Map<string, unknown>(),
+  trusted: true,
+  terminals: [] as {
+    shellPath: string;
+    shellArgs: string[];
+    show: () => void;
+    exitStatus?: { code: number };
+  }[],
+  terminalFailure: false,
+  terminalCloseListeners: new Set<(terminal: unknown) => void>(),
   /** Thrown by `workspace.openTextDocument` when set (absent settings file). */
   openFailure: undefined as Error | undefined,
   /** Answers the next QuickPick; default cancels. */
@@ -80,6 +89,10 @@ export function reset(): void {
   state.shownDocuments = [];
   state.showOptions = [];
   state.configuration = new Map();
+  state.trusted = true;
+  state.terminals = [];
+  state.terminalFailure = false;
+  state.terminalCloseListeners.clear();
   state.openFailure = undefined;
   state.quickPickAnswer = () => undefined;
   state.inputBoxAnswer = () => undefined;
@@ -102,6 +115,16 @@ function record(into: Shown[], message: string, rest: unknown[]): Promise<string
 }
 
 export const window = {
+  createTerminal: (options: { shellPath: string; shellArgs: string[] }) => {
+    if (state.terminalFailure) throw new Error("blocked");
+    const terminal = { ...options, show: () => {} };
+    state.terminals.push(terminal);
+    return terminal;
+  },
+  onDidCloseTerminal: (listener: (terminal: unknown) => void) => {
+    state.terminalCloseListeners.add(listener);
+    return { dispose: () => state.terminalCloseListeners.delete(listener) };
+  },
   showInformationMessage: (message: string, ...rest: unknown[]) =>
     record(state.info, message, rest),
   showWarningMessage: (message: string, ...rest: unknown[]) => record(state.warn, message, rest),
@@ -148,6 +171,9 @@ export enum ProgressLocation {
 }
 
 export const workspace = {
+  get isTrusted() {
+    return state.trusted;
+  },
   openTextDocument: async (uri: { fsPath: string }) => {
     if (state.openFailure) throw state.openFailure;
     state.opened.push(uri.fsPath);

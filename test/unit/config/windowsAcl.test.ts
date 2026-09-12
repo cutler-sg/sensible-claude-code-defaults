@@ -11,9 +11,11 @@
  * this project.
  */
 
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CommandOutcome, CommandRunner } from "../../../src/config/windowsAcl.js";
 import {
@@ -173,6 +175,20 @@ describe("parseDacl (plan Q-AG)", () => {
     expect(parseDacl("")).toBeUndefined();
   });
 
+  it.each([
+    "D:\\Users\\mc\\settings.json",
+    "D:AI(A;ID;FA;;;WD",
+    "D:AI(A;ID;FA;;;)",
+    "D:AI(A;ID;FA;;;WD)garbage",
+    'D:AI(XA;;FA;;;WD;(@User.Project == "x"))',
+  ])("does not report a partial descriptor as private: %s", (raw) => {
+    expect(parseDacl(raw)).toBeUndefined();
+  });
+
+  it("does not confuse a D: filename with the following descriptor", () => {
+    expect(parseDacl("D:\\settings.json\r\nD:AI(A;ID;FA;;;WD)")).toEqual([EVERYONE]);
+  });
+
   it("never reads the localised console listing", async () => {
     // The name listings are the input a name-matching parser would use. They
     // carry no `D:` descriptor, so this module gets nothing from them — which
@@ -217,11 +233,11 @@ describe("ensureWindowsAcl", () => {
       });
 
       const repair = calls.filter((c) => c.cmd === "icacls" && !c.args.includes("/save"));
-      expect(repair[0]?.args).toContain("/inheritance:r");
+      expect(repair[1]?.args).toContain("/inheritance:r");
       expect(repair[0]?.args).toContain(`*${USER_SID}:F`);
       // Every broad principal is removed by SID, with the `*` prefix `icacls`
       // requires for a numeric form — never by a display name.
-      expect(repair[1]?.args).toEqual(
+      expect(repair[2]?.args).toEqual(
         expect.arrayContaining([`*${EVERYONE}`, `*${BUILTIN_USERS}`, `*${AUTHENTICATED_USERS}`]),
       );
       for (const call of calls) {
@@ -312,13 +328,15 @@ describe("ensureWindowsAcl", () => {
     expect(calls[0]?.args).toEqual(expect.arrayContaining(["/q", "/c"]));
   });
 
-  it("decodes UTF-16LE, UTF-16BE, UTF-8-with-BOM and bare UTF-8 descriptors alike", async () => {
+  it("decodes UTF-16LE/BE and UTF-8 with and without a BOM", async () => {
     const sddl = `${FILE}\r\nD:AI(A;ID;FA;;;WD)\r\n`;
     const encodings: Buffer[] = [
       Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(sddl, "utf16le")]),
       Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(sddl, "utf16le").swap16()]),
       Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(sddl, "utf8")]),
       Buffer.from(sddl, "utf8"),
+      Buffer.from(sddl, "utf16le"),
+      Buffer.from(sddl, "utf16le").swap16(),
     ];
     for (const bytes of encodings) {
       const run: CommandRunner = async (cmd, args): Promise<CommandOutcome> => {
@@ -333,4 +351,57 @@ describe("ensureWindowsAcl", () => {
       });
     }
   });
+
+  it.each([
+    Buffer.alloc(0),
+    Buffer.from([0xff, 0xfe, 0x44]),
+    Buffer.from("D:AI(A;ID;FA;;;WD", "utf8"),
+  ])("never repairs or passes an empty, corrupt or truncated export (%j)", async (bytes) => {
+    const calls: string[][] = [];
+    const run: CommandRunner = async (_cmd, args) => {
+      calls.push([...args]);
+      await fs.writeFile(args[args.indexOf("/save") + 1] as string, bytes);
+      return { kind: "ok", code: 0, stdout: "" };
+    };
+    expect(await ensureWindowsAcl(FILE, { run, scratchDir })).toMatchObject({
+      kind: "unverifiable",
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not trust a descriptor from a failed export", async () => {
+    const run: CommandRunner = async (_cmd, args) => {
+      await fs.writeFile(args[args.indexOf("/save") + 1] as string, "D:P(A;;FA;;;SY)");
+      return { kind: "ok", code: 5, stdout: "sensitive output must not appear in diagnostics" };
+    };
+    const result = await ensureWindowsAcl(FILE, { run, scratchDir });
+    expect(result).toMatchObject({
+      kind: "unverifiable",
+      reason: expect.stringContaining("exit 5"),
+    });
+    expect(JSON.stringify(result)).not.toContain("sensitive");
+  });
+
+  it("does not remove inherited access if granting the current user failed", async () => {
+    const fake = fakeIcacls({ save: "en-US.loose.sddl.txt", userSid: USER_SID });
+    const calls: string[][] = [];
+    const run: CommandRunner = async (cmd, args) => {
+      calls.push([...args]);
+      return args.includes("/grant") ? { kind: "ok", code: 5, stdout: "" } : fake.run(cmd, args);
+    };
+    expect(await ensureWindowsAcl(FILE, { run, scratchDir })).toMatchObject({ kind: "aclLoose" });
+    expect(calls.some((args) => args.includes("/inheritance:r"))).toBe(false);
+    expect(calls.some((args) => args.includes("/remove:g"))).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform !== "win32")("native Windows ACL verification", () => {
+  it("reads a real icacls export, repairs a broad grant and verifies the result", async () => {
+    const file = path.join(scratchDir, "settings 日本語.json");
+    await fs.writeFile(file, "{}\n");
+    await promisify(execFile)("icacls", [file, "/grant", "*S-1-1-0:R", "/q"], { timeout: 5000 });
+    expect(await ensureWindowsAcl(file, { scratchDir })).toMatchObject({ kind: "aclRepaired" });
+    expect(await ensureWindowsAcl(file, { scratchDir })).toEqual({ kind: "aclOk" });
+    expect(await fs.readFile(file, "utf8")).toBe("{}\n");
+  }, 30000);
 });

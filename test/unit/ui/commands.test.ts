@@ -788,8 +788,13 @@ describe("repairPermissions", () => {
     // `messages()` flattens every level, so the assertion is on the level
     // itself: that is the whole point of this test.
     expect(state.warn.map((shown) => shown.message)).toEqual([
-      "We couldn't tell who else can read your settings file on this computer.",
+      expect.stringContaining("icacls could not export the permissions (exit 5)"),
     ]);
+    expect(
+      logged.some(
+        (line) => line.includes("Permission repair: unverifiable") && line.includes("exit 5"),
+      ),
+    ).toBe(true);
     expect(state.info).toEqual([]);
   });
 });

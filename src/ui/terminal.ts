@@ -2,6 +2,69 @@ import * as vscode from "vscode";
 import type { WindowsTerminalCli } from "../terminal/windows.js";
 
 const SETTING = "sensibleDefaults.enableWindowsTerminalCli";
+const pendingLaunches = new WeakSet<WindowsTerminalCli>();
+
+export async function openWindowsTerminal(support: WindowsTerminalCli | undefined): Promise<void> {
+  if (support === undefined) {
+    void vscode.window.showInformationMessage(
+      "This launcher is available in native Windows VS Code windows only. Use Claude Code's terminal command on other hosts.",
+    );
+    return;
+  }
+  if (!vscode.workspace.isTrusted) {
+    void vscode.window.showWarningMessage(
+      "Review and trust this workspace before launching Claude. No terminal was opened.",
+    );
+    return;
+  }
+  if (pendingLaunches.has(support)) return;
+  pendingLaunches.add(support);
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Checking Claude before opening the terminal…",
+      },
+      async () => {
+        const result = await support.prepareLaunch();
+        if (!vscode.workspace.isTrusted) return;
+        if (result.kind !== "ready") {
+          void vscode.window.showWarningMessage(
+            "Claude could not be launched safely. Check Installation in Details, or ask IT to check the Claude installation and application controls. No system settings were changed.",
+          );
+          return;
+        }
+        try {
+          // Direct executable launch: no shell command, quoting, workspace lookup, or
+          // dependency on the PATH seen by another extension's pre-launch check.
+          const terminal = vscode.window.createTerminal({
+            name: "Claude Code (Sensible Defaults)",
+            shellPath: result.file,
+            shellArgs: [],
+            isTransient: true,
+            env: { NoDefaultCurrentDirectoryInExePath: "1" },
+          });
+          const closed = vscode.window.onDidCloseTerminal((ended) => {
+            if (ended !== terminal) return;
+            closed.dispose();
+            const code = ended.exitStatus?.code;
+            if (code !== undefined && code !== 0)
+              void vscode.window.showWarningMessage(
+                `Claude exited with code ${code}. Check the terminal output; if Windows blocked execution, ask IT to review application controls. No security policy was changed.`,
+              );
+          });
+          terminal.show();
+        } catch {
+          void vscode.window.showWarningMessage(
+            "VS Code could not open the Claude terminal. Check terminal settings and ask IT whether application controls allow the installed Claude executable.",
+          );
+        }
+      },
+    );
+  } finally {
+    pendingLaunches.delete(support);
+  }
+}
 
 export async function configureWindowsTerminal(
   support: WindowsTerminalCli | undefined,
@@ -48,9 +111,9 @@ export async function configureWindowsTerminal(
     );
     return;
   }
-  await vscode.window.showInformationMessage(
+  void vscode.window.showInformationMessage(
     enabled
-      ? "Claude is enabled for new VS Code terminals. Reopen your terminal, then run claude --version. Shell profiles can still override command resolution."
+      ? "Claude is enabled for new VS Code terminals. Reopen your terminal, then run claude --version, or use Sensible Defaults: Open Claude Terminal. Claude Code's own Launch in terminal button checks a different PATH and may still fail."
       : "Claude terminal repair is disabled. Reopen your terminals to remove the added search path.",
   );
 }

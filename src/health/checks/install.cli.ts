@@ -19,8 +19,8 @@ export const installCliCheck = {
           group: "Installation",
           level: "pass",
           label: "Claude is enabled for new VS Code terminals",
-          detail: `Bundled version ${terminal.version}. Reopen existing terminals. External terminals are unchanged.`,
-          fix: command("sensibleDefaults.disableWindowsTerminalCli", "Disable terminal repair"),
+          detail: `Bundled version ${terminal.version}. Use Open Claude Terminal here; Claude Code's own launcher checks a different PATH and may still fail. External terminals are unchanged. Disable terminal repair from the Command Palette.`,
+          fix: command("sensibleDefaults.openClaudeTerminal", "Open Claude Terminal"),
         };
       if (terminal.kind === "available")
         return {

@@ -38,15 +38,23 @@ export const configPermsCheck = {
         return {
           ...base,
           level: "pass",
-          label: LABELS["config.perms"].pass,
+          label: LABELS["config.perms"].aclPass,
           // The SIDs, not the names: `detail` is the tooltip for the person who
           // goes looking, and a SID is the same string on every locale.
-          detail: `repaired (was granted to ${permissions.before.join(", ")})`,
+          detail: `Broad user-group grants removed and verified (was granted to ${permissions.before.join(", ")}). Administrator and other corporate-group access is not assessed.`,
           fix: NO_FIX,
         };
       case "ok":
-      case "aclOk":
         return { ...base, level: "pass", label: LABELS["config.perms"].pass, fix: NO_FIX };
+      case "aclOk":
+        return {
+          ...base,
+          level: "pass",
+          label: LABELS["config.perms"].aclPass,
+          detail:
+            "No grants to Everyone, Users or Authenticated Users were found. Administrator and other corporate-group access is not assessed.",
+          fix: NO_FIX,
+        };
       case "absent":
         return { ...base, level: "skipped", label: LABELS["config.perms"].skipped, fix: NO_FIX };
       case "unsupported":
@@ -74,8 +82,8 @@ export const configPermsCheck = {
           ...base,
           level: "warning",
           label: LABELS["config.perms"].unverifiable,
-          detail: permissions.reason,
-          fix: repair,
+          detail: `${permissions.reason} Permissions have not been confirmed safe. Share diagnostics with support or IT; do not share settings.json because it contains your key.`,
+          fix: command("sensibleDefaults.copyDiagnostics", "Copy diagnostics for support"),
         };
       case "failed":
         return {
