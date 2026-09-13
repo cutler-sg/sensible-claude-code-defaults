@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Keep types compatible with the VS Code 1.98 API floor in package.json.
+      - dependency-name: "@types/vscode"
+        versions: [">=1.99.0"]
     groups:
       dev-dependencies:
         dependency-type: development
