@@ -56,7 +56,7 @@ jobs:
       # `allow-no-subscriptions` the login step would fail looking for one.
       - name: Azure login (OIDC)
         if: ${{ env.HAS_AZURE == 'true' }}
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
