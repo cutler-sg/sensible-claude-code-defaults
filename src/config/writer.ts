@@ -25,11 +25,14 @@ const BACKUP_SUFFIX = ".json";
 const DEFAULT_BACKUP_RETENTION = 10;
 
 /**
- * `settings.<ISO timestamp with colons as dashes>.json`, and nothing else. A
- * hand-dropped `settings.handwritten.json` is not a backup: counting it would
- * give it a retention slot and let it evict a real one (F7).
+ * New backups carry a UUID so two windows choosing the same millisecond never
+ * overwrite one another. The suffix is optional when reading so every backup
+ * created before this change remains listable and restorable. A hand-dropped
+ * `settings.handwritten.json` is not a backup: counting it would give it a
+ * retention slot and let it evict a real one (F7).
  */
-const BACKUP_NAME = /^settings\.(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z)\.json$/;
+const BACKUP_NAME =
+  /^settings\.(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z)(?:\.[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?\.json$/i;
 
 export interface WriteOptions {
   /** Absolute workspace folder paths; a write resolving into any of them is refused. */
@@ -419,7 +422,7 @@ async function syncDirectory(dir: string): Promise<void> {
 }
 
 function backupName(now: Date): string {
-  return `${BACKUP_PREFIX}${now.toISOString().replaceAll(":", "-")}${BACKUP_SUFFIX}`;
+  return `${BACKUP_PREFIX}${now.toISOString().replaceAll(":", "-")}.${randomUUID()}${BACKUP_SUFFIX}`;
 }
 
 /** The `createdAt` a backup name encodes, or `undefined` if it is not one. */

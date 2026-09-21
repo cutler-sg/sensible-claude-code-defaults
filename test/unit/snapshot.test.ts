@@ -186,12 +186,36 @@ describe("FileSnapshotStore.save", () => {
     expect(info.mode & 0o777).toBe(0o600);
   });
 
+  it("hardens the snapshot DACL on Windows because it holds the bearer token", async () => {
+    const file = join(dir, "state.json");
+    let aclReads = 0;
+    const store = new FileSnapshotStore(file, {
+      workspaceFolders: [],
+      platform: "win32",
+      acl: {
+        scratchDir: dir,
+        run: async () => {
+          aclReads += 1;
+          return { kind: "missing" };
+        },
+      },
+    });
+
+    await store.save(SAMPLE);
+
+    expect(aclReads).toBeGreaterThan(0);
+    await expect(store.load()).resolves.toEqual(SAMPLE);
+  });
+
   it.runIf(POSIX)("removes the temp file and rethrows when the write fails", async () => {
     const file = join(dir, "state.json");
     const store = new FileSnapshotStore(file);
     await chmod(dir, 0o500);
 
-    await expect(store.save(SAMPLE)).rejects.toThrow(/EACCES/);
+    await expect(store.save(SAMPLE)).rejects.toMatchObject({
+      code: "ATOMIC_WRITE_FAILED",
+      cause: { code: "EACCES" },
+    });
 
     await chmod(dir, 0o700);
     expect(await readdir(dir)).toEqual([]);
