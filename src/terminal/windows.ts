@@ -110,7 +110,7 @@ async function inspect(deps: WindowsTerminalDeps): Promise<Inspection> {
       if (!(await exists(deps, file))) continue;
       if (extension !== ".exe") return { kind: "blocked", reason: "launcher" };
       const realFile = await deps.realpath(file);
-      if (!localPath(realFile) || inWorkspace(deps, realFile))
+      if (!localPath(realFile) || (await inWorkspace(deps, realFile)))
         return { kind: "blocked", reason: "path" };
       const version = await probe(deps, realFile);
       return version === undefined
@@ -127,7 +127,7 @@ async function inspect(deps: WindowsTerminalDeps): Promise<Inspection> {
     if (
       !localPath(realRoot) ||
       !localPath(realFile) ||
-      inWorkspace(deps, realFile) ||
+      (await inWorkspace(deps, realFile)) ||
       path.basename(realFile).toLowerCase() !== "claude.exe" ||
       relative.startsWith("..") ||
       path.isAbsolute(relative) ||
@@ -151,14 +151,23 @@ function localPath(value: string): boolean {
   return /^[a-z]:[\\/]/i.test(value) && !/[;"%\r\n\0]/.test(value);
 }
 
-function inWorkspace(deps: WindowsTerminalDeps, file: string): boolean {
-  return (deps.workspaceFolders?.() ?? []).some((root) => {
-    const relative = path.relative(root, file);
-    return (
-      relative === "" ||
-      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-    );
-  });
+async function inWorkspace(deps: WindowsTerminalDeps, file: string): Promise<boolean> {
+  for (const root of deps.workspaceFolders?.() ?? []) {
+    if (atOrInside(file, root)) return true;
+    // VS Code can report an 8.3 path or a junction while `realpath(file)`
+    // returns the long target. Compare both spellings or the workspace guard
+    // can be bypassed by the alias alone.
+    if (atOrInside(file, await deps.realpath(root))) return true;
+  }
+  return false;
+}
+
+function atOrInside(file: string, root: string): boolean {
+  const relative = path.relative(root, file);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
 }
 
 async function exists(deps: WindowsTerminalDeps, file: string): Promise<boolean> {

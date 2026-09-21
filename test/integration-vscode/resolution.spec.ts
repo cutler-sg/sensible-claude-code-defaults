@@ -85,6 +85,10 @@ describe("claude directory resolution (FR-1.3)", () => {
       path.join(launcherHome, ".claude"),
       "the host resolved the launcher's own ~/.claude, so this suite cannot tell them apart",
     );
+    assert.ok(
+      configured.includes("scd claude 日本語 O'Brien-"),
+      "the integration fixture must exercise spaces, Unicode and shell-sensitive punctuation",
+    );
   });
 
   it("opens the settings file under the host's own home, not the launcher's", async () => {
