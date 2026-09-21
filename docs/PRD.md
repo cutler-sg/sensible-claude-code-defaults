@@ -1,13 +1,13 @@
 # Sensible Claude Code Defaults — Product & Engineering Requirements
 
-**Status:** Draft v1.2 (amended 2026-09-10 after M0/M1 verification — see §19)
+**Status:** Draft v1.3 (amended 2026-09-21 after recovery verification — see §19)
 **Owner:** MC
 **Display name:** `Sensible Claude Code Defaults`
 **Package name:** `sensible-claude-code-defaults`
 **Extension ID:** `<publisher>.sensible-claude-code-defaults` (publisher TBD — see §16 Q4)
 **Repository:** `$HOME/workspaces/cutler-sg/sensible-claude-code-defaults`
 **Target registries:** Visual Studio Marketplace + Open VSX
-**Last updated:** 2026-09-10
+**Last updated:** 2026-09-21
 
 ---
 
@@ -188,7 +188,7 @@ await fs.rename(tmp, target);
 
 A truncated `settings.json` does not degrade Claude Code — it breaks it, for a user who cannot recover manually.
 
-**FR-2.4 — Backups.** Before the first write of a session (one VS Code window), copy the existing `settings.json` byte-for-byte to `<claudeDir>/sensible-defaults/backups/settings.<ISO8601>.json` at mode `0600`. Retain the 10 most recent. Expose "Restore previous configuration" as a command. Restoring drops the last-applied snapshot so the next apply cannot silently re-apply what the user rolled back. *(Amended 2026-09-10: Claude Code already owns `~/.claude/backups/`; the extension's state lives under its own `sensible-defaults/` directory alongside `state.json`.)*
+**FR-2.4 — Backups.** Before the first write of a session (one VS Code window), copy the existing `settings.json` byte-for-byte to `<claudeDir>/sensible-defaults/backups/settings.<ISO8601>.<UUID>.json` at mode `0600`. The UUID prevents concurrent windows choosing the same millisecond from overwriting one another; legacy timestamp-only backup names remain supported. Retain the 10 most recent. Expose "Restore previous configuration" as a command. Restoring drops the last-applied snapshot so the next apply cannot silently re-apply what the user rolled back. *(Amended 2026-09-10: Claude Code already owns `~/.claude/backups/`; the extension's state lives under its own `sensible-defaults/` directory alongside `state.json`.)*
 
 **FR-2.5 — Malformed input.** If `settings.json` exists but does not parse: do **not** overwrite. Raise a fail-level health check offering (a) open the file, (b) restore from backup, (c) reset to defaults with a confirmation dialog that names the backup path.
 
@@ -631,4 +631,5 @@ Facts checked against live Claude Code, AWS, and Marketplace documentation while
 
 ## 19. Change log
 
+- **2026-09-21 v1.3** — FR-2.4 backup names gained a UUID suffix so concurrent windows cannot overwrite recovery points created in the same millisecond; legacy names remain supported.
 - **2026-09-10 v1.2** — FR-1.2 honours `CLAUDE_CONFIG_DIR`; FR-2.2 snapshot moved from `globalState` to `sensible-defaults/state.json`, element-level ownership and removal semantics added; FR-2.4 backup path moved under `sensible-defaults/backups/`, restore drops the snapshot; §4.2 table and §7 engine comment corrected; §17 region and engine-floor facts corrected; §18 added. Rationale and the full decision log: `plans/feat-m0-scaffold.md`.

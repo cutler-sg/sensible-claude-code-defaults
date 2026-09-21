@@ -12,11 +12,12 @@
  * structurally typed so it stays on this side of the line.
  */
 
-import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { readFile, realpath, rename } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { assertOutsideWorkspace } from "./paths.js";
 import { EMPTY_SNAPSHOT, type JsonValue, type Snapshot, type SnapshotStore } from "./types.js";
+import type { WindowsAclDeps } from "./windowsAcl.js";
+import { writeRawAtomic } from "./writer.js";
 
 /** A fresh empty snapshot. Never hand out `EMPTY_SNAPSHOT` itself. */
 function emptySnapshot(): Snapshot {
@@ -118,6 +119,8 @@ export interface SnapshotStoreOptions {
   workspaceFolders: readonly string[];
   /** Injected for tests. Defaults to `process.platform`. */
   platform?: NodeJS.Platform;
+  /** Injected Windows ACL adapter; production uses the system implementation. */
+  acl?: WindowsAclDeps;
 }
 
 export class FileSnapshotStore implements SnapshotStore {
@@ -157,26 +160,12 @@ export class FileSnapshotStore implements SnapshotStore {
     // FR-2.6: the snapshot holds the value we wrote to
     // `env.AWS_BEARER_TOKEN_BEDROCK`, so it is exactly as unwelcome inside a
     // workspace folder as `settings.json` is (F14).
-    await this.assertOutside(this.file);
     const body = `${JSON.stringify(snapshot, null, 2)}\n`;
-    const temp = `${this.file}.${randomUUID()}.tmp`;
-    let created = false;
-    try {
-      await mkdir(dirname(this.file), { recursive: true });
-      const handle = await open(temp, "wx", 0o600);
-      created = true;
-      try {
-        await handle.writeFile(body, "utf8");
-        await handle.chmod(0o600);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await rename(temp, this.file);
-    } catch (error) {
-      if (created) await rm(temp, { force: true }).catch(() => {});
-      throw error;
-    }
+    await writeRawAtomic(this.file, body, {
+      workspaceFolders: this.opts.workspaceFolders,
+      ...(this.opts.platform === undefined ? {} : { platform: this.opts.platform }),
+      ...(this.opts.acl === undefined ? {} : { acl: this.opts.acl }),
+    });
   }
 
   /** Move an unreadable snapshot aside so a support request can still see it. */

@@ -413,10 +413,28 @@ describe("backups (FR-2.4, plan Q-H)", () => {
     if (!info) {
       return;
     }
-    expect(path.basename(info.path)).toBe("settings.2026-09-10T12-34-56.000Z.json");
+    expect(path.basename(info.path)).toMatch(
+      /^settings\.2026-09-10T12-34-56\.000Z\.[0-9a-f-]{36}\.json$/,
+    );
     expect(path.basename(info.path)).not.toContain(":");
     expect(await fs.readFile(info.path, "utf8")).toBe(raw);
     if (POSIX) expect(await mode(info.path)).toBe(0o600);
+  });
+
+  it("keeps both recovery points when two sessions back up in the same millisecond", async () => {
+    const instant = at("2026-09-10T12:34:56.000Z");
+    const first = '{"generation":1}\n';
+    const second = '{"generation":2}\n';
+
+    await fs.writeFile(file, first, { mode: 0o600 });
+    const firstInfo = await backupSettings(file, backups, instant);
+    await fs.writeFile(file, second, { mode: 0o600 });
+    const secondInfo = await backupSettings(file, backups, instant);
+
+    expect(firstInfo?.path).not.toBe(secondInfo?.path);
+    expect(await listBackups(backups)).toHaveLength(2);
+    expect(await fs.readFile(firstInfo?.path ?? "", "utf8")).toBe(first);
+    expect(await fs.readFile(secondInfo?.path ?? "", "utf8")).toBe(second);
   });
 
   it("backs up a malformed file byte-for-byte", async () => {
@@ -828,7 +846,7 @@ describe("backups are byte-exact and atomic (F9)", () => {
   });
 
   it.runIf(POSIX)(
-    "writes the backup at mode 0600 even over a pre-existing looser file",
+    "keeps a legacy recovery point with the same timestamp and writes the new one at 0600",
     async () => {
       await fs.writeFile(file, "{}\n");
       const at = new Date("2026-09-10T12:34:56.000Z");
@@ -837,10 +855,13 @@ describe("backups are byte-exact and atomic (F9)", () => {
       await fs.writeFile(target, "stale");
       await fs.chmod(target, 0o666);
 
-      await backupSettings(file, backups, at);
+      const info = await backupSettings(file, backups, at);
 
-      expect(await mode(target)).toBe(0o600);
-      expect(await fs.readFile(target, "utf8")).toBe("{}\n");
+      expect(info?.path).not.toBe(target);
+      expect(await mode(info?.path ?? "")).toBe(0o600);
+      expect(await fs.readFile(info?.path ?? "", "utf8")).toBe("{}\n");
+      expect(await mode(target)).toBe(0o666);
+      expect(await fs.readFile(target, "utf8")).toBe("stale");
     },
   );
 
