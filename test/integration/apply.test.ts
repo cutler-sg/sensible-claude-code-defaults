@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const hooks = vi.hoisted(() => ({
   writeFailure: null as Error | null,
   writeFailureAfter: null as Error | null,
+  restoreFailureAfter: null as Error | null,
 }));
 
 vi.mock("../../src/config/writer.js", async (importOriginal) => {
@@ -27,6 +28,14 @@ vi.mock("../../src/config/writer.js", async (importOriginal) => {
       const failureAfter = hooks.writeFailureAfter;
       if (failureAfter) {
         hooks.writeFailureAfter = null;
+        throw failureAfter;
+      }
+    },
+    restoreBackup: async (...args: Parameters<typeof actual.restoreBackup>) => {
+      await actual.restoreBackup(...args);
+      const failureAfter = hooks.restoreFailureAfter;
+      if (failureAfter) {
+        hooks.restoreFailureAfter = null;
         throw failureAfter;
       }
     },
@@ -56,7 +65,7 @@ import type {
   Settings,
   Snapshot,
 } from "../../src/config/types.js";
-import { listBackups } from "../../src/config/writer.js";
+import { backupSettings, listBackups } from "../../src/config/writer.js";
 
 const OPUS_V1 = "us.anthropic.claude-opus-4-5-20260115-v1:0";
 const OPUS_V2 = "us.anthropic.claude-opus-5-20260701-v1:0";
@@ -116,6 +125,7 @@ beforeEach(async () => {
 afterEach(async () => {
   hooks.writeFailure = null;
   hooks.writeFailureAfter = null;
+  hooks.restoreFailureAfter = null;
   await rm(tmp, { recursive: true, force: true });
 });
 
@@ -561,6 +571,189 @@ describe("backup and restore", () => {
     const after = await listBackups(dir);
     expect(after).toHaveLength(2);
     expect(await readText(after[0]?.path)).toContain("precious-hand-written");
+  });
+
+  it("rolls back an interrupted restore and can repeat it without losing recovery data", async () => {
+    const original = '{\n  "model": "opus"\n}\n';
+    await seedSettings(original);
+    await applyFixture();
+
+    const applied = await readText();
+    const appliedSnapshot = await readSnapshotFile();
+    const dir = backupsDir(claudeDir);
+    const target = (await listBackups(dir))[0];
+    if (target === undefined) throw new Error("expected a backup");
+
+    const durableStore = env.snapshotStore;
+    let interruptForget = true;
+    env = {
+      ...env,
+      snapshotStore: {
+        load: () => durableStore.load(),
+        save: async (snapshot) => {
+          if (interruptForget) {
+            interruptForget = false;
+            throw Object.assign(new Error("state directory became read-only"), { code: "EACCES" });
+          }
+          await durableStore.save(snapshot);
+        },
+      },
+    };
+
+    await expect(restore(env, createSession(), target.path)).rejects.toMatchObject({
+      code: "EACCES",
+    });
+
+    // The failed restore is one transaction: both the live settings and their
+    // ownership return to the pre-restore state, while the forced recovery
+    // point remains available.
+    expect(await readText()).toBe(applied);
+    expect(await readSnapshotFile()).toEqual(appliedSnapshot);
+    expect(await listBackups(dir)).toHaveLength(2);
+    expect(await readText((await listBackups(dir))[0]?.path)).toBe(applied);
+
+    // Repeating the operation after the interruption succeeds and creates a
+    // second undo point rather than overwriting the first one.
+    await restore(env, createSession(), target.path);
+    expect(await readText()).toBe(original);
+    expect(await readSnapshotFile()).toEqual({ schemaVersion: 1, values: {} });
+    expect(await listBackups(dir)).toHaveLength(3);
+  });
+
+  it("preserves a user edit made while an interrupted restore is recovering", async () => {
+    const original = '{\n  "model": "opus"\n}\n';
+    const concurrent = '{\n  "model": "user-edited-during-recovery"\n}\n';
+    await seedSettings(original);
+    await applyFixture();
+
+    const target = (await listBackups(backupsDir(claudeDir)))[0];
+    if (target === undefined) throw new Error("expected a backup");
+    const durableStore = env.snapshotStore;
+    env = {
+      ...env,
+      snapshotStore: {
+        load: () => durableStore.load(),
+        save: async () => {
+          await seedSettings(concurrent);
+          throw Object.assign(new Error("state directory became read-only"), { code: "EACCES" });
+        },
+      },
+    };
+
+    await expect(restore(env, createSession(), target.path)).rejects.toMatchObject({
+      code: "EACCES",
+    });
+
+    expect(await readText()).toBe(concurrent);
+    expect(await listBackups(backupsDir(claudeDir))).toHaveLength(2);
+  });
+
+  it("keeps a restore whose ownership reset became durable before save threw", async () => {
+    const original = '{\n  "model": "opus"\n}\n';
+    await seedSettings(original);
+    await applyFixture();
+
+    const target = (await listBackups(backupsDir(claudeDir)))[0];
+    if (target === undefined) throw new Error("expected a backup");
+    const durableStore = env.snapshotStore;
+    env = {
+      ...env,
+      snapshotStore: {
+        load: () => durableStore.load(),
+        save: async (snapshot) => {
+          await durableStore.save(snapshot);
+          throw Object.assign(new Error("permission tightening failed after rename"), {
+            code: "EACCES",
+          });
+        },
+      },
+    };
+
+    await expect(restore(env, createSession(), target.path)).rejects.toMatchObject({
+      code: "EACCES",
+    });
+
+    expect(await readText()).toBe(original);
+    expect(await readSnapshotFile()).toEqual({ schemaVersion: 1, values: {} });
+  });
+
+  it("finishes ownership recovery when the restore writer throws after its rename", async () => {
+    const original = '{\n  "model": "opus"\n}\n';
+    await seedSettings(original);
+    await applyFixture();
+
+    const target = (await listBackups(backupsDir(claudeDir)))[0];
+    if (target === undefined) throw new Error("expected a backup");
+    hooks.restoreFailureAfter = Object.assign(new Error("chmod denied after rename"), {
+      code: "EACCES",
+    });
+
+    await expect(restore(env, createSession(), target.path)).rejects.toMatchObject({
+      code: "EACCES",
+    });
+
+    expect(await readText()).toBe(original);
+    expect(await readSnapshotFile()).toEqual({ schemaVersion: 1, values: {} });
+  });
+
+  it("restores the oldest visible recovery point at the retention limit", async () => {
+    const dir = backupsDir(claudeDir);
+    for (let day = 1; day <= 10; day += 1) {
+      await seedSettings(`${JSON.stringify({ generation: day })}\n`);
+      await backupSettings(file, dir, new Date(Date.UTC(2026, 7, day, 12, 0, 0)), {
+        workspaceFolders: [workspace],
+      });
+    }
+
+    const before = await listBackups(dir);
+    const oldest = before.at(-1);
+    if (oldest === undefined) throw new Error("expected ten backups");
+    expect(await readText(oldest.path)).toBe('{"generation":1}\n');
+
+    await seedSettings('{"generation":"current-user-edit"}\n');
+    await restore(env, createSession(), oldest.path);
+
+    expect(await readText()).toBe('{"generation":1}\n');
+    expect(await listBackups(dir)).toHaveLength(10);
+    // Another window may already have selected the same visible recovery
+    // point. Retention must not delete it out from under that restore.
+    expect(await exists(oldest.path)).toBe(true);
+    expect(
+      await Promise.all(
+        (await listBackups(dir)).map(async (backup) => await readText(backup.path)),
+      ),
+    ).toContain('{"generation":"current-user-edit"}\n');
+  });
+
+  it("keeps both same-millisecond undo points from concurrent restore windows", async () => {
+    const original = '{\n  "model": "opus"\n}\n';
+    await seedSettings(original);
+    await applyFixture();
+    const applied = await readText();
+
+    const dir = backupsDir(claudeDir);
+    const target = (await listBackups(dir))[0];
+    if (target === undefined) throw new Error("expected a backup");
+    const instant = new Date("2026-09-20T12:00:00.000Z");
+    const first = { ...makeEnv(claudeDir), now: () => instant };
+    const second = { ...makeEnv(claudeDir), now: () => instant };
+
+    await Promise.all([
+      restore(first, createSession(), target.path),
+      restore(second, createSession(), target.path),
+    ]);
+
+    const after = await listBackups(dir);
+    const simultaneous = after.filter((backup) => backup.createdAt.getTime() === instant.getTime());
+    expect(simultaneous).toHaveLength(2);
+    expect(new Set(simultaneous.map((backup) => backup.path)).size).toBe(2);
+    expect(
+      (await Promise.all(simultaneous.map(async (backup) => await readText(backup.path)))).filter(
+        (contents) => contents === applied,
+      ).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(await readText()).toBe(original);
+    expect(await readSnapshotFile()).toEqual({ schemaVersion: 1, values: {} });
   });
 });
 

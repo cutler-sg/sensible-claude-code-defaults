@@ -141,6 +141,47 @@ export async function rollbackSettings(
   return true;
 }
 
+/** Whether the live settings bytes are still exactly a selected backup. */
+export async function settingsMatchBackup(
+  file: string,
+  backup: string,
+  opts: WriteOptions,
+): Promise<boolean> {
+  const platform = opts.platform ?? process.platform;
+  assertOutsideWorkspace(file, opts.workspaceFolders, platform);
+  assertOutsideWorkspace(backup, opts.workspaceFolders, platform);
+  assertOutsideWorkspace(await resolveTarget(backup), opts.workspaceFolders, platform);
+  const [current, saved] = await Promise.all([fs.readFile(file), fs.readFile(backup)]);
+  return current.equals(saved);
+}
+
+/**
+ * Undo a restore whose matching ownership update failed. Both comparisons are
+ * byte-exact because backups may contain malformed JSON or invalid UTF-8 that
+ * still belongs to the user. A live file that no longer matches the restored
+ * bytes is not overwritten.
+ */
+export async function rollbackRestore(
+  file: string,
+  restoredBackup: string,
+  previousBackup: string | undefined,
+  opts: WriteOptions,
+): Promise<boolean> {
+  const platform = opts.platform ?? process.platform;
+  if (!(await settingsMatchBackup(file, restoredBackup, opts))) return false;
+
+  if (previousBackup !== undefined) {
+    await restoreBackup(previousBackup, file, opts);
+    return true;
+  }
+
+  const target = await resolveTarget(file);
+  assertOutsideWorkspace(target, opts.workspaceFolders, platform);
+  await fs.rm(target);
+  await syncDirectory(path.dirname(target));
+  return true;
+}
+
 /** `writeRawAtomic` for callers that already hold bytes and must not transcode. */
 async function writeBytesAtomic(file: string, bytes: Buffer, opts: WriteOptions): Promise<void> {
   const platform = opts.platform ?? process.platform;
@@ -275,6 +316,26 @@ export async function pruneBackups(
 ): Promise<string[]> {
   const backups = await listBackups(backupsDir);
   const doomed = backups.slice(Math.max(keep, 0));
+  await Promise.all(doomed.map((backup) => fs.rm(backup.path, { force: true })));
+  return doomed.map((backup) => backup.path);
+}
+
+/**
+ * Retain `keep` recovery points without deleting one another window may have
+ * already selected. The oldest unprotected entries are removed first.
+ */
+export async function pruneBackupsPreserving(
+  backupsDir: string,
+  keep: number,
+  preserve: readonly string[],
+): Promise<string[]> {
+  const backups = await listBackups(backupsDir);
+  const count = Math.max(backups.length - Math.max(keep, 0), 0);
+  const protectedPaths = new Set(preserve);
+  const doomed = backups
+    .filter((backup) => !protectedPaths.has(backup.path))
+    .reverse()
+    .slice(0, count);
   await Promise.all(doomed.map((backup) => fs.rm(backup.path, { force: true })));
   return doomed.map((backup) => backup.path);
 }
