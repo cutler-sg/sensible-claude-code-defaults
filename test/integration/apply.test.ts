@@ -8,19 +8,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * cannot work. Wrap the real module once and let a single test arm a failure
  * through this handle (same pattern as `test/unit/writer.test.ts`).
  */
-const hooks = vi.hoisted(() => ({ writeFailure: null as Error | null }));
+const hooks = vi.hoisted(() => ({
+  writeFailure: null as Error | null,
+  writeFailureAfter: null as Error | null,
+}));
 
 vi.mock("../../src/config/writer.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/config/writer.js")>();
   return {
     ...actual,
-    writeSettingsAtomic: (...args: Parameters<typeof actual.writeSettingsAtomic>) => {
+    writeSettingsAtomic: async (...args: Parameters<typeof actual.writeSettingsAtomic>) => {
       const failure = hooks.writeFailure;
       if (failure) {
         hooks.writeFailure = null;
-        return Promise.reject(failure);
+        throw failure;
       }
-      return actual.writeSettingsAtomic(...args);
+      await actual.writeSettingsAtomic(...args);
+      const failureAfter = hooks.writeFailureAfter;
+      if (failureAfter) {
+        hooks.writeFailureAfter = null;
+        throw failureAfter;
+      }
     },
   };
 });
@@ -107,6 +115,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   hooks.writeFailure = null;
+  hooks.writeFailureAfter = null;
   await rm(tmp, { recursive: true, force: true });
 });
 
@@ -565,6 +574,178 @@ describe("write failure", () => {
 
     expect(await exists(snapshotPath(claudeDir))).toBe(false);
     expect(await exists(file)).toBe(false);
+  });
+
+  it("finishes ownership recovery when the settings writer throws after its rename", async () => {
+    const original = '{\n  "model": "opus"\n}\n';
+    await seedSettings(original);
+    hooks.writeFailureAfter = Object.assign(new Error("chmod denied after rename"), {
+      code: "EACCES",
+    });
+
+    const attempted = ready(await plan(env, desiredFixture()));
+    await expect(commit(env, session, attempted, { manifestRevision: "v1" })).rejects.toMatchObject(
+      { code: "EACCES" },
+    );
+
+    expect(await readJson()).toEqual(attempted.merge.next);
+    expect((await readSnapshotFile()).values).toEqual(attempted.merge.snapshotValues);
+
+    const upgrade = ready(
+      await plan(env, desiredFixture({ "env.ANTHROPIC_DEFAULT_OPUS_MODEL": OPUS_V2 })),
+    );
+    expect(upgrade.merge.drift).toEqual([]);
+    expect(upgrade.merge.changes.map((change) => change.key)).toEqual([
+      "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
+    ]);
+  });
+
+  it("restores a pre-existing file when the ownership snapshot cannot be saved", async () => {
+    const original = `{
+  "model": "opus",
+  "env": {
+    "FOO": "user-value"
+  }
+}
+`;
+    await seedSettings(original);
+
+    const durableStore = env.snapshotStore;
+    let failSave = true;
+    env = {
+      ...env,
+      snapshotStore: {
+        load: () => durableStore.load(),
+        save: async (snapshot) => {
+          if (failSave) {
+            failSave = false;
+            throw Object.assign(new Error("snapshot directory is read-only"), { code: "EACCES" });
+          }
+          await durableStore.save(snapshot);
+        },
+      },
+    };
+
+    await expect(
+      commit(env, session, ready(await plan(env, desiredFixture())), {
+        manifestRevision: "v1",
+      }),
+    ).rejects.toMatchObject({ code: "EACCES" });
+
+    // A failed apply must not strand managed values in settings.json without
+    // the ownership record that lets a later manifest revision update them.
+    expect(await readText()).toBe(original);
+    expect(await exists(snapshotPath(claudeDir))).toBe(false);
+    expect(await listBackups(backupsDir(claudeDir))).toHaveLength(1);
+
+    // A retry after an extension-host restart can now complete normally, and
+    // a later upgrade still recognises and advances the value it wrote.
+    session = createSession();
+    await commit(env, session, ready(await plan(env, desiredFixture())), {
+      manifestRevision: "v1",
+    });
+    const upgrade = ready(
+      await plan(env, desiredFixture({ "env.ANTHROPIC_DEFAULT_OPUS_MODEL": OPUS_V2 })),
+    );
+
+    expect(upgrade.merge.drift).toEqual([]);
+    expect(upgrade.merge.changes).toContainEqual({
+      key: "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
+      kind: "update",
+      before: OPUS_V1,
+      after: OPUS_V2,
+    });
+  });
+
+  it("removes a first-install settings file when the ownership snapshot cannot be saved", async () => {
+    const durableStore = env.snapshotStore;
+    let failSave = true;
+    env = {
+      ...env,
+      snapshotStore: {
+        load: () => durableStore.load(),
+        save: async (snapshot) => {
+          if (failSave) {
+            failSave = false;
+            throw Object.assign(new Error("snapshot directory is read-only"), { code: "EACCES" });
+          }
+          await durableStore.save(snapshot);
+        },
+      },
+    };
+
+    await expect(
+      commit(env, session, ready(await plan(env, desiredFixture()))),
+    ).rejects.toMatchObject({ code: "EACCES" });
+
+    expect(await exists(file)).toBe(false);
+    expect(await exists(snapshotPath(claudeDir))).toBe(false);
+    expect(await listBackups(backupsDir(claudeDir))).toEqual([]);
+
+    session = createSession();
+    const retry = ready(await plan(env, desiredFixture()));
+    const result = await commit(env, session, retry);
+    expect(result.written).toBe(true);
+    expect(await readJson()).toEqual(retry.merge.next);
+    expect(Object.keys((await readSnapshotFile()).values)).toHaveLength(9);
+  });
+
+  it("preserves a concurrent edit instead of rolling it back after a snapshot failure", async () => {
+    const original = '{\n  "model": "opus"\n}\n';
+    const concurrent = '{\n  "model": "user-edited-while-saving"\n}\n';
+    await seedSettings(original);
+
+    const durableStore = env.snapshotStore;
+    env = {
+      ...env,
+      snapshotStore: {
+        load: () => durableStore.load(),
+        save: async () => {
+          await seedSettings(concurrent);
+          throw Object.assign(new Error("snapshot directory is read-only"), { code: "EACCES" });
+        },
+      },
+    };
+
+    await expect(
+      commit(env, session, ready(await plan(env, desiredFixture()))),
+    ).rejects.toMatchObject({ code: "EACCES" });
+
+    expect(await readText()).toBe(concurrent);
+    expect(await exists(snapshotPath(claudeDir))).toBe(false);
+  });
+
+  it("does not roll settings behind a snapshot that became durable before save threw", async () => {
+    const original = '{\n  "model": "opus"\n}\n';
+    await seedSettings(original);
+
+    const durableStore = env.snapshotStore;
+    env = {
+      ...env,
+      snapshotStore: {
+        load: () => durableStore.load(),
+        save: async (snapshot) => {
+          await durableStore.save(snapshot);
+          throw Object.assign(new Error("permission tightening failed after rename"), {
+            code: "EACCES",
+          });
+        },
+      },
+    };
+
+    const attempted = ready(await plan(env, desiredFixture()));
+    await expect(commit(env, session, attempted)).rejects.toMatchObject({ code: "EACCES" });
+
+    expect(await readJson()).toEqual(attempted.merge.next);
+    expect((await readSnapshotFile()).values).toEqual(attempted.merge.snapshotValues);
+
+    const upgrade = ready(
+      await plan(env, desiredFixture({ "env.ANTHROPIC_DEFAULT_OPUS_MODEL": OPUS_V2 })),
+    );
+    expect(upgrade.merge.drift).toEqual([]);
+    expect(upgrade.merge.changes.map((change) => change.key)).toEqual([
+      "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
+    ]);
   });
 });
 
