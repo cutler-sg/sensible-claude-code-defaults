@@ -24,7 +24,10 @@ import { defineConfig } from "@vscode/test-cli";
  * this still does — see `resolution.spec.ts`, whose expected path is derived
  * from the same variable the host reads.
  */
-const claudeDir = mkdtempSync(join(tmpdir(), "scd-claude-"));
+// Keep the integration profile deliberately hostile to shell interpolation.
+// Every host leg then exercises settings reads and permission repair through
+// spaces, Unicode and an apostrophe without touching a real user profile.
+const claudeDir = mkdtempSync(join(tmpdir(), "scd claude 日本語 O'Brien-"));
 
 /**
  * The extension host's user-data directory, kept short and out of the checkout.

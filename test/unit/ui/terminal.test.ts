@@ -19,6 +19,13 @@ describe("Windows terminal commands", () => {
     expect(state.configuration.size).toBe(0);
     expect(state.info[0]?.message).toContain("native Windows");
   });
+  it("can disable a persisted Windows repair preference from another host", async () => {
+    state.configuration.set(SETTING, true);
+    await configureWindowsTerminal(undefined, false);
+    expect(state.configuration.get(SETTING)).toBe(false);
+    expect(state.info[0]?.message).toContain("preference is disabled");
+    expect(state.info[0]?.message).toContain("terminals were unchanged");
+  });
   it("requires explicit consent", async () => {
     const f = support();
     await configureWindowsTerminal(f.api, true);

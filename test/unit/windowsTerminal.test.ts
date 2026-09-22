@@ -199,6 +199,22 @@ describe("Windows terminal repair", () => {
     expect(f.deps.execFile).not.toHaveBeenCalled();
   });
 
+  it("does not execute a bundled binary through an aliased Unicode workspace root", async () => {
+    const f = fixture();
+    const workspace = "C:\\Users\\Example User\\工作 区";
+    const alias = "C:\\Users\\EXAMPL~1\\WORKSP~1";
+    const root = path.join(workspace, "anthropic.claude-code-2.1.267-win32-x64");
+    const binary = path.join(root, "resources", "native-binary", "claude.exe");
+    f.files.clear();
+    f.files.add(binary);
+    f.deps.extensionPath = () => root;
+    f.deps.workspaceFolders = () => [alias];
+    f.deps.realpath = async (file) => (file === alias ? workspace : file);
+
+    expect(await f.support.refresh()).toEqual({ kind: "blocked", reason: "bundle" });
+    expect(f.deps.execFile).not.toHaveBeenCalled();
+  });
+
   it("re-resolves updates and clears the obsolete path after uninstall", async () => {
     const f = fixture();
     f.enable();

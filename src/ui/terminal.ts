@@ -71,6 +71,15 @@ export async function configureWindowsTerminal(
   enabled: boolean,
 ): Promise<void> {
   if (support === undefined) {
+    if (!enabled) {
+      await vscode.workspace
+        .getConfiguration()
+        .update(SETTING, false, vscode.ConfigurationTarget.Global);
+      await vscode.window.showInformationMessage(
+        "The Claude terminal repair preference is disabled. This window is not native Windows, so its terminals were unchanged.",
+      );
+      return;
+    }
     await vscode.window.showInformationMessage(
       "This terminal repair is available in native Windows VS Code windows only. WSL and remote hosts are unchanged.",
     );
