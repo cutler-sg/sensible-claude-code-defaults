@@ -16,7 +16,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { assertOutsideWorkspace } from "./paths.js";
 import { serialize } from "./reader.js";
-import { type BackupInfo, ConfigError, type FileStyle, type Settings } from "./types.js";
+import {
+  type BackupInfo,
+  ConfigError,
+  type FileStyle,
+  type ReadResult,
+  type Settings,
+} from "./types.js";
 import { ensureWindowsAcl, type WindowsAclDeps } from "./windowsAcl.js";
 
 const MODE_0600 = 0o600;
@@ -91,6 +97,89 @@ export async function writeRawAtomic(
   opts: WriteOptions,
 ): Promise<void> {
   await writeBytesAtomic(file, Buffer.from(text, "utf8"), opts);
+}
+
+/**
+ * Undo our just-completed settings write when the matching ownership snapshot
+ * could not be saved. The byte comparison is load-bearing: snapshot stores may
+ * be slow or remote, and a user edit made while one is failing must win over
+ * our rollback just as it wins over a stale plan.
+ *
+ * Returns false when the live file is no longer the write we were asked to
+ * undo. In that case nothing is changed and the caller still reports the
+ * original snapshot failure.
+ */
+export async function rollbackSettings(
+  file: string,
+  original: ReadResult,
+  writtenRaw: string,
+  opts: WriteOptions,
+): Promise<boolean> {
+  const platform = opts.platform ?? process.platform;
+  assertOutsideWorkspace(file, opts.workspaceFolders, platform);
+
+  let current: Buffer;
+  try {
+    current = await fs.readFile(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  if (!current.equals(Buffer.from(writtenRaw, "utf8"))) return false;
+
+  if (original.kind !== "absent") {
+    await writeRawAtomic(file, original.raw, opts);
+    return true;
+  }
+
+  // The failed transaction created this file. Resolve and guard the actual
+  // target exactly as the writer did, then return the filesystem to "absent".
+  const target = await resolveTarget(file);
+  assertOutsideWorkspace(target, opts.workspaceFolders, platform);
+  await fs.rm(target);
+  await syncDirectory(path.dirname(target));
+  return true;
+}
+
+/** Whether the live settings bytes are still exactly a selected backup. */
+export async function settingsMatchBackup(
+  file: string,
+  backup: string,
+  opts: WriteOptions,
+): Promise<boolean> {
+  const platform = opts.platform ?? process.platform;
+  assertOutsideWorkspace(file, opts.workspaceFolders, platform);
+  assertOutsideWorkspace(backup, opts.workspaceFolders, platform);
+  assertOutsideWorkspace(await resolveTarget(backup), opts.workspaceFolders, platform);
+  const [current, saved] = await Promise.all([fs.readFile(file), fs.readFile(backup)]);
+  return current.equals(saved);
+}
+
+/**
+ * Undo a restore whose matching ownership update failed. Both comparisons are
+ * byte-exact because backups may contain malformed JSON or invalid UTF-8 that
+ * still belongs to the user. A live file that no longer matches the restored
+ * bytes is not overwritten.
+ */
+export async function rollbackRestore(
+  file: string,
+  restoredBackup: string,
+  previousBackup: string | undefined,
+  opts: WriteOptions,
+): Promise<boolean> {
+  const platform = opts.platform ?? process.platform;
+  if (!(await settingsMatchBackup(file, restoredBackup, opts))) return false;
+
+  if (previousBackup !== undefined) {
+    await restoreBackup(previousBackup, file, opts);
+    return true;
+  }
+
+  const target = await resolveTarget(file);
+  assertOutsideWorkspace(target, opts.workspaceFolders, platform);
+  await fs.rm(target);
+  await syncDirectory(path.dirname(target));
+  return true;
 }
 
 /** `writeRawAtomic` for callers that already hold bytes and must not transcode. */
@@ -227,6 +316,26 @@ export async function pruneBackups(
 ): Promise<string[]> {
   const backups = await listBackups(backupsDir);
   const doomed = backups.slice(Math.max(keep, 0));
+  await Promise.all(doomed.map((backup) => fs.rm(backup.path, { force: true })));
+  return doomed.map((backup) => backup.path);
+}
+
+/**
+ * Retain `keep` recovery points without deleting one another window may have
+ * already selected. The oldest unprotected entries are removed first.
+ */
+export async function pruneBackupsPreserving(
+  backupsDir: string,
+  keep: number,
+  preserve: readonly string[],
+): Promise<string[]> {
+  const backups = await listBackups(backupsDir);
+  const count = Math.max(backups.length - Math.max(keep, 0), 0);
+  const protectedPaths = new Set(preserve);
+  const doomed = backups
+    .filter((backup) => !protectedPaths.has(backup.path))
+    .reverse()
+    .slice(0, count);
   await Promise.all(doomed.map((backup) => fs.rm(backup.path, { force: true })));
   return doomed.map((backup) => backup.path);
 }
