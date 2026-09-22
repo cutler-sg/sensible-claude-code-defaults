@@ -7,10 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-22
+
 ### Fixed
 
 - Concurrent windows no longer overwrite recovery backups created in the same millisecond; existing timestamp-only backups remain available.
 - The last-applied snapshot now uses the same atomic, private Windows DACL write path as settings and backups.
+- Failed configuration applies and restores recover matching settings and ownership state while preserving user edits made during recovery.
+- Restoring the oldest backup at the retention limit no longer removes it before it can be read; repeated restores keep distinct undo points.
+- Windows terminal discovery checks resolved workspace roots, including junctions and short paths, before trusting an executable.
+- Disable Claude Terminal Repair can clear a persisted preference on non-Windows hosts and accurately reports that their terminals were unchanged.
+
+### Compatibility
+
+- Verified configuration paths containing spaces, Unicode and apostrophes across the existing platform CI matrix.
+- Retained VS Code 1.98 support and the compatible `@types/vscode ~1.98.0` constraint.
 
 ## [0.2.2] - 2026-09-12
 
