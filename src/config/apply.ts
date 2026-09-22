@@ -39,8 +39,11 @@ import {
   ensurePrivate,
   type ModeRepair,
   pruneBackups,
+  pruneBackupsPreserving,
   restoreBackup,
+  rollbackRestore,
   rollbackSettings,
+  settingsMatchBackup,
   type WriteOptions,
   writeSettingsAtomic,
 } from "./writer.js";
@@ -335,9 +338,39 @@ export async function restore(
   // Always, never once-per-session: the restore confirmation tells the user
   // their current settings are saved first, and that has to be true on the
   // second restore of a window as well as the first.
-  await backupOnce(env, session, opts, true);
-  await restoreBackup(backupPath, file, opts);
-  await forgetOwnership(env);
+  // Do not enforce retention until the selected backup has been consumed. At
+  // the ten-file limit, creating this mandatory undo point otherwise makes the
+  // selected oldest backup number eleven and deletes it before the read below.
+  const previous = await backupOnce(env, session, opts, true, false);
+  let restoreWriteError: unknown;
+  try {
+    await restoreBackup(backupPath, file, opts);
+  } catch (error) {
+    // Like the ordinary settings writer, restore can throw after its rename
+    // while tightening permissions. Clear ownership only when the selected
+    // bytes really did land; otherwise the failed write claims nothing.
+    const restored = await settingsMatchBackup(file, backupPath, opts).catch(() => false);
+    if (!restored) throw error;
+    restoreWriteError = error;
+  }
+  try {
+    await forgetOwnership(env);
+  } catch (error) {
+    // A state write may throw after its rename, so first ask whether managed
+    // ownership is already gone. If the old ownership is still durable, put
+    // the live file back from the forced pre-restore backup. The byte guard in
+    // `rollbackRestore` leaves any concurrent user edit untouched.
+    const forgotten = await env.snapshotStore
+      .load()
+      .then((snapshot) => MANAGED_KEYS.every((key) => snapshot.values[key] === undefined))
+      .catch(() => undefined);
+    if (forgotten === false) {
+      await rollbackRestore(file, backupPath, previous?.path, opts);
+    }
+    throw error;
+  }
+  await pruneBackupsPreserving(backupsDir(env.claudeDir), BACKUP_RETENTION, [backupPath]);
+  if (restoreWriteError !== undefined) throw restoreWriteError;
 }
 
 /**
@@ -373,6 +406,7 @@ async function backupOnce(
   session: ApplySession,
   opts: WriteOptions,
   force = false,
+  prune = true,
 ): Promise<BackupInfo | undefined> {
   if (session.backedUp && !force) {
     return undefined;
@@ -383,7 +417,7 @@ async function backupOnce(
   // pre-session state *is* "no file", and a later write in the same session
   // must not back up a file we ourselves created.
   session.backedUp = true;
-  if (info !== undefined) {
+  if (info !== undefined && prune) {
     await pruneBackups(dir, BACKUP_RETENTION);
   }
   return info;
