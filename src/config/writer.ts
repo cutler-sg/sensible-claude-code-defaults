@@ -16,7 +16,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { assertOutsideWorkspace } from "./paths.js";
 import { serialize } from "./reader.js";
-import { type BackupInfo, ConfigError, type FileStyle, type Settings } from "./types.js";
+import {
+  type BackupInfo,
+  ConfigError,
+  type FileStyle,
+  type ReadResult,
+  type Settings,
+} from "./types.js";
 import { ensureWindowsAcl, type WindowsAclDeps } from "./windowsAcl.js";
 
 const MODE_0600 = 0o600;
@@ -91,6 +97,48 @@ export async function writeRawAtomic(
   opts: WriteOptions,
 ): Promise<void> {
   await writeBytesAtomic(file, Buffer.from(text, "utf8"), opts);
+}
+
+/**
+ * Undo our just-completed settings write when the matching ownership snapshot
+ * could not be saved. The byte comparison is load-bearing: snapshot stores may
+ * be slow or remote, and a user edit made while one is failing must win over
+ * our rollback just as it wins over a stale plan.
+ *
+ * Returns false when the live file is no longer the write we were asked to
+ * undo. In that case nothing is changed and the caller still reports the
+ * original snapshot failure.
+ */
+export async function rollbackSettings(
+  file: string,
+  original: ReadResult,
+  writtenRaw: string,
+  opts: WriteOptions,
+): Promise<boolean> {
+  const platform = opts.platform ?? process.platform;
+  assertOutsideWorkspace(file, opts.workspaceFolders, platform);
+
+  let current: Buffer;
+  try {
+    current = await fs.readFile(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  if (!current.equals(Buffer.from(writtenRaw, "utf8"))) return false;
+
+  if (original.kind !== "absent") {
+    await writeRawAtomic(file, original.raw, opts);
+    return true;
+  }
+
+  // The failed transaction created this file. Resolve and guard the actual
+  // target exactly as the writer did, then return the filesystem to "absent".
+  const target = await resolveTarget(file);
+  assertOutsideWorkspace(target, opts.workspaceFolders, platform);
+  await fs.rm(target);
+  await syncDirectory(path.dirname(target));
+  return true;
 }
 
 /** `writeRawAtomic` for callers that already hold bytes and must not transcode. */

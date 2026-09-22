@@ -10,10 +10,11 @@
  * Invariant: nothing here imports `vscode`; the host injects `ConfigEnv`.
  */
 
+import { isDeepStrictEqual } from "node:util";
 import { getPath, isElementOwned, isJsonObject } from "./managedKeys.js";
 import { deepEqual, merge } from "./merge.js";
 import { assertOutsideWorkspace, backupsDir, settingsPath } from "./paths.js";
-import { readSettings } from "./reader.js";
+import { readSettings, serialize } from "./reader.js";
 import {
   type BackupInfo,
   type Change,
@@ -39,6 +40,7 @@ import {
   type ModeRepair,
   pruneBackups,
   restoreBackup,
+  rollbackSettings,
   type WriteOptions,
   writeSettingsAtomic,
 } from "./writer.js";
@@ -237,7 +239,19 @@ export async function commit(
   }
 
   const backup = await backupOnce(env, session, opts, meta?.forceBackup === true);
-  await writeSettingsAtomic(file, next, planned.style, opts);
+  const writtenRaw = serialize(next, planned.style);
+  let settingsWriteError: unknown;
+  try {
+    await writeSettingsAtomic(file, next, planned.style, opts);
+  } catch (error) {
+    // `writeSettingsAtomic` can fail after its atomic rename, notably when a
+    // POSIX filesystem refuses the subsequent chmod. Advance ownership only
+    // when the exact intended bytes did land; any other outcome remains an
+    // ordinary failed settings write and must not claim user data.
+    const current = await readSettings(file).catch(() => undefined);
+    if (current?.kind !== "ok" || current.raw !== writtenRaw) throw error;
+    settingsWriteError = error;
+  }
 
   const snapshot: Snapshot = {
     schemaVersion: 1,
@@ -245,10 +259,30 @@ export async function commit(
     appliedAt: clock(env)().toISOString(),
     ...(meta?.manifestRevision === undefined ? {} : { manifestRevision: meta.manifestRevision }),
   };
-  // Rethrows on failure: a settings file we wrote without a matching snapshot
-  // reads as drift next time, which preserves the user's file. That is the
-  // failure we want.
-  await env.snapshotStore.save(snapshot);
+  try {
+    await env.snapshotStore.save(snapshot);
+  } catch (error) {
+    // Settings and ownership are one logical transaction. Without this
+    // compensation, a later manifest sees values from the failed apply as
+    // unowned user drift and can never upgrade them. An atomic state write can
+    // throw after its rename (for example while tightening permissions), so
+    // first check whether the intended snapshot is already durable. Rolling
+    // settings back behind a new snapshot would be the more dangerous split.
+    const saved = await env.snapshotStore
+      .load()
+      .then((current) => isDeepStrictEqual(current, snapshot))
+      .catch(() => undefined);
+    if (saved === false) {
+      // Roll back only while the live bytes are still exactly ours; a
+      // concurrent user edit always wins.
+      await rollbackSettings(file, planned.read, writtenRaw, opts);
+    }
+    throw error;
+  }
+
+  // The transaction is internally consistent, but permission hardening still
+  // failed and needs to remain visible to the caller and health check.
+  if (settingsWriteError !== undefined) throw settingsWriteError;
 
   return { written: true, reason: undefined, backup, changes, drift };
 }
