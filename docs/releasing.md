@@ -1,14 +1,30 @@
 # Marketplace release runbook
 
-The publisher is `cutler-sg`. Releases use the pre-release channel and Entra
-workload identity federation through the `marketplace-publish` environment.
+The publisher is `cutler-sg`. Releases publish through Entra workload identity
+federation in the `marketplace-publish` environment.
 Pushing a `v*` tag starts `.github/workflows/release.yml`; merging a version
 bump alone does not publish anything.
+
+## Channel: the minor version decides it
+
+This follows VS Code's convention. An **even** minor (`0.2.x`, `1.0.x`) publishes
+a stable release. An **odd** minor (`0.3.x`, `1.1.x`) publishes to the
+pre-release channel. The Release workflow reads the channel from the tag and
+fails if the tag and `package.json` disagree.
+
+- A published version can never change channel. To promote a pre-release, publish
+  a higher even-minor version.
+- VS Code installs the highest version available, so a pre-release numbered above
+  the latest stable reaches only users who opted in. The next stable release
+  must be numbered above it.
+- Stable users auto-update to anything published on an even minor. Complete the
+  manual checks you depend on before tagging one.
 
 ## Prepare and validate
 
 1. Pull main with `git pull --ff-only`, then create a release branch.
-2. Update `package.json` and `CHANGELOG.md` for the intended patch/minor version.
+2. Update `package.json` and `CHANGELOG.md` for the intended version. Pick the
+   minor for the channel you want (see above).
    Keep `@types/vscode ~1.98.0` while supporting VS Code 1.98.
 3. Run `bun install --frozen-lockfile`, `bun audit`, `bun run lint`,
    `bun run typecheck`, `bun run test`, and `bun run package`.
@@ -36,9 +52,10 @@ git push origin v<VERSION>
 ```
 
 Watch the Release workflow to completion. Confirm the Marketplace publish step
-actually ran; a green workflow with skipped publishing is not a release. Fetch
-the workflow's `vsix` artifact and attach it to a GitHub pre-release with the
-release notes. Verify the published Marketplace version using the registry API;
+actually ran, and that the *Resolve release channel* notice names the channel
+you intended. A green workflow with skipped publishing is not a release. Fetch
+the workflow's `vsix` artifact and attach it to a GitHub release with the
+release notes; mark it as a pre-release only for odd-minor versions. Verify the published Marketplace version using the registry API;
 search indexing and client auto-updates may lag the direct listing.
 
 Open VSX publishing is conditional on `OVSX_PAT`; namespace/token setup is still

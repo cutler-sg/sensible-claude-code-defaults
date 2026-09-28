@@ -6,7 +6,7 @@
 **Package name:** `sensible-claude-code-defaults`
 **Extension ID:** `cutler-sg.sensible-claude-code-defaults`
 **Repository:** `$HOME/workspaces/cutler-sg/sensible-claude-code-defaults`
-**Target registries:** Visual Studio Marketplace (pre-release); Open VSX setup pending
+**Target registries:** Visual Studio Marketplace (stable from 0.2.6; odd minors are pre-releases); Open VSX setup pending
 **Last updated:** 2026-09-28
 
 ---
@@ -488,12 +488,13 @@ Open VSX uses a separate GitHub-linked token and requires a namespace created on
 
 **Per release:** follow [the release runbook](releasing.md). Validate and merge
 the exact release commit before pushing its individual annotated tag. The tag
-publishes a Marketplace pre-release; Open VSX is skipped until its token is
+publishes to the Marketplace. An even minor is a stable release and an odd minor
+is a pre-release (see the runbook). Open VSX is skipped until its token is
 configured. Preparing or merging a version bump does not publish it.
 
 There is **no human review queue**. An automated scan runs and the listing goes live within minutes. Expect search indexing to lag the direct item URL. Client-side auto-update is held for roughly two hours for non-trusted publishers while scanning completes — plan the update cadence around this, and keep fast-moving values in the manifest rather than the VSIX.
 
-Consider shipping the first releases with `--pre-release` and dogfooding with known users before promoting to stable.
+The first releases (0.1.0–0.2.5) shipped as pre-releases for dogfooding. 0.2.6 is the first stable release (2026-09-28, MC's call).
 
 ## 10. Testing
 

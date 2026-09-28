@@ -42,6 +42,25 @@ jobs:
       - name: Test
         run: bun run test
 
+      # VS Code's convention: an even minor is a stable release, an odd minor a
+      # pre-release. A published version cannot change channel afterwards, so the
+      # tag alone decides it here and must agree with package.json.
+      - name: Resolve release channel
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          manifest="$(node -p 'require("./package.json").version')"
+          if [ "$version" != "$manifest" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $manifest"
+            exit 1
+          fi
+          minor="$(echo "$version" | cut -d. -f2)"
+          if [ $((minor % 2)) -eq 1 ]; then
+            echo "PRE_RELEASE_FLAG=--pre-release" >> "$GITHUB_ENV"
+            echo "::notice::$version publishes to the pre-release channel (odd minor)"
+          else
+            echo "::notice::$version publishes as a stable release (even minor)"
+          fi
+
       - name: Package
         run: bun run package
 
@@ -67,8 +86,8 @@ jobs:
 
       - name: Publish to VS Code Marketplace
         if: ${{ env.HAS_AZURE == 'true' }}
-        run: bunx vsce publish --azure-credential --pre-release --no-dependencies
+        run: bunx vsce publish --azure-credential $PRE_RELEASE_FLAG --no-dependencies
 
       - name: Publish to Open VSX
         if: ${{ env.HAS_OVSX == 'true' }}
-        run: bunx ovsx publish --pre-release -p "${{ secrets.OVSX_PAT }}"
+        run: bunx ovsx publish $PRE_RELEASE_FLAG -p "${{ secrets.OVSX_PAT }}"
