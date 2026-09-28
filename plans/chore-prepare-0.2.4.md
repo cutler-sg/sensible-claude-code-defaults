@@ -21,7 +21,8 @@ merging maintenance work, and preparing the next VS Code Marketplace release.
 - [x] Pull main, verify repository/account, and inspect the PRD and latest CI.
 - [x] Fix dependency automation, refresh compatible dependencies, and validate
   (completed 2026-09-28; schema validation, frozen install, and audit pass).
-- [ ] Require macOS integration tests and add CodeQL analysis.
+- [x] Require macOS integration tests and add CodeQL analysis (completed
+  2026-09-28; actionlint passes; remote execution is checked before merging).
 - [ ] Refresh stale project guidance and prepare 0.2.4 metadata and release notes.
 - [ ] Validate the VSIX, supported VS Code versions, and the complete local suite.
 - [ ] Push and link the PR, verify CI, merge, and confirm clean main.
@@ -57,3 +58,5 @@ merging maintenance work, and preparing the next VS Code Marketplace release.
 - A deliberate failed assertion through Mocha 11's parallel runner verifies
   patched serialization and assertion-diff rendering, with the expected exit 1.
 - Dependabot configuration passes the current SchemaStore schema.
+- All GitHub workflows pass actionlint. CI packaging and release publishing now
+  require a clean dependency audit; the macOS integration step is blocking.
