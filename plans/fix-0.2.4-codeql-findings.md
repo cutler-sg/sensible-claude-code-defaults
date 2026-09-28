@@ -19,8 +19,11 @@ Marketplace release. This follows maintenance PR #39; 0.2.4 is not published.
 - [x] Investigate alerts #1 and #2 from the first main-branch CodeQL baseline.
 - [x] Fix suffix parsing and the case-sensitive HTML assertion; verify regressions
   (completed 2026-09-28).
-- [ ] Update release notes and validate tests, extension hosts, and packaging.
-- [ ] Open/link a follow-up PR and record its CI/merge status on GitHub.
+- [x] Update release notes and validate tests, extension hosts, and packaging
+  (completed 2026-09-28).
+- [x] Open/link [PR #40](https://github.com/cutler-sg/sensible-claude-code-defaults/pull/40)
+  (completed 2026-09-28). The PR and session handoff record final CI and merge
+  evidence; main-branch alert resolution is checked after the merge.
 
 ## Evidence
 
@@ -39,3 +42,8 @@ Marketplace release. This follows maintenance PR #39; 0.2.4 is not published.
 - Temporarily replacing the rendered script opening tag with `<SCRIPT>` made
   the nonce assertions fail as intended; the original renderer was restored.
 - Lint/typecheck pass; the full unit suite passes 1,986 tests with two skips.
+- VS Code 1.98.2 and stable 1.139.1 each pass seven extension-host tests, with
+  the Windows-only case skipped on Linux. The dependency audit remains clean.
+- The rebuilt VSIX contains 11 files with the updated bundle and release notes,
+  the correct publisher/version/API floor, and unchanged manifest defaults.
+  It contains no node_modules, source maps, or extensionKind override.

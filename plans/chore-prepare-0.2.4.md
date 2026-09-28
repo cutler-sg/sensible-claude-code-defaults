@@ -4,6 +4,10 @@ Branch: `chore/prepare-0.2.4`
 Authorization: Michael requested pulling main, updating dependencies, fixing and
 merging maintenance work, and preparing the next VS Code Marketplace release.
 
+The first full main-branch CodeQL scan after PR #39 found two existing issues.
+`plans/fix-0.2.4-codeql-findings.md` records their resolution and supersedes the
+initial candidate checksum below. Version 0.2.4 remains unpublished.
+
 ## Acceptance criteria
 
 - Dependabot uses Bun, updates its lockfile, and retains the VS Code 1.98 type cap.
