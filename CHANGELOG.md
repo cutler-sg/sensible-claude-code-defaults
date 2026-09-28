@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-09-28
+
+First stable release. Earlier versions were published only to the pre-release channel. VS Code moves existing pre-release users onto this version automatically, and new installs get it by default.
+
+### Maintenance
+
+- The release channel now follows VS Code's convention. An even minor version (0.2.x) publishes a stable release; an odd minor (0.3.x) publishes a pre-release. The release workflow reads the channel from the tag and fails if the tag and `package.json` disagree.
+
 ## [0.2.5] - 2026-09-28
 
 0.2.4 was prepared but never published to the Marketplace; its fixes below ship to users in this release.

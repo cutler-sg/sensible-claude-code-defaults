@@ -1,6 +1,6 @@
 # Corporate-device retest
 
-Install the candidate VSIX under test (or the latest Marketplace pre-release),
+Install the candidate VSIX under test (or the latest Marketplace release),
 then **Developer: Reload Window**. Record the tested version with the results.
 Do not install it on a device unless its software policy permits it.
 
