@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Version checks discard pre-release/build suffixes in linear time, avoiding an extension-host stall on unusually long malformed version strings.
+- Long URLs and diagnostic text wrap within the setup sidebar instead of requiring horizontal scrolling.
+- Setup buttons and progress markers remain visible in high-contrast themes.
 
 ### Maintenance
 
