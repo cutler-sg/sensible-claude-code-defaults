@@ -19,7 +19,8 @@ merging maintenance work, and preparing the next VS Code Marketplace release.
 ## Tasks
 
 - [x] Pull main, verify repository/account, and inspect the PRD and latest CI.
-- [ ] Fix dependency automation, refresh compatible dependencies, and validate.
+- [x] Fix dependency automation, refresh compatible dependencies, and validate
+  (completed 2026-09-28; schema validation, frozen install, and audit pass).
 - [ ] Require macOS integration tests and add CodeQL analysis.
 - [ ] Refresh stale project guidance and prepare 0.2.4 metadata and release notes.
 - [ ] Validate the VSIX, supported VS Code versions, and the complete local suite.
@@ -37,8 +38,22 @@ merging maintenance work, and preparing the next VS Code Marketplace release.
 
 - Dependabot run 36161518016 failed with `misconfigured_tooling`: the npm
   ecosystem cannot update this repository's `bun.lock`; it requires `bun`.
+- `bun audit` found three advisories in the test CLI's Mocha 11 tree despite
+  GitHub reporting no Dependabot alerts. Neither Mocha 11 nor the test CLI has
+  a patched release. Override `diff` and `serialize-javascript` to the patched
+  lines already used by direct Mocha 12, and verify the extension-host runner.
 - CI run 35682780191 passed all platforms; macOS passed 1,984 unit tests and
   seven extension-host tests. `.vscode-test.mjs` already isolates configuration
   without redirecting HOME, resolving the hang mentioned in the stale workflow.
 - This is release preparation. Pushing `v0.2.4` would invoke Marketplace
   publishing; the prepared version is merged without triggering that workflow.
+
+## Local validation
+
+- Lint and typecheck pass; 1,984 unit tests pass and two platform tests skip.
+- `bun audit` reports no vulnerabilities, including development dependencies.
+- VS Code 1.98.2 and stable 1.139.1 each pass seven extension-host tests; the
+  native Windows test is correctly pending on Linux.
+- A deliberate failed assertion through Mocha 11's parallel runner verifies
+  patched serialization and assertion-diff rendering, with the expected exit 1.
+- Dependabot configuration passes the current SchemaStore schema.
