@@ -416,7 +416,8 @@ sensible-claude-code-defaults/
 ├── test/
 │   ├── unit/
 │   └── integration/
-├── media/icon.png                # 128×128
+├── media/icon.png                # 128×128 listing icon, rendered from media/icon-master.svg
+├── media/activity-icon.svg       # currentColor activity-bar glyph
 ├── docs/PRD.md                   # this document — source of truth
 ├── esbuild.js
 ├── package.json
@@ -447,7 +448,7 @@ sensible-claude-code-defaults/
   "main": "./dist/extension.js",
   "capabilities": { "untrustedWorkspaces": { "supported": true } },
   "contributes": {
-    "viewsContainers": { "activitybar": [{ "id": "sensibleDefaults", "title": "Sensible Defaults", "icon": "media/icon.svg" }] },
+    "viewsContainers": { "activitybar": [{ "id": "sensibleDefaults", "title": "Sensible Defaults", "icon": "media/activity-icon.svg" }] },
     "views": { "sensibleDefaults": [{ "id": "sensibleDefaults.health", "name": "Configuration Health" }] },
     "commands": [ /* per FR-6 */ ],
     "configuration": {

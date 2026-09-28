@@ -19,7 +19,7 @@ Anthropic, PBC.**
 
 ## Getting started
 
-Click the wrench-and-tick icon in the activity bar on the left. The panel
+Click the braces-and-heartbeat icon in the activity bar on the left. The panel
 that opens does the rest:
 
 1. **Set up now.** One button.
