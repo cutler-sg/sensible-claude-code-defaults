@@ -29,9 +29,14 @@ Tasks:
   0.2.5, has no `extensionKind`, no maps, and no `node_modules`.
 - [x] Extension-host suite: stable and 1.98.2 each pass 7 tests with 1 pending
   (a platform skip).
-- [ ] PR CI green, then squash-merge.
-- [ ] Tag, verify the release workflow and the Marketplace version, then
-  create the GitHub pre-release.
+- [x] PR CI green (all platforms, package, CodeQL with 0 open alerts); squash-merged
+  as `dda0be0`. Main CI run 36401680270 passed.
+- [x] Tagged `v0.2.5` on `dda0be0`. Release run 36401864743 published to the
+  Marketplace (`Published cutler-sg.sensible-claude-code-defaults v0.2.5`) and
+  skipped Open VSX (no token yet). The registry API showed 0.2.5 as a
+  pre-release about 4 minutes later, and the live listing icon is
+  byte-identical to `media/icon.png`. The GitHub pre-release
+  v0.2.5 carries the workflow's VSIX.
 
 Outstanding manual checks: view the new icon in a real VS Code window (the
 Extensions list and the activity bar, on dark and light themes). The existing
