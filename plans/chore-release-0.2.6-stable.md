@@ -28,9 +28,14 @@ Tasks:
   with 2 skipped; the 0.2.6 VSIX (10 files, 85.7 KB) has no `PreRelease`
   property. No extension code changed, so the extension-host suite was not
   rerun (it passed for 0.2.5 on the same code).
-- [ ] PR CI green, then squash-merge.
-- [ ] Tag, then verify the stable channel on the Marketplace and create the
-  GitHub release.
+- [x] PR CI green, squash-merged as `fad690e`; main CI passed. One Windows job
+  first failed downloading VS Code 1.139.1 (aborted three times, no test ran)
+  and passed on rerun.
+- [x] Tagged `v0.2.6` on `fad690e`. Release run 36403850034 noted "0.2.6
+  publishes as a stable release" and published to the Marketplace; Open VSX was
+  skipped. The registry API listed 0.2.6 without the `PreRelease` property
+  about 4 minutes later, and the listing page has no pre-release label. The
+  GitHub release v0.2.6 is marked Latest and carries the workflow's VSIX.
 
 Accepted risk: the 36 manual platform checks in `docs/manual-verification.md`
 are still unticked. MC chose to go stable on CI and desktop evidence.
