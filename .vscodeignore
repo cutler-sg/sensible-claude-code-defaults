@@ -1,6 +1,7 @@
 **
 !dist/**
-!media/**
+!media/icon.png
+!media/activity-icon.svg
 !manifest/**
 !README.md
 !CHANGELOG.md

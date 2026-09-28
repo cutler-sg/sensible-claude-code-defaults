@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- New icon: a heartbeat running through a pair of braces (your settings file, health-checked), replacing the wrench-and-tick. The Marketplace listing icon and the activity-bar glyph both use it; the gallery banner colour is unchanged.
+
 ## [0.2.4] - 2026-09-28
 
 ### Fixed
