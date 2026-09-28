@@ -183,17 +183,17 @@ export function esc(text: string): string {
 
 const STYLE = `
 :root { color-scheme: light dark; }
-body { margin: 0; padding: 12px 16px; font: var(--vscode-font-size) var(--vscode-font-family); color: var(--vscode-foreground); background: transparent; }
+body { margin: 0; padding: 12px 16px; font: var(--vscode-font-size) var(--vscode-font-family); color: var(--vscode-foreground); background: transparent; overflow-wrap: anywhere; }
 h1 { font-size: 1.1em; font-weight: 600; margin: 4px 0 8px; }
 p { margin: 8px 0; line-height: 1.45; }
 .muted { color: var(--vscode-descriptionForeground); }
 .step { color: var(--vscode-descriptionForeground); font-weight: 600; margin-bottom: 4px; }
 .progress { display: flex; align-items: center; gap: 0; margin: 0 0 14px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--vscode-descriptionForeground); opacity: .4; }
-.dot.on { background: var(--vscode-button-background); opacity: 1; }
+.dot.on { background: var(--vscode-progressBar-background); opacity: 1; }
 .bar { flex: 1; height: 2px; background: var(--vscode-descriptionForeground); opacity: .4; }
-.bar.on { background: var(--vscode-button-background); opacity: 1; }
-button.primary { display: block; width: 100%; margin: 14px 0 8px; padding: 8px 12px; border: none; border-radius: 2px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); font: inherit; cursor: pointer; }
+.bar.on { background: var(--vscode-progressBar-background); opacity: 1; }
+button.primary { display: block; width: 100%; margin: 14px 0 8px; padding: 8px 12px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 2px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); font: inherit; cursor: pointer; }
 button.primary:hover { background: var(--vscode-button-hoverBackground); }
 button.primary:disabled { opacity: .5; cursor: default; }
 button.primary:focus-visible, button.link:focus-visible, input:focus-visible, button.icon:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
