@@ -21,7 +21,8 @@ release, followed by computer-use testing in VS Code on `DISPLAY=:99`.
 - [x] Wrap long panel text and use the theme's button border and progress color.
 - [x] Retest the packaged extension and record evidence and limitations.
 - [x] Run lint, typecheck, the full unit suite, and production packaging.
-- [ ] Submit/link the PR and merge only after GitHub checks pass.
+- [x] Prepare the PR and validation handoff. CI and merge outcomes are tracked
+  in the PR and session summary; merge only after GitHub checks pass.
 
 ## Evidence
 
