@@ -66,7 +66,7 @@ describe("render: security posture, every state", () => {
       expect(out).toContain("default-src 'none'");
       expect(out).toContain(`'nonce-${NONCE}'`);
       // Every script and style tag is nonce'd; none is bare.
-      for (const tag of out.match(/<(script|style)\b[^>]*>/g) ?? []) {
+      for (const tag of out.match(/<(script|style)\b[^>]*>/gi) ?? []) {
         expect(tag).toContain(`nonce="${NONCE}"`);
       }
     },
