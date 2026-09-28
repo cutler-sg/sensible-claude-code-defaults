@@ -26,10 +26,7 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
  * stdout, and a health check must not fail because one of them is odd.
  */
 function parse(version: string): number[] {
-  const core = version
-    .trim()
-    .replace(/^v/, "")
-    .replace(/[-+].*$/, "");
+  const [core = ""] = version.trim().replace(/^v/, "").split(/[-+]/, 1);
   return core.split(".").map((segment) => {
     const value = Number.parseInt(segment, 10);
     return Number.isNaN(value) ? 0 : value;

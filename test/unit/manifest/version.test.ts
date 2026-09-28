@@ -29,6 +29,11 @@ describe("compareVersions", () => {
     expect(compareVersions(" v2.1.0 ", "2.1.0")).toBe(0);
   });
 
+  it.each(["-", "+"])("ignores a long multiline %s suffix", (marker) => {
+    const version = `1.98.0${marker.repeat(8_000)}\n.7`;
+    expect(compareVersions(version, "1.98.0")).toBe(0);
+  });
+
   it("treats unparseable segments as zero rather than throwing", () => {
     expect(compareVersions("2.x.1", "2.0.1")).toBe(0);
     expect(compareVersions("", "0.0.0")).toBe(0);
