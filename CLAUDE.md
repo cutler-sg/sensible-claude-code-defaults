@@ -12,11 +12,16 @@ Pay particular attention to:
   docs before coding against them; do not substitute recalled knowledge.
 - §5 FR-2 — the merge engine. Highest-risk area in the project.
 
-## Current milestone
-M0 and M1 only (see §11). Do not scaffold beyond what these need.
+## Current state
+The extension is published on the VS Code Marketplace as a pre-release. M0–M8
+implementation has shipped; this is maintenance work, not an initial scaffold.
+Use `CHANGELOG.md` and the current branch's plan in `plans/` for release scope.
+Historical milestone checklists are implementation records, not the live backlog.
+Manual platform checks remain in `docs/manual-verification.md`; Open VSX setup
+is still pending. See `docs/releasing.md` before tagging a release.
 
 ## Stack
-TypeScript, esbuild single-file bundle, Node 22, @vscode/vsce, ovsx.
+TypeScript, Bun, esbuild single-file bundle, Node 22+, @vscode/vsce, ovsx.
 No native modules — they must match VS Code's Electron ABI.
 
 ## Hard rules

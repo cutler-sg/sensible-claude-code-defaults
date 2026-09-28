@@ -23,8 +23,10 @@ merging maintenance work, and preparing the next VS Code Marketplace release.
   (completed 2026-09-28; schema validation, frozen install, and audit pass).
 - [x] Require macOS integration tests and add CodeQL analysis (completed
   2026-09-28; actionlint passes; remote execution is checked before merging).
-- [ ] Refresh stale project guidance and prepare 0.2.4 metadata and release notes.
-- [ ] Validate the VSIX, supported VS Code versions, and the complete local suite.
+- [x] Refresh stale project guidance and prepare 0.2.4 metadata and release notes
+  (completed 2026-09-28).
+- [x] Validate the VSIX, supported VS Code versions, and the complete local suite
+  (completed 2026-09-28; 0.2.4 packages successfully with 11 files).
 - [ ] Push and link the PR, verify CI, merge, and confirm clean main.
 
 ## External follow-ups
@@ -60,3 +62,8 @@ merging maintenance work, and preparing the next VS Code Marketplace release.
 - Dependabot configuration passes the current SchemaStore schema.
 - All GitHub workflows pass actionlint. CI packaging and release publishing now
   require a clean dependency audit; the macOS integration step is blocking.
+- The 0.2.4 VSIX has the correct publisher/version and VS Code 1.98 floor,
+  includes the bundled defaults and activity icon, and contains no node_modules,
+  source maps, or extensionKind override. Runtime source and manifest defaults
+  are identical to 0.2.3. All direct dependencies are current except the
+  intentional VS Code types cap.
