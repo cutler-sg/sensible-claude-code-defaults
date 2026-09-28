@@ -27,7 +27,13 @@ merging maintenance work, and preparing the next VS Code Marketplace release.
   (completed 2026-09-28).
 - [x] Validate the VSIX, supported VS Code versions, and the complete local suite
   (completed 2026-09-28; 0.2.4 packages successfully with 11 files).
-- [ ] Push and link the PR, verify CI, merge, and confirm clean main.
+- [x] Push and link [PR #39](https://github.com/cutler-sg/sensible-claude-code-defaults/pull/39)
+  (completed 2026-09-28). Final CI evidence and merge status are recorded on the
+  PR so this pre-merge checklist does not claim an unperformed merge.
+
+The final gate is all checks green on the PR's current commit, followed by a
+squash merge and a clean fast-forwarded main. The PR is the live record of that
+gate; the local session handoff records the merged SHA and release readiness.
 
 ## External follow-ups
 
@@ -67,3 +73,5 @@ merging maintenance work, and preparing the next VS Code Marketplace release.
   source maps, or extensionKind override. Runtime source and manifest defaults
   are identical to 0.2.3. All direct dependencies are current except the
   intentional VS Code types cap.
+- Candidate VSIX SHA-256:
+  `503363e4cde1cefe5f5af37b67d05c643ac5b6b50f39b45b4f1c869dfd66aab2`.
