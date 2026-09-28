@@ -3,7 +3,7 @@
   "displayName": "Sensible Claude Code Defaults",
   "description": "Set up and health-check Claude Code on AWS Bedrock: sensible defaults, guided Bedrock API key setup, and a panel that says what is wrong. An independent tool, not affiliated with Anthropic, PBC.",
   "publisher": "cutler-sg",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -282,20 +282,24 @@
     "vscode:prepublish": "node esbuild.js --production",
     "test:integration": "node esbuild.js && esbuild test/integration-vscode/*.spec.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:mocha --outdir=out/test/integration-vscode && vscode-test"
   },
+  "overrides": {
+    "diff": "^9.0.0",
+    "serialize-javascript": "^7.1.2"
+  },
   "devDependencies": {
-    "@biomejs/biome": "^2.3.14",
+    "@biomejs/biome": "^2.5.14",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^26.5.0",
+    "@types/node": "^26.6.3",
     "@types/vscode": "~1.98.0",
-    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/coverage-v8": "^5.0.2",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
-    "happy-dom": "^20.14.3",
-    "mocha": "^12.0.0",
-    "ovsx": "^1.1.1",
+    "happy-dom": "^20.14.5",
+    "mocha": "^12.0.2",
+    "ovsx": "^1.2.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.2"
   }
 }

@@ -18,11 +18,17 @@ of it is.
 
 ```sh
 bun install
+bun audit
 bun run lint && bun run typecheck && bun run test
 xvfb-run -a bun run test:integration   # Linux; bare on macOS and Windows
 ```
 
 ## Tests
+
+The `diff` and `serialize-javascript` overrides keep the Mocha 11 dependency
+inside `@vscode/test-cli` off vulnerable releases. They also satisfy our direct
+Mocha 12 dependency. Remove them when the test CLI accepts patched versions;
+verify both stable VS Code and the 1.98.2 API floor when changing this runner.
 
 Write the test with the code, not after. For anything security-relevant,
 mutate your own implementation and confirm the test fails. Several tests in

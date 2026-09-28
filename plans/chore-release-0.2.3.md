@@ -22,9 +22,11 @@ Tasks:
 - [x] Verify combined code: 1,984 tests passed, 2 skipped; lint and typecheck
   passed; VS Code 1.98.2 extension host passed 7 tests with 1 platform skip.
 - [x] Bump the patch version and document the reliability fixes.
-- [ ] Validate the versioned package and release PR CI.
-- [ ] Merge release metadata, push annotated tag, create GitHub pre-release,
-  and verify publishing outcomes.
+- [x] Validate the versioned package and release PR CI (verified 2026-09-28:
+  main CI run 35682780191 passed all platforms and packaging).
+- [x] Merge release metadata, push annotated tag, create GitHub pre-release,
+  and verify publishing outcomes (released 2026-09-22; release run 35682801979
+  published to Marketplace and skipped Open VSX because its token is absent).
 
 Platform limits: WSL2/Remote-SSH host placement and physical Keychain/DPAPI
 interaction remain manual checks. The automated platform matrix is green.

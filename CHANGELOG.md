@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-28
+
+### Maintenance
+
+- Restored automatic dependency updates by switching Dependabot to its Bun ecosystem while retaining VS Code 1.98 compatibility.
+- Updated development tools and patched three advisories in transitive test-runner dependencies. Test tooling is not included in the VSIX.
+- Made macOS extension-host failures block CI, added CodeQL analysis, and required a clean dependency audit before packaging or publishing.
+- Refreshed project guidance, platform retest instructions, and the Marketplace release runbook.
+
+### Compatibility
+
+- Verified the extension-host suite on VS Code 1.98.2 and current stable VS Code 1.139.1.
+- Extension behavior, model defaults, and the pre-release publishing channel are unchanged.
+
 ## [0.2.3] - 2026-09-22
 
 ### Fixed

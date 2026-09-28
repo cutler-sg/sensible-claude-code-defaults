@@ -1,6 +1,7 @@
-# Corporate-device retest — 0.2.2
+# Corporate-device retest
 
-Update to Marketplace pre-release **0.2.2**, then **Developer: Reload Window**.
+Install the candidate VSIX under test (or the latest Marketplace pre-release),
+then **Developer: Reload Window**. Record the tested version with the results.
 Do not install it on a device unless its software policy permits it.
 
 ## One-pass Windows checklist

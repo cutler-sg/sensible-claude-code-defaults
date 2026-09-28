@@ -1,13 +1,13 @@
 # Sensible Claude Code Defaults — Product & Engineering Requirements
 
-**Status:** Draft v1.3 (amended 2026-09-21 after recovery verification — see §19)
+**Status:** Implementation baseline v1.4 (maintenance status refreshed 2026-09-28 — see §19)
 **Owner:** MC
 **Display name:** `Sensible Claude Code Defaults`
 **Package name:** `sensible-claude-code-defaults`
-**Extension ID:** `<publisher>.sensible-claude-code-defaults` (publisher TBD — see §16 Q4)
+**Extension ID:** `cutler-sg.sensible-claude-code-defaults`
 **Repository:** `$HOME/workspaces/cutler-sg/sensible-claude-code-defaults`
-**Target registries:** Visual Studio Marketplace + Open VSX
-**Last updated:** 2026-09-21
+**Target registries:** Visual Studio Marketplace (pre-release); Open VSX setup pending
+**Last updated:** 2026-09-28
 
 ---
 
@@ -15,7 +15,7 @@
 
 The repository is at `$HOME/workspaces/cutler-sg/sensible-claude-code-defaults`. This document lives at `docs/PRD.md` and is the source of truth; `CLAUDE.md` at the repo root is the short working agreement that points here.
 
-Start with **M0 and M1 only** (§11). Do not scaffold the whole tree up front — build the merge engine and its tests before any UI exists, because §5 FR-2 is where the data-loss risk lives and everything else depends on it being right.
+M0–M8 implementation has shipped, including the guided webview added in 0.2.0 and the recovery fixes in 0.2.3. Use `CHANGELOG.md` and the current branch's plan in `plans/` for maintenance scope. Historical milestone checklists are not the live backlog. Physical platform verification and Open VSX setup remain outstanding; see `manual-verification.md` and `releasing.md`.
 
 Before writing code, read §14 (closed decisions) and §17 (verified external facts). Several plausible-looking approaches — a private extension gallery, `apiKeyHelper` for the Bedrock token, writing to `settings.local.json` — have already been investigated and ruled out for concrete reasons. Re-deriving them wastes a cycle each.
 
@@ -392,7 +392,7 @@ sensible-claude-code-defaults/
 │   │   ├── reader.ts             # read + parse + backup
 │   │   ├── writer.ts             # atomic write, permissions
 │   │   ├── merge.ts              # three-way merge (FR-2.2)
-│   │   └── snapshot.ts           # last-applied state in globalState
+│   │   └── snapshot.ts           # last-applied state in sensible-defaults/state.json
 │   ├── manifest/
 │   │   ├── fetch.ts              # remote fetch + cache + fallback
 │   │   ├── schema.ts             # validation
@@ -468,7 +468,7 @@ sensible-claude-code-defaults/
 ## 8. Build and CI
 
 - Node 22, TypeScript, esbuild, `@vscode/vsce`, `ovsx`.
-- `npm run package` → validated `.vsix`.
+- `bun run package` → validated `.vsix`.
 - GitHub Actions on tag `v*`: build → test → `vsce package` → publish to Marketplace → publish to Open VSX.
 
 **Authentication — decide before writing the workflow.** Azure DevOps retires global Personal Access Tokens on **1 December 2026**. Every tutorial describes the PAT flow; if the pipeline is built that way it will need rebuilding within weeks of launch. Use Microsoft Entra ID with workload identity federation (`vsce publish --azure-credential`) from the outset. If a PAT is used as a stopgap, it must have `Marketplace (Manage)` scope and **"All accessible organizations"** — the single-org default fails with an unhelpful error.
@@ -485,13 +485,10 @@ Open VSX uses a separate GitHub-linked token and requires a namespace created on
 4. Create the Open VSX namespace.
 5. Register the domain for eventual verification. Must be an apex domain — `cutler.io` qualifies, a `github.io` subdomain does not. Note that changing the publisher display name later revokes verification.
 
-**Per release:**
-
-```bash
-npm run test
-npx @vscode/vsce package                 # sanity check the .vsix locally
-git tag v0.1.0 && git push --tags        # CI publishes to both registries
-```
+**Per release:** follow [the release runbook](releasing.md). Validate and merge
+the exact release commit before pushing its individual annotated tag. The tag
+publishes a Marketplace pre-release; Open VSX is skipped until its token is
+configured. Preparing or merging a version bump does not publish it.
 
 There is **no human review queue**. An automated scan runs and the listing goes live within minutes. Expect search indexing to lag the direct item URL. Client-side auto-update is held for roughly two hours for non-trusted publishers while scanning completes — plan the update cadence around this, and keep fast-moving values in the manifest rather than the VSIX.
 
@@ -564,7 +561,7 @@ This is not ship-and-forget. Bedrock model IDs move, Claude Code's settings sche
 
 **D4 — `apiKeyHelper` is not used.** It cannot supply a Bedrock bearer token (see FR-4 preamble).
 
-**D5 — TreeView before webview.** Cost/benefit at v1 favours the native surface.
+**D5 — TreeView before webview.** The initial implementation used the native surface. M8 added the guided setup webview in 0.2.0, retaining the full check tree behind Details; see `plans/feat-m8-guided-setup.md`.
 
 **D6 — MCP servers, hooks, and commands ship as a Claude Code plugin, not as extension-written config.** Different cadence, better native tooling, and it keeps the extension thin.
 
@@ -588,10 +585,10 @@ This is not ship-and-forget. Bedrock model IDs move, Claude Code's settings sche
 
 ## 16. Open questions
 
-- **Q1** — Manifest hosting: GitHub raw (free, versioned, rate-limited) vs. S3+CloudFront (controllable, costs pennies). Leaning GitHub raw for v1.
+- **Q1 — Closed.** The manifest is published from `manifest/defaults.json` on the repository's main branch via GitHub raw, with cached and bundled fallbacks.
 - **Q2** — Should the extension offer to install the Claude Code plugin marketplace, or just report on it? Reporting is safer for v1.
 - **Q3** — SSO / `awsAuthRefresh` support: strictly better than bearer tokens where Identity Center exists. Deferred to v2, but keep the credential layer abstract enough not to preclude it.
-- **Q4 — BLOCKS M0.** Publisher ID: `cutler` vs. `carrotly-ai`. Effectively permanent, prefixes the extension ID forever, renders under the title in every listing, and determines which apex domain can be verified later (`cutler.io` vs. the carrotly domain — subdomains are not eligible). This is the last open naming decision; M0 cannot start until it is made, and the six-month verification clock does not start until the publisher exists.
+- **Q4 — Closed.** The Marketplace publisher is `cutler-sg`, created on 2026-09-11 with the `cutler.sg` domain. Marketplace publishing uses Entra workload identity federation. The matching Open VSX namespace/token setup remains pending.
 - **Q5** — Should a stale manifest (> 30 days uncached) escalate above info level?
 
 ---
@@ -631,5 +628,6 @@ Facts checked against live Claude Code, AWS, and Marketplace documentation while
 
 ## 19. Change log
 
+- **2026-09-28 v1.4** — Reconciled project status, publisher identity, manifest hosting, snapshot location, and publishing instructions with the released implementation. Historical external facts remain dated evidence, not claims that those services are unchanged.
 - **2026-09-21 v1.3** — FR-2.4 backup names gained a UUID suffix so concurrent windows cannot overwrite recovery points created in the same millisecond; legacy names remain supported.
 - **2026-09-10 v1.2** — FR-1.2 honours `CLAUDE_CONFIG_DIR`; FR-2.2 snapshot moved from `globalState` to `sensible-defaults/state.json`, element-level ownership and removal semantics added; FR-2.4 backup path moved under `sensible-defaults/backups/`, restore drops the snapshot; §4.2 table and §7 engine comment corrected; §17 region and engine-floor facts corrected; §18 added. Rationale and the full decision log: `plans/feat-m0-scaffold.md`.
