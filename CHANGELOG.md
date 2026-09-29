@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The recommended Opus model is now Claude Opus 5.5 (`global.anthropic.claude-opus-5-5`), replacing Claude Opus 5. Existing installs pick this up from the published defaults within about an hour, without an extension update. The panel then offers *Apply update*, and a hand-edited Opus model is kept and reported as drift, never overwritten.
+
 ## [0.2.6] - 2026-09-28
 
 First stable release. Earlier versions were published only to the pre-release channel. VS Code moves existing pre-release users onto this version automatically, and new installs get it by default.

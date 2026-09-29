@@ -94,7 +94,7 @@ extension set each one to:
 |---|---|---|
 | `env.CLAUDE_CODE_USE_BEDROCK` | Talk to AWS instead of Anthropic directly | `"1"` |
 | `env.AWS_REGION` | Which AWS region your Bedrock models are called in | `us-east-1` |
-| `env.ANTHROPIC_DEFAULT_OPUS_MODEL` | Which model "Opus" means | `global.anthropic.claude-opus-5` |
+| `env.ANTHROPIC_DEFAULT_OPUS_MODEL` | Which model "Opus" means | `global.anthropic.claude-opus-5-5` |
 | `env.ANTHROPIC_DEFAULT_SONNET_MODEL` | Which model "Sonnet" means | `global.anthropic.claude-sonnet-5` |
 | `env.ANTHROPIC_DEFAULT_HAIKU_MODEL` | Which model "Haiku" means | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `env.AWS_BEARER_TOKEN_BEDROCK` | Your Bedrock API key | your key, never anything of ours |
