@@ -6,7 +6,7 @@
 **Package name:** `sensible-claude-code-defaults`
 **Extension ID:** `cutler-sg.sensible-claude-code-defaults`
 **Repository:** `$HOME/workspaces/cutler-sg/sensible-claude-code-defaults`
-**Target registries:** Visual Studio Marketplace (stable from 0.2.6; odd minors are pre-releases); Open VSX setup pending
+**Target registries:** Visual Studio Marketplace (stable from 0.2.6, production from 1.0.0; odd minors are pre-releases); Open VSX setup pending
 **Last updated:** 2026-09-28
 
 ---
@@ -494,7 +494,7 @@ configured. Preparing or merging a version bump does not publish it.
 
 There is **no human review queue**. An automated scan runs and the listing goes live within minutes. Expect search indexing to lag the direct item URL. Client-side auto-update is held for roughly two hours for non-trusted publishers while scanning completes — plan the update cadence around this, and keep fast-moving values in the manifest rather than the VSIX.
 
-The first releases (0.1.0–0.2.5) shipped as pre-releases for dogfooding. 0.2.6 is the first stable release (2026-09-28, MC's call).
+The first releases (0.1.0–0.2.5) shipped as pre-releases for dogfooding. 0.2.6 is the first stable release (2026-09-28, MC's call). It still carried the manifest's `preview` flag, which badges the listing "Preview" whatever the channel. 1.0.0 (2026-09-29) removes it and is the first full production release.
 
 ## 10. Testing
 

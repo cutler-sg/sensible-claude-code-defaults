@@ -80,8 +80,11 @@ describe("package.json", () => {
     expect(manifest.keywords.length).toBeLessThanOrEqual(30);
   });
 
-  it("ships 0.1.0 flagged as a preview (plan Q-AI)", () => {
-    expect(manifest.preview).toBe(true);
+  it("carries no Marketplace preview badge", () => {
+    // `preview` labels the whole listing "Preview" independently of the
+    // pre-release channel, so 0.2.6 shipped stable but still badged. The
+    // channel is chosen by the tag's minor version (docs/releasing.md).
+    expect(manifest).not.toHaveProperty("preview");
   });
 
   it("contributes the sensibleDefaults activity bar container", () => {
