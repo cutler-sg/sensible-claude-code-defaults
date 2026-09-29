@@ -28,9 +28,14 @@ Tasks:
   pre-release property, no `extensionKind`, and bundles the Opus 5.5 default.
   The extension-host suite passes on stable and 1.98.2 (7 passing, 1 pending
   each).
-- [ ] PR CI green, then squash-merge.
-- [ ] Tag `v1.0.0`, then verify the channel and flags on the Marketplace and
-  create the GitHub release.
+- [x] PR CI green (all platforms, package, CodeQL 0 open alerts); squash-merged
+  as `00c656b`; main CI passed.
+- [x] Tagged `v1.0.0` on `00c656b`. Release run 36508982156 noted "1.0.0
+  publishes as a stable release" and published to the Marketplace; Open VSX was
+  skipped. About 5 minutes later the registry listed 1.0.0 with no `PreRelease`
+  property and flags `validated, public` (was `validated, public, preview`). A
+  screenshot of the live listing shows no Preview badge. The GitHub release
+  v1.0.0 is marked Latest and carries the workflow's VSIX.
 
 Accepted risk (carried from 0.2.6): the manual platform checks in
 `docs/manual-verification.md` remain unticked.
