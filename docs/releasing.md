@@ -17,6 +17,8 @@ fails if the tag and `package.json` disagree.
 - VS Code installs the highest version available, so a pre-release numbered above
   the latest stable reaches only users who opted in. The next stable release
   must be numbered above it.
+- `package.json` must not set `"preview": true`. That flag badges the whole
+  listing "Preview" whatever the channel, and a unit test enforces its absence.
 - Stable users auto-update to anything published on an even minor. Complete the
   manual checks you depend on before tagging one.
 
@@ -55,7 +57,9 @@ Watch the Release workflow to completion. Confirm the Marketplace publish step
 actually ran, and that the *Resolve release channel* notice names the channel
 you intended. A green workflow with skipped publishing is not a release. Fetch
 the workflow's `vsix` artifact and attach it to a GitHub release with the
-release notes; mark it as a pre-release only for odd-minor versions. Verify the published Marketplace version using the registry API;
+release notes; mark it as a pre-release only for odd-minor versions. Verify the published Marketplace version using the registry API: the version
+has no `Microsoft.VisualStudio.Code.PreRelease` property on even minors, and the
+extension's `flags` do not include `preview`;
 search indexing and client auto-updates may lag the direct listing.
 
 Open VSX publishing is conditional on `OVSX_PAT`; namespace/token setup is still

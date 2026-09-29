@@ -13,8 +13,8 @@ Pay particular attention to:
 - §5 FR-2 — the merge engine. Highest-risk area in the project.
 
 ## Current state
-The extension is published on the VS Code Marketplace as a stable release
-(from 0.2.6; odd minor versions go to the pre-release channel). M0–M8
+The extension is published on the VS Code Marketplace as a production release
+(1.0.0 onward; odd minor versions go to the pre-release channel). M0–M8
 implementation has shipped; this is maintenance work, not an initial scaffold.
 Use `CHANGELOG.md` and the current branch's plan in `plans/` for release scope.
 Historical milestone checklists are implementation records, not the live backlog.
