@@ -47,7 +47,9 @@ describe("machine-local model evidence", () => {
     ]);
     expect(await store.load(key)).toEqual([evidence]);
     expect(await readFile(join(directory, `${key}.json`), "utf8")).not.toContain("secret");
-    expect((await stat(join(directory, `${key}.json`))).mode & 0o777).toBe(0o600);
+    // Windows reports DOS attributes here; Unix mode bits do not describe its DACL.
+    if (process.platform !== "win32")
+      expect((await stat(join(directory, `${key}.json`))).mode & 0o777).toBe(0o600);
     expect(await readdir(directory)).toEqual([`${key}.json`]);
   });
   it("tolerates missing/corrupt/future schemas and drops malformed records", async () => {

@@ -123,6 +123,8 @@ synthetic token and contained none.
   upgrades are informational.
 - Successful metadata was labelled as successful invocation; those evidence
   types now have distinct labels.
+- Windows CI found a Unix permission-bit assertion in the cache test. That
+  assertion now runs only on POSIX; cache behaviour remains tested on Windows.
 - Stale configurations used a green success icon, and light-theme success text
   had poor contrast. Stale status is now neutral; success uses a theme-appropriate
   text colour.
