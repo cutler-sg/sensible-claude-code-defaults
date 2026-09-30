@@ -4,6 +4,7 @@
  */
 
 import type { Desired, JsonObject } from "../config/types.js";
+import type { ModelDefinition } from "../models/types.js";
 
 export interface ManifestNotice {
   level: "info" | "warning" | "error";
@@ -32,6 +33,8 @@ export interface Manifest {
     enabledPlugins: Record<string, boolean | string[]>;
   };
   regions: string[];
+  /** Explicit AWS-documented routes; optional for older/forked manifests. */
+  models?: ModelDefinition[];
   credential: CredentialPolicy;
   notices: ManifestNotice[];
 }
