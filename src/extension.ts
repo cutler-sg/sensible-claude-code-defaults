@@ -1,19 +1,24 @@
+import { join } from "node:path";
 import * as vscode from "vscode";
 import { backupsDir, createSession } from "./config/index.js";
+import { TOKEN_SECRET_KEY } from "./credential/types.js";
 import { readTokenFromSettings } from "./credential/writeThrough.js";
 import type { CredentialContext, HealthReport } from "./health/types.js";
 import { createManifestCache } from "./manifest/cache.js";
+import { FileModelStore } from "./models/store.js";
 import { registerCommands } from "./ui/commands.js";
 import { failureMessage, reportFailure } from "./ui/failures.js";
 import type { CredentialFlowDeps } from "./ui/flows.js";
 import { createHealthRunner } from "./ui/healthRunner.js";
 import { createHost } from "./ui/host.js";
 import { createManifestHolder, DEFAULT_MANIFEST_URL } from "./ui/manifestHolder.js";
+import { ModelController, PROCESSING_SCOPES } from "./ui/modelController.js";
+import { administratorRequest, modelDiagnostics } from "./ui/modelPresentation.js";
 import { DETAILS_VIEW_ID, PANEL_VIEW_ID, PanelProvider } from "./ui/panel/provider.js";
 import { HealthTreeProvider } from "./ui/treeProvider.js";
 import { watchSettings } from "./ui/watcher.js";
 import { Logger } from "./util/log.js";
-import { forgetAll } from "./util/redact.js";
+import { forgetAll, redact } from "./util/redact.js";
 
 /** How long after our own write the watcher ignores the directory (plan Q-Q). */
 const SUPPRESS_MS = 1500;
@@ -43,22 +48,29 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: false,
   });
 
+  const config = () => vscode.workspace.getConfiguration();
+  let modelPaintTimer: ReturnType<typeof setTimeout> | undefined;
+  const models = new ModelController({
+    store: new FileModelStore(join(context.globalStorageUri.fsPath, "model-availability")),
+    settingsFile: host.settingsFile,
+    tokenStore: host.store,
+    manifest: () => manifests.current().manifest,
+    automatic: () => config().get("sensibleDefaults.autoCheckModels", false),
+    scopes: () => config().get<string[]>("sensibleDefaults.modelProcessingScopes", []),
+    onChange: () => {
+      panel?.refresh();
+      if (modelPaintTimer) clearTimeout(modelPaintTimer);
+      modelPaintTimer = setTimeout(() => {
+        void runChecks();
+      }, 100);
+    },
+  });
+
   let suppressUntil = 0;
   const markWrite = (): void => {
     suppressUntil = Date.now() + SUPPRESS_MS;
   };
 
-  /**
-   * The last test call, per window (plan Q-T). In memory on purpose: it says
-   * what AWS answered a moment ago, and a result restored from disk after a
-   * restart would vouch for a key that may since have been revoked.
-   *
-   * For the same reason it does not survive a change to the key it was about
-   * (F5): a result is evidence about one credential, and rotating, clearing or
-   * replacing that credential leaves it evidence about nothing. It is dropped
-   * on every store change, and stamped with the tested key so `cred.valid` can
-   * catch a change this window did not make either.
-   */
   /**
    * The last completed report and the CLI version that run detected, for the
    * FR-7.1 diagnostics command. Captured from `present`, which already receives
@@ -68,6 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let lastReport: HealthReport | undefined;
   let lastCliVersion: string | undefined;
 
+  // Per-window manual-test timestamp; model health uses persisted, scoped evidence.
   let lastTest: CredentialContext["lastTest"];
   const credential: CredentialFlowDeps = {
     store: host.store,
@@ -81,7 +94,9 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     onTokenChanged: () => {
       lastTest = undefined;
+      models.invalidate();
     },
+    testModels: () => models.test(),
   };
 
   const runChecks = createHealthRunner({
@@ -89,7 +104,8 @@ export function activate(context: vscode.ExtensionContext): void {
     // A getter, not a value: the holder re-resolves on the hourly boundary and
     // on "Check for Updated Recommendations", and a manifest captured here
     // would pin the panel to the bundled defaults for the life of the window.
-    manifest: () => manifests.current(),
+    manifest: () => ({ ...manifests.current(), manifest: models.manifest() }),
+    modelAvailability: () => models.service.snapshot(),
     platform: process.platform,
     detect: async () => {
       const detection = await host.detect();
@@ -138,8 +154,14 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   const runHealth = async (): Promise<void> => {
     try {
-      await runChecks();
-      if (await manifests.refresh()) await runChecks();
+      await models.sync();
+      const checked = runChecks();
+      if (await manifests.refresh()) {
+        await models.sync();
+        void runChecks();
+      }
+      void models.refresh();
+      await checked;
     } catch (error) {
       const message = failureMessage(
         error,
@@ -166,7 +188,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const flowDeps = {
     env: host.env,
     session: createSession(),
-    manifest: () => manifests.current().manifest,
+    manifest: () => models.manifest(),
     log,
     runHealth,
     markWrite: () => {
@@ -181,6 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
     flows: flowDeps,
     log,
     report: () => lastReport,
+    models: () => models.panel(),
     lastTestedAt: () => lastTest?.at,
     consoleUrl: () => manifests.current().manifest.credential.consoleUrl,
     execute: (command) => vscode.commands.executeCommand(command),
@@ -191,6 +214,88 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const commands = registerCommands({
     ...flowDeps,
+    prepareRecommendations: () => models.sync(),
+    modelActions: {
+      recheck: async () => {
+        await models.refresh(true);
+        await runChecks();
+      },
+      configure: async () => {
+        const enabled = config().get("sensibleDefaults.autoCheckModels", false);
+        if (enabled) {
+          await config().update(
+            "sensibleDefaults.autoCheckModels",
+            false,
+            vscode.ConfigurationTarget.Global,
+          );
+        } else {
+          const choice = await vscode.window.showInformationMessage(
+            "Enable automatic Bedrock model checks?",
+            {
+              modal: true,
+              detail:
+                "Stale checks run when VS Code opens or regains focus. Each inference sends a fixed test message and requests one output token; AWS charges for these requests. A first invocation can initiate a Marketplace subscription if your permissions allow it. New candidates require a successful availability preflight. No project content is sent. You can turn this off at any time.",
+            },
+            "Enable automatic checks",
+          );
+          if (choice !== "Enable automatic checks") return;
+          await config().update(
+            "sensibleDefaults.autoCheckModels",
+            true,
+            vscode.ConfigurationTarget.Global,
+          );
+          await models.refresh();
+        }
+        panel.refresh();
+      },
+      scopes: async () => {
+        const current = config().get<string[]>("sensibleDefaults.modelProcessingScopes", []);
+        const picked = await vscode.window.showQuickPick(
+          PROCESSING_SCOPES.map((scope) => ({
+            label: scope,
+            picked: current.includes(scope),
+            description:
+              scope === "global"
+                ? "AWS may process outside your source region"
+                : scope === "unknown"
+                  ? "Configured custom IDs with unverified geography"
+                  : "Allow documented routes in this processing scope",
+          })),
+          {
+            canPickMany: true,
+            title: "Permitted processing geographies",
+            placeHolder:
+              "Select permitted scopes. Select none to follow your configured model IDs.",
+          },
+        );
+        if (picked === undefined) return;
+        await config().update(
+          "sensibleDefaults.modelProcessingScopes",
+          picked.map((item) => item.label),
+          vscode.ConfigurationTarget.Global,
+        );
+        await runHealth();
+      },
+      copyRequest: async () => {
+        await models.sync();
+        await vscode.env.clipboard.writeText(
+          redact(administratorRequest(models.service.snapshot())),
+        );
+        void vscode.window.showInformationMessage(
+          "Model access request copied. Review it before sending it to your administrator.",
+        );
+      },
+      review: async () => {
+        await models.sync();
+        if (!models.panel().upgrades) {
+          void vscode.window.showInformationMessage(
+            "No freshly verified model upgrades are available in your permitted processing scopes.",
+          );
+          return;
+        }
+        await vscode.commands.executeCommand("sensibleDefaults.applyDefaults");
+      },
+    },
     refreshManifest: (options) => manifests.refresh(options),
     settingsFile: host.settingsFile,
     backupsDir: backupsDir(host.claudeDir),
@@ -200,10 +305,42 @@ export function activate(context: vscode.ExtensionContext): void {
       manifest: () => manifests.current().status,
       report: () => lastReport,
       cliVersion: () => lastCliVersion,
+      modelAvailability: () => modelDiagnostics(models.service.snapshot()),
     },
   });
 
-  context.subscriptions.push(channel, view, panelView, commands, watcher);
+  context.subscriptions.push(
+    channel,
+    view,
+    panelView,
+    commands,
+    watcher,
+    models,
+    {
+      dispose: () => {
+        if (modelPaintTimer) clearTimeout(modelPaintTimer);
+      },
+    },
+    context.secrets.onDidChange((event) => {
+      if (event.key !== TOKEN_SECRET_KEY) return;
+      lastTest = undefined;
+      models.invalidate();
+      panel.refresh();
+      void runHealth();
+    }),
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) void models.refresh();
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        event.affectsConfiguration("sensibleDefaults.modelProcessingScopes") ||
+        event.affectsConfiguration("sensibleDefaults.autoCheckModels")
+      ) {
+        models.invalidate();
+        void runHealth();
+      }
+    }),
+  );
   if (host.windowsTerminal !== undefined) {
     const refreshTerminal = (): void => {
       void host.windowsTerminal

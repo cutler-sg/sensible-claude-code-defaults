@@ -20,6 +20,7 @@ import { buildContext } from "../health/context.js";
 import { runAll, transition } from "../health/runner.js";
 import type { Check, ClaudeCodeDetection, HealthReport } from "../health/types.js";
 import type { Manifest } from "../manifest/types.js";
+import type { AvailabilitySnapshot } from "../models/types.js";
 import type { Logger } from "../util/log.js";
 import { failureMessage, reportFailure } from "./failures.js";
 import type { ResolvedManifest } from "./manifestHolder.js";
@@ -37,6 +38,7 @@ export interface NotifiedStore {
 
 export interface HealthRunnerDeps {
   env: ConfigEnv;
+  modelAvailability?: () => AvailabilitySnapshot;
   /**
    * The manifest in force, read afresh on every run — a function, not a value,
    * for the same reason `credential` is one. The host re-resolves it on the
@@ -112,6 +114,7 @@ export function createHealthRunner(deps: HealthRunnerDeps): () => Promise<void> 
       ...(deps.credential ? { credential: deps.credential() } : {}),
       ...(deps.leakScan ? { leakScan: deps.leakScan() } : {}),
     });
+    if (deps.modelAvailability) ctx.modelAvailability = deps.modelAvailability();
     const report = await runAll(checks, ctx);
     await syncTerminals(deps);
     deps.present(report);

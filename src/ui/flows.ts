@@ -56,6 +56,8 @@ export interface CredentialFlowDeps {
   onTokenChanged?: () => void;
   /** Injected only by tests; production uses the global. */
   fetch?: typeof globalThis.fetch;
+  /** Exact configured models, using the shared availability service. */
+  testModels?: () => Promise<ConnectionResult>;
 }
 
 export interface FlowDeps {
@@ -376,12 +378,14 @@ export async function runConnectionTest(
   deps: FlowDeps,
   stored: StoredToken,
 ): Promise<ConnectionResult> {
-  const result = await callBedrock({
-    token: stored.token,
-    region: await region(deps),
-    models: modelsToTry(deps.manifest()),
-    ...(deps.credential.fetch === undefined ? {} : { fetch: deps.credential.fetch }),
-  });
+  const result = deps.credential.testModels
+    ? await deps.credential.testModels()
+    : await callBedrock({
+        token: stored.token,
+        region: await region(deps),
+        models: modelsToTry(deps.manifest()),
+        ...(deps.credential.fetch === undefined ? {} : { fetch: deps.credential.fetch }),
+      });
 
   // Stamped with the key it tested, so `cred.valid` can tell a result that has
   // outlived its credential from one that still speaks for it (F5).
@@ -434,6 +438,11 @@ async function announce(result: ConnectionResult): Promise<void> {
   switch (result.kind) {
     case "ok":
       await vscode.window.showInformationMessage(labels.pass);
+      return;
+    case "models-unavailable":
+      await vscode.window.showWarningMessage(
+        "Some configured models could not be verified. Open Model availability for the results.",
+      );
       return;
     case "ok-without-haiku":
       await vscode.window.showWarningMessage(labels.withoutHaiku);
