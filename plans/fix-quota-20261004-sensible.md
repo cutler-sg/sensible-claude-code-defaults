@@ -16,9 +16,9 @@ Base: `origin/main` at `09ed463488410214230b1375d79a50f6199ed835` (released 1.0.
 - [x] Reproduce a failed apply consuming the session backup allowance before a same-window retry.
 - [x] Repair the demonstrated failure and verify focused regressions.
 - [x] Run lint, typecheck, full tests, dependency audit, package, and VS Code 1.98 extension-host checks.
-- [ ] Validate the current stable VS Code extension host.
+- [x] Validate the current stable VS Code extension host.
 - [?] Pass dependency audit and required CI (blocked: existing development-tool advisories; `braces` has no published patched version).
-- [ ] Commit, push, open/link the PR, verify CI and clean state.
+- [x] Commit, push, open/link the draft PR, inspect CI failure, and verify clean state.
 
 ## Evidence
 
@@ -31,3 +31,6 @@ Base: `origin/main` at `09ed463488410214230b1375d79a50f6199ed835` (released 1.0.
 - `bun run package` succeeds; the VSIX contains the repaired engine and retains version 1.0.0, VS Code `^1.98.0`, and `@types/vscode ~1.98.0`. It excludes tests and development dependencies.
 - `DISPLAY=:99 bun run test:integration --code-version 1.98.2`: seven passing, one existing Windows-only pending case. The harness uses temporary user-data, workspace, and `CLAUDE_CONFIG_DIR` paths plus checkout-local extension installations; no real profiles or credentials were accessed.
 - `bun audit` fails with eight findings (five high, three moderate) in existing `braces`, `brace-expansion`, and `fast-uri` dependencies. `braces@3.0.3` is both affected and the latest published version; the path is `ovsx -> @vscode/vsce@3 -> secretlint -> globby -> fast-glob -> micromatch -> braces`. The direct `@vscode/vsce@4` upgrade has already shipped. Changing the legacy publisher's major dependency or removing tooling would exceed this demonstrated settings fix. No audit exclusion, dependency churn, or scan weakening was applied. Ship a draft PR and report this lane blocked.
+- Current stable VS Code 1.140.0 also passes: seven passing, one existing Windows-only pending case.
+- Fix commit: [`dd6e1ef`](https://github.com/cutler-sg/sensible-claude-code-defaults/commit/dd6e1ef26405ca193b7aef032447e352e24b006a). Draft PR: [#51](https://github.com/cutler-sg/sensible-claude-code-defaults/pull/51), registered with this T3 thread. The bounded fail-fast CI watch confirms the [package audit failure](https://github.com/cutler-sg/sensible-claude-code-defaults/actions/runs/37138336878/job/111247369874); its logs show the same eight findings. Hosted Linux and no-keyring tests passed at that checkpoint; Windows/macOS and CodeQL were still pending, so full hosted validation is not claimed.
+- Lane outcome: **blocked** on the required dependency audit. No next phase or additional workers were dispatched. Branch and PR remain available for the coordinator's handoff.
