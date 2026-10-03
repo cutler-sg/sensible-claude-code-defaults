@@ -1,0 +1,29 @@
+{
+  "repository": "cutler-sg/sensible-claude-code-defaults",
+  "remote_default": "09ed463488410214230b1375d79a50f6199ed835",
+  "sources": [
+    {
+      "label": "sensible-alert-1.HRu9Uv",
+      "path": "/tmp/sensible-alert-1.HRu9Uv",
+      "head": "2118f5ddae273dc5ccb838b5d0e378ae9bb4c858",
+      "entries": [
+        {
+          "status": ".M",
+          "path": "test/unit/manifest/version.test.ts"
+        }
+      ],
+      "files": [
+        {
+          "path": "test/unit/manifest/version.test.ts",
+          "version": "working",
+          "status": ".M",
+          "mode": "100644",
+          "sha256": "ca7d988a88c69a9983fdc36174afd2a2b88234f85a474de61431b822b7894e66",
+          "archive_path": "recovery/2026-10-03/sensible-alert-1.HRu9Uv/working/test/unit/manifest/version.test.ts.snapshot",
+          "bytes": 1493
+        }
+      ]
+    }
+  ],
+  "excluded": []
+}
