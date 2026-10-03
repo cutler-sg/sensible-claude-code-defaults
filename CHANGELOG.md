@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Failed applies that leave settings unchanged or successfully roll them back no longer consume the window's backup allowance. Retrying in the same window saves settings authored after the failure before replacing them.
+
 ## [1.0.0] - 2026-09-29
 
 First full production release. The Marketplace listing no longer carries the "Preview" badge, which 0.2.6 still showed even though it was published as a stable release.
