@@ -12,6 +12,7 @@ import { readSettings } from "../config/index.js";
 import { buildDiagnostics, type SettingsForReport } from "../diagnostics/report.js";
 import type { HealthReport, ManifestStatus } from "../health/types.js";
 import type { RecentLog } from "../util/log.js";
+import { redact } from "../util/redact.js";
 
 export interface DiagnosticsHostDeps {
   extensionVersion: string;
@@ -24,6 +25,7 @@ export interface DiagnosticsHostDeps {
   /** `claude --version`'s answer, cached by the host from the last detection. */
   cliVersion: () => string | undefined;
   now?: () => Date;
+  modelAvailability?: () => string;
 }
 
 export async function collectDiagnostics(deps: DiagnosticsHostDeps): Promise<string> {
@@ -34,7 +36,7 @@ export async function collectDiagnostics(deps: DiagnosticsHostDeps): Promise<str
   const claudeCode = claudeCodeVersion();
   const cli = deps.cliVersion();
   const report = deps.report();
-  return buildDiagnostics({
+  const output = buildDiagnostics({
     extensionVersion: deps.extensionVersion,
     vscodeVersion: vscode.version,
     platform: process.platform,
@@ -51,6 +53,7 @@ export async function collectDiagnostics(deps: DiagnosticsHostDeps): Promise<str
     now: (deps.now ?? (() => new Date()))(),
     settingsPath: deps.settingsFile,
   });
+  return deps.modelAvailability ? `${output}\n${redact(deps.modelAvailability())}\n` : output;
 }
 
 function claudeCodeVersion(): string | undefined {

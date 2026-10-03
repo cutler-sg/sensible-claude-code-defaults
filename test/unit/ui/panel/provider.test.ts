@@ -150,6 +150,7 @@ async function mountPage(p: PanelProvider) {
   const view = fakeView();
   let page: InstanceType<typeof Window>;
   let source = "";
+  let savedState: unknown;
   Object.defineProperty(view.webview, "html", {
     get: () => source,
     set: (html: string) => {
@@ -163,7 +164,13 @@ async function mountPage(p: PanelProvider) {
         },
       });
       Object.defineProperty(page, "acquireVsCodeApi", {
-        value: () => ({ postMessage: (message: unknown) => view.webview.handler?.(message) }),
+        value: () => ({
+          postMessage: (message: unknown) => view.webview.handler?.(message),
+          getState: () => savedState,
+          setState: (value: unknown) => {
+            savedState = value;
+          },
+        }),
       });
       page.document.write(html);
     },

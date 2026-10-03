@@ -14,6 +14,7 @@
  */
 
 import type { JsonObject, JsonValue } from "../config/types.js";
+import { validateCatalogue } from "../models/catalogueSchema.js";
 import type { CredentialPolicy, Manifest, ManifestNotice } from "./types.js";
 
 /** A rejection names the path and what was wrong, never the value. */
@@ -169,6 +170,7 @@ export function validateManifest(input: unknown): ValidationResult {
   const regions = validateRegions(input.regions, fail);
   const credential = validateCredential(input.credential, fail);
   const notices = validateNotices(input.notices, fail);
+  const models = input.models === undefined ? undefined : validateCatalogue(input.models, fail);
 
   if (
     problems.length > 0 ||
@@ -194,6 +196,7 @@ export function validateManifest(input: unknown): ValidationResult {
       regions,
       credential,
       notices,
+      ...(models === undefined ? {} : { models }),
     },
   };
 }

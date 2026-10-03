@@ -8,6 +8,7 @@
  */
 
 import type { ConnectionResult } from "../../credential/types.js";
+import { modelHealth } from "../../ui/modelPresentation.js";
 import { LABELS, networkGuidance } from "../labels.js";
 import type { Check, CheckContext, CheckResult, Level } from "../types.js";
 import { command } from "./shared.js";
@@ -18,6 +19,8 @@ export const credValidCheck = {
   id: "cred.valid",
   group: "Credential",
   run(ctx: CheckContext): CheckResult {
+    if (ctx.modelAvailability !== undefined && ctx.credential.stored !== undefined)
+      return modelHealth(ctx.modelAvailability);
     const { lastTest } = ctx.credential;
     if (lastTest === undefined || isStale(ctx)) {
       // `skipped`, not `warning`: an untested key is not evidence of a broken
@@ -59,6 +62,8 @@ function describe(result: ConnectionResult): { level: Level; label: string } {
   switch (result.kind) {
     case "ok":
       return { level: "pass", label: LABELS["cred.valid"].pass };
+    case "models-unavailable":
+      return { level: "warning", label: "Some configured models could not be verified" };
     case "ok-without-haiku":
       return { level: "warning", label: LABELS["cred.valid"].withoutHaiku };
     case "bad-credential":

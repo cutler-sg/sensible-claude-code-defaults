@@ -62,6 +62,7 @@ let refreshChanged: boolean;
 let refreshResolves: Manifest | undefined;
 /** The last health report the diagnostics command should render, if any. */
 let lastReport: HealthReport | undefined;
+let prepareRecommendations: (() => Promise<void>) | undefined;
 
 function register(manifest: Manifest = BUNDLED_MANIFEST): void {
   currentManifest = manifest;
@@ -77,6 +78,7 @@ function register(manifest: Manifest = BUNDLED_MANIFEST): void {
       if (refreshResolves !== undefined) currentManifest = refreshResolves;
       return refreshChanged;
     },
+    prepareRecommendations: async () => prepareRecommendations?.(),
     settingsFile: settingsPath(dir),
     backupsDir: backupsDir(dir),
     log: log as never,
@@ -114,6 +116,7 @@ beforeEach(async () => {
   refreshChanged = false;
   refreshResolves = undefined;
   lastReport = undefined;
+  prepareRecommendations = undefined;
   reset();
   register();
 });
@@ -858,6 +861,13 @@ describe("runFix", () => {
 });
 
 describe("checkForUpdates (FR-3.3)", () => {
+  it("resynchronises held model recommendations after catalogue refresh", async () => {
+    prepareRecommendations = async () => {
+      currentManifest = { ...BUNDLED_MANIFEST, revision: "new-catalogue" };
+    };
+    await run("sensibleDefaults.checkForUpdates");
+    expect(messages()).toEqual(["Updated to the latest recommended settings."]);
+  });
   it("bypasses the throttle and re-runs the checks", async () => {
     refreshChanged = true;
     refreshResolves = { ...BUNDLED_MANIFEST, revision: "remote-2" };

@@ -35,6 +35,33 @@ export const configModelsCheck = {
     });
 
     if (wrong.length > 0) {
+      const configured = ctx.modelAvailability?.rows.filter((row) => row.configured) ?? [];
+      const verifiedUpgrade =
+        configured.length > 0 &&
+        ctx.modelAvailability?.credential === "valid" &&
+        configured.every((row) => row.status === "available" && !row.stale) &&
+        wrong.every((key) =>
+          ctx.modelAvailability?.rows.some(
+            (row) =>
+              row.modelId === ctx.manifest.defaults.env[key.slice("env.".length)] &&
+              row.status === "available" &&
+              !row.stale &&
+              row.allowed,
+          ),
+        );
+      if (verifiedUpgrade)
+        return {
+          id: "config.models",
+          group: "Configuration",
+          level: "info",
+          label: "A verified model upgrade is available",
+          detail: "Your configured models worked. Review the optional upgrade before applying it.",
+          fix: {
+            kind: "command",
+            command: "sensibleDefaults.reviewModelUpgrade",
+            title: "Review available upgrade",
+          },
+        };
       return {
         id: "config.models",
         group: "Configuration",

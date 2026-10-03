@@ -13,6 +13,7 @@
  * high-contrast with no palette of its own.
  */
 
+import { MODEL_STATUS_LABELS, type ModelsPanel, modelHealth } from "../modelPresentation.js";
 import type { PanelState, SetupProgress } from "./state.js";
 import { resultView } from "./state.js";
 
@@ -120,6 +121,7 @@ function stepKey(progress: Extract<SetupProgress, { step: "key" }>, consoleUrl: 
   <summary>Where does it go?</summary>
   <p>Your computer's keychain, and <code>~/.claude/settings.json</code> so Claude Code can read it. It is never sent anywhere except Amazon.</p>
 </details>
+<p class="muted">Continue tests your configured models with tiny billable AWS requests. A first invocation can initiate a Marketplace subscription if your permissions allow it. Automatic checks are optional.</p>
 <button class="primary" id="continue" data-msg="key.submit" ${canContinue ? "" : "disabled"}>${progress.busy ? "Saving…" : "Continue"}</button>`;
 }
 
@@ -141,10 +143,12 @@ function stepHeader(n: 1 | 2, title: string): string {
 }
 
 function healthy(state: Extract<PanelState, { kind: "healthy" }>): string {
+  const availability = state.models ? modelHealth(state.models.snapshot) : undefined;
+  const verified = !availability || availability.level === "pass";
   const head = state.interruption
     ? `<p class="status ${state.interruption.level}"><span class="mark" aria-hidden="true">${state.interruption.level === "error" ? "✗" : "⚠"}</span> ${esc(state.interruption.sentence)}</p>
 ${state.interruption.action ? `<button class="primary" data-action="${esc(state.interruption.action.command)}">${esc(state.interruption.action.title)}</button>` : ""}`
-    : `<p class="status ok"><span class="mark" aria-hidden="true">✓</span> Everything is working</p>
+    : `<p class="status ${verified ? "ok" : "info"}"><span class="mark" aria-hidden="true">${verified ? "✓" : "ℹ"}</span> ${availability ? esc(availability.label) : "Everything is working"}</p>
 <p class="muted">${esc(whenLine(state.keySetAt, state.lastTestedAt))}</p>
 <button class="primary" data-action="sensibleDefaults.testConnection">Test connection</button>`;
   const total = Object.values(state.counts).reduce((a, b) => a + b, 0);
@@ -154,7 +158,65 @@ ${state.interruption.action ? `<button class="primary" data-action="${esc(state.
   <button class="link" data-action="sensibleDefaults.rotateToken">Replace key</button>
   <button class="link" data-action="sensibleDefaults.selectRegion">Change region</button>
 </p>
-<button class="link details" data-msg="details.toggle" aria-expanded="${state.detailsOpen}">${state.detailsOpen ? "▾" : "▸"} Details (${total} checks${problems > 0 ? `, ${problems} to look at` : ""})</button>`;
+<button class="link details" data-msg="details.toggle" aria-expanded="${state.detailsOpen}">${state.detailsOpen ? "▾" : "▸"} Details (${total} checks${problems > 0 ? `, ${problems} to look at` : ""})</button>
+${state.models ? modelsSection(state.models) : ""}`;
+}
+
+function modelsSection(models: ModelsPanel): string {
+  const { snapshot } = models;
+  const scopes = [...new Set(snapshot.rows.map((row) => row.scope))];
+  const groups = [
+    ...new Map(snapshot.rows.map((row) => [row.catalogueId ?? row.label, row])).values(),
+  ];
+  const cells = groups
+    .map(
+      (group) =>
+        `<tr><th scope="row">${esc(group.label)}${snapshot.rows.some((row) => (row.catalogueId ?? row.label) === (group.catalogueId ?? group.label) && row.configured) ? '<span class="model-note">Configured</span>' : ""}</th>${scopes
+          .map((scope) => {
+            const rows = snapshot.rows.filter(
+              (row) =>
+                (row.catalogueId ?? row.label) === (group.catalogueId ?? group.label) &&
+                row.scope === scope,
+            );
+            return `<td>${rows.length ? rows.map((row) => `<span class="model-result ${row.status === "available" && !row.stale ? "verified" : ""}">${esc(MODEL_STATUS_LABELS[row.status])}${row.stale ? '<span class="model-note">Stale · recheck due</span>' : ""}</span>`).join("<br>") : '<span class="muted">No documented route</span>'}</td>`;
+          })
+          .join("")}</tr>`,
+    )
+    .join("");
+  return `<section class="models" aria-labelledby="models-title">
+<h2 id="models-title">Model availability</h2>
+<p class="muted">Source region: <strong>${esc(snapshot.region ?? "not configured")}</strong>. Processing geography is shown separately.</p>
+${models.problem ? `<p class="feedback error" role="alert">${esc(models.problem)}</p>` : ""}
+<p role="status">${snapshot.checking ? "Checking access with AWS…" : `Credential: ${snapshot.credential === "valid" ? "verified by an invocation" : snapshot.credential === "invalid" ? "rejected by AWS" : "not yet verified"}`}</p>
+${
+  snapshot.rows.length
+    ? `<div class="matrix-scroll" tabindex="0" role="region" aria-label="Model availability by processing geography"><table><caption>Availability for this credential and source region</caption><thead><tr><th scope="col">Model</th>${scopes.map((scope) => `<th scope="col">${esc(scopeName(scope))}</th>`).join("")}</tr></thead><tbody>${cells}</tbody></table></div>
+<details data-persist="model-evidence"><summary>Model IDs and check evidence</summary>${snapshot.rows.map((row) => `<div class="model-evidence"><strong>${esc(row.label)} · ${esc(scopeName(row.scope))}</strong><code>${esc(row.modelId)}</code><p>${esc(MODEL_STATUS_LABELS[row.status])}${row.reason ? ` · ${esc(row.reason)}` : ""}</p><p class="muted">${row.checkedAt === undefined ? "Not checked" : `Checked ${esc(new Date(row.checkedAt).toISOString())}`}${row.lastSuccessAt === undefined ? "" : `<br>Last worked ${esc(new Date(row.lastSuccessAt).toISOString())}`}</p>${row.preflight ? `<p class="muted">Availability metadata: ${esc(row.preflight.status === "available" ? "Available (metadata only)" : MODEL_STATUS_LABELS[row.preflight.status])} · ${esc(new Date(row.preflight.checkedAt).toISOString())}${row.preflight.reason ? ` · ${esc(row.preflight.reason)}` : ""}</p>` : ""}</div>`).join("")}</details>`
+    : "<p>Configure your models and region to check availability.</p>"
+}
+<p class="model-actions"><button class="secondary" data-action="sensibleDefaults.recheckModels" ${snapshot.checking ? "disabled" : ""}>${snapshot.checking ? "Checking…" : "Recheck models"}</button>${models.upgrades ? '<button class="secondary" data-action="sensibleDefaults.reviewModelUpgrade">Review available upgrade</button>' : ""}</p>
+<p class="model-actions"><button class="link" data-action="sensibleDefaults.selectProcessingScopes">Processing policy</button><button class="link" data-action="sensibleDefaults.copyModelAccessRequest">Copy administrator request</button></p>
+<p class="muted">${models.automatic ? "Automatic checks are enabled. Configured models are rechecked after 24 hours; alternatives after seven days." : "Automatic checks are off. Enable them to refresh stale results when VS Code opens or regains focus."}</p>
+<button class="link" data-action="sensibleDefaults.configureModelChecks">${models.automatic ? "Turn off automatic checks" : "Enable automatic checks"}</button>
+<p class="muted">Global profiles may process requests outside your source region. A successful check records access at that time; it does not guarantee future access.</p>
+</section>`;
+}
+
+function scopeName(scope: string): string {
+  return (
+    (
+      {
+        global: "Global",
+        us: "US",
+        eu: "EU",
+        apac: "APAC",
+        au: "Australia",
+        jp: "Japan",
+        regional: "Regional",
+        unknown: "Unclassified",
+      } as Record<string, string>
+    )[scope] ?? scope
+  );
 }
 
 function whenLine(keySetAt: string | undefined, lastTestedAt: string | undefined): string {
@@ -206,7 +268,7 @@ input { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--vscode-
 input::placeholder { color: var(--vscode-input-placeholderForeground); }
 button.icon { border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 2px; padding: 0 8px; cursor: pointer; font: inherit; }
 .feedback { min-height: 1.4em; margin: 6px 0 0; }
-.feedback.ok { color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); }
+.feedback.ok { color: var(--vscode-terminal-ansiGreen, var(--vscode-foreground)); }
 .feedback.warning { color: var(--vscode-editorWarning-foreground); }
 .feedback.error { color: var(--vscode-errorForeground); }
 details { margin: 10px 0; }
@@ -216,10 +278,27 @@ details li { margin: 4px 0; }
 code { font-family: var(--vscode-editor-font-family); background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 2px; }
 .status { font-weight: 600; font-size: 1.05em; }
 .status .mark { display: inline-block; width: 1.2em; }
-.status.ok, .status.pass { color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); }
+.status.ok, .status.pass { color: var(--vscode-terminal-ansiGreen, var(--vscode-foreground)); }
 .status.bad, .status.error { color: var(--vscode-errorForeground); }
 .status.warning { color: var(--vscode-editorWarning-foreground); }
 .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--vscode-descriptionForeground); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.1em; }
+h2 { font-size: 1.05em; margin: 0 0 8px; font-weight: 600; }
+.models { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); min-width: 0; }
+.matrix-scroll { max-width: 100%; overflow-x: auto; margin: 14px 0; }
+.matrix-scroll:focus-visible, summary:focus-visible, button.secondary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: .95em; }
+caption { text-align: left; color: var(--vscode-descriptionForeground); padding-bottom: 8px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); min-width: 100px; }
+th:first-child { padding-left: 0; min-width: 105px; }
+.model-note { display: block; color: var(--vscode-descriptionForeground); font-size: .9em; font-weight: normal; margin-top: 4px; }
+.model-result.verified { color: var(--vscode-terminal-ansiGreen, var(--vscode-foreground)); }
+.model-evidence { padding: 10px 0; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
+.model-evidence code { display: block; margin-top: 6px; white-space: normal; overflow-wrap: anywhere; }
+.model-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+button.secondary { font: inherit; cursor: pointer; padding: 6px 10px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 2px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+button.secondary:disabled { opacity: .5; cursor: default; }
+::selection { background: var(--vscode-editor-selectionBackground); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 `;
@@ -233,6 +312,11 @@ const SCRIPT = `
 (function () {
   var vscode = acquireVsCodeApi();
   var root = document.getElementById('root');
+  var saved = vscode.getState() || {};
+  document.querySelectorAll('details[data-persist]').forEach(function (detail) {
+    detail.open = !!saved[detail.dataset.persist];
+    detail.addEventListener('toggle', function () { saved[detail.dataset.persist] = detail.open; vscode.setState(saved); });
+  });
   function post(m) { vscode.postMessage(m); }
 
   window.addEventListener('message', function (e) {

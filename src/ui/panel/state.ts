@@ -13,6 +13,7 @@ import type { ConnectionResult, StoredToken } from "../../credential/types.js";
 import { LABELS, networkGuidance } from "../../health/labels.js";
 import { needsSetup } from "../../health/setup.js";
 import type { CheckGroup, CheckResult, HealthReport, Level } from "../../health/types.js";
+import type { ModelsPanel } from "../modelPresentation.js";
 
 /** Where the user is in the two-step flow, held by the provider between renders. */
 export type SetupProgress =
@@ -44,6 +45,7 @@ export type PanelState =
       interruption: Interruption | undefined;
       counts: Record<Level, number>;
       detailsOpen: boolean;
+      models?: ModelsPanel;
     };
 
 export interface Interruption {
@@ -53,6 +55,7 @@ export interface Interruption {
 }
 
 export interface Inputs {
+  models?: ModelsPanel;
   report: HealthReport | undefined;
   stored: Pick<StoredToken, "setAt"> | undefined;
   lastTestedAt: string | undefined;
@@ -68,6 +71,11 @@ export interface Inputs {
  * a command it was never meant to.
  */
 export const ALLOWED_ACTIONS: ReadonlySet<string> = new Set([
+  "sensibleDefaults.recheckModels",
+  "sensibleDefaults.configureModelChecks",
+  "sensibleDefaults.selectProcessingScopes",
+  "sensibleDefaults.copyModelAccessRequest",
+  "sensibleDefaults.reviewModelUpgrade",
   "sensibleDefaults.openClaudeTerminal",
   "sensibleDefaults.enableWindowsTerminalCli",
   "sensibleDefaults.disableWindowsTerminalCli",
@@ -101,6 +109,7 @@ export function derive(inputs: Inputs): PanelState {
     interruption: interruptionFor(inputs.report),
     counts: inputs.report.counts,
     detailsOpen: inputs.detailsOpen,
+    ...(inputs.models === undefined ? {} : { models: inputs.models }),
   };
 }
 
@@ -158,6 +167,14 @@ export function resultView(result: ConnectionResult): ResultView {
         hint: "Claude Code is set up.",
         primary: { label: "Done", message: "setup.finish" },
         secondary: undefined,
+      };
+    case "models-unavailable":
+      return {
+        ok: false,
+        sentence: "Some configured models could not be verified",
+        hint: `${result.working} configured model(s) worked. Open Model availability to see each result.`,
+        primary: { label: "View model availability", message: "setup.finish" },
+        secondary: { command: "sensibleDefaults.recheckModels", title: "Recheck models" },
       };
     case "ok-without-haiku":
       return {

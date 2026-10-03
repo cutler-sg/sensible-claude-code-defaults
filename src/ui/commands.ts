@@ -75,6 +75,14 @@ export interface CommandDeps {
   markWrite: () => void;
   /** The keychain, the terminal collection, and where a test result goes. */
   credential: CredentialFlowDeps;
+  prepareRecommendations?: () => Promise<void>;
+  modelActions?: {
+    recheck: () => Promise<void>;
+    configure: () => Promise<void>;
+    scopes: () => Promise<void>;
+    copyRequest: () => Promise<void>;
+    review: () => Promise<void>;
+  };
   /**
    * FR-3.3's manual refresh: re-resolve the manifest ignoring the hourly
    * throttle. Optional so a host that has not wired the resolver still gets a
@@ -111,6 +119,21 @@ const MAX_STALE_RETRIES = 1;
  * second list for the two to drift apart on.
  */
 const HANDLERS = {
+  "sensibleDefaults.recheckModels": async (deps) => {
+    await deps.modelActions?.recheck();
+  },
+  "sensibleDefaults.configureModelChecks": async (deps) => {
+    await deps.modelActions?.configure();
+  },
+  "sensibleDefaults.selectProcessingScopes": async (deps) => {
+    await deps.modelActions?.scopes();
+  },
+  "sensibleDefaults.copyModelAccessRequest": async (deps) => {
+    await deps.modelActions?.copyRequest();
+  },
+  "sensibleDefaults.reviewModelUpgrade": async (deps) => {
+    await deps.modelActions?.review();
+  },
   "sensibleDefaults.openClaudeTerminal": (deps) => openWindowsTerminal(deps.windowsTerminal),
   "sensibleDefaults.enableWindowsTerminalCli": async (deps) => {
     await configureWindowsTerminal(deps.windowsTerminal, true);
@@ -122,10 +145,16 @@ const HANDLERS = {
   },
   "sensibleDefaults.runHealthCheck": (deps) => deps.runHealth(),
   "sensibleDefaults.checkForUpdates": (deps) => checkForUpdates(deps),
-  "sensibleDefaults.applyDefaults": (deps) => applyDefaults(deps, 0),
+  "sensibleDefaults.applyDefaults": async (deps) => {
+    await deps.prepareRecommendations?.();
+    await applyDefaults(deps, 0);
+  },
   "sensibleDefaults.openSettings": (deps) => openSettings(deps),
   "sensibleDefaults.restoreBackup": (deps) => restoreBackupCommand(deps),
-  "sensibleDefaults.resetKey": (deps, node) => resetKey(deps, node, 0),
+  "sensibleDefaults.resetKey": async (deps, node) => {
+    await deps.prepareRecommendations?.();
+    await resetKey(deps, node, 0);
+  },
   "sensibleDefaults.selectRegion": (deps) => selectRegion(deps),
   "sensibleDefaults.repairPermissions": (deps) => repairPermissionsCommand(deps),
   "sensibleDefaults.runFix": (deps, node) => runFix(deps, node),
@@ -267,6 +296,7 @@ async function checkForUpdates(deps: CommandDeps): Promise<void> {
   // own answer to "am I a different set of recommendations?".
   const before = deps.manifest().revision;
   await deps.refreshManifest?.({ force: true });
+  await deps.prepareRecommendations?.();
   const updated = deps.manifest().revision !== before;
   await deps.runHealth();
   await vscode.window.showInformationMessage(

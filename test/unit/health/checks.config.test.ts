@@ -254,6 +254,41 @@ describe("config.models", () => {
     expect(configModelsCheck.run(ctx).level).toBe("warning");
   });
 
+  it("presents verified upgrades as optional when current models work", () => {
+    const ctx = withSettings((s) => {
+      envOf(s).ANTHROPIC_DEFAULT_SONNET_MODEL = "old-sonnet";
+    });
+    const base = {
+      label: "Sonnet",
+      family: "sonnet" as const,
+      scope: "global" as const,
+      region: "us-east-1",
+      allowed: true,
+      status: "available" as const,
+      stale: false,
+    };
+    ctx.modelAvailability = {
+      checking: false,
+      credential: "valid",
+      rows: [
+        { ...base, modelId: "old-sonnet", configured: true },
+        {
+          ...base,
+          modelId: ctx.manifest.defaults.env.ANTHROPIC_DEFAULT_SONNET_MODEL ?? "",
+          configured: false,
+        },
+      ],
+    };
+    expect(configModelsCheck.run(ctx)).toMatchObject({
+      level: "info",
+      label: "A verified model upgrade is available",
+    });
+    const current = ctx.modelAvailability.rows[0];
+    if (!current) throw new Error("Missing configured fixture");
+    current.status = "access-denied";
+    expect(configModelsCheck.run(ctx).level).toBe("warning");
+  });
+
   it("stays quiet about a drifted pin — config.drift owns it", () => {
     const settings = okSettings();
     envOf(settings).ANTHROPIC_DEFAULT_OPUS_MODEL = "us.anthropic.claude-something-else";

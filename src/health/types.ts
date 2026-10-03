@@ -11,6 +11,7 @@ import type { ScanOutcome } from "../credential/leakScan.js";
 import type { ConnectionResult, TokenPresence } from "../credential/types.js";
 import type { ManifestSource } from "../manifest/resolve.js";
 import type { CredentialPolicy, Manifest } from "../manifest/types.js";
+import type { AvailabilitySnapshot } from "../models/types.js";
 import type { WindowsTerminalStatus } from "../terminal/windows.js";
 
 export type CheckGroup = "Installation" | "Configuration" | "Credential" | "Plugins";
@@ -164,6 +165,7 @@ export interface ManifestStatus {
 }
 
 export interface CheckContext {
+  modelAvailability?: AvailabilitySnapshot;
   claudeDir: string;
   settingsFile: string;
   platform: NodeJS.Platform;

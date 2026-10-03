@@ -102,15 +102,37 @@ extension set each one to:
 | `extraKnownMarketplaces` | Claude Code plugin marketplaces to register | nothing — the key is there so a forked manifest can add some |
 | `enabledPlugins` | Claude Code plugins to turn on | nothing, for the same reason |
 
-The model ids use Amazon's **global** inference profiles, which route each
-request to whichever AWS region has capacity. That is the only form of these
-models that works from every commercial region — in Singapore, Tokyo, Mumbai
-and most of Asia-Pacific there is no regional alternative — and Claude Code
-itself falls back to the same `global.` prefix outside the US and EU. Two
-things it does not give you: a data-residency guarantee, and GovCloud. If your
-organisation needs requests kept inside one geography, change the three model
-ids to the `us.`, `eu.`, `au.` or `jp.` form of the same name; the health check
-carries on working with whichever you pick.
+The shipped defaults use Amazon's **global** inference profiles. Requests can
+be processed outside the AWS region receiving the call. The **Model availability**
+section lists model versions and their documented processing geographies, with
+exact IDs and the last access result for your credential and source region.
+The catalogue is refreshed through the same GitHub channel as the defaults, so
+compatible new models can appear without an extension update.
+
+Use **Processing policy** to limit which geographies the extension may probe and
+recommend. By default it follows the scopes of your configured model IDs. It
+never silently switches to a global profile. A custom ID whose geography is not
+in the catalogue is labelled **Unclassified**; it is not a residency guarantee.
+This extension preference does not enforce AWS IAM policy or establish legal
+compliance.
+
+**Enable automatic checks** to refresh configured models after 24 hours and
+alternatives after seven days, when VS Code starts or regains focus. Explicit
+access denials are eligible after a day; connection failures back off. New
+catalogue targets are checked when eligible. Fresh results are reused across
+windows and restarts. **Recheck models** refreshes immediately.
+
+Each configured Opus, Sonnet, and Haiku ID is verified separately. A working
+Haiku cannot hide a blocked Sonnet. A blocked unselected release is informational;
+it does not make a working setup unhealthy. **Review available upgrade** previews
+freshly verified candidates in your permitted geography. Existing pins stay in
+place until you apply a change, and user/Claude Code edits remain protected.
+
+Model evidence is saved locally under the extension's storage directory, outside
+Settings Sync. It includes IDs, safe reason codes, and timestamps, never the API
+key. A one-way credential identity is computed in memory and included in the opaque
+cache context hash; key replacement or removal invalidates the old evidence. **Copy administrator
+request** prepares access details for you to review and send yourself.
 
 Both lists are checkable: the nine keys are `MANAGED_KEYS` in
 [`src/config/types.ts`](src/config/types.ts), and the values are
@@ -199,38 +221,54 @@ reading.
 
 ## Network requests
 
-This extension makes exactly two outbound requests, and no others. It sends no
-telemetry, no analytics, and no crash reports — not "none yet", but a deliberate
-commitment: adding any would mean an opt-in, a disclosure here, and honouring
-your `telemetry.telemetryLevel`.
+The extension makes the following categories of outbound request. It sends no
+telemetry, analytics, or crash reports. Any future telemetry would require an
+opt-in, disclosure, and honouring `telemetry.telemetryLevel`.
 
-**1. It fetches the recommended settings.**
+**1. Recommended settings and model catalogue.**
 
 ```
 GET https://raw.githubusercontent.com/cutler-sg/sensible-claude-code-defaults/main/manifest/defaults.json
 ```
 
-At most once an hour per window, and whenever you run *Check for Updated
-Recommendations*. It sends nothing but the request — no key, no identifier, no
-query string, and nothing about you or your machine. The reply is the table of
-recommended values above. If it fails, or takes longer than five seconds, the
-last good copy is used, and failing that the copy inside the extension; the
-panel says which one it is using rather than pretending the channel worked.
+At most once an hour per window when checks run, and on **Check for Updated
+Recommendations**. No key or machine identifier is sent. A five-second timeout
+falls back to the last valid cached copy, then the bundled copy. Organisations
+can supply their own manifest URL.
 
-**2. It tests your Bedrock API key, when you ask it to.**
+**2. Model availability metadata.**
 
 ```
-POST https://bedrock-runtime.<your region>.amazonaws.com/model/<model id>/invoke
+GET https://bedrock.<your region>.amazonaws.com/foundation-model-availability/<foundation model id>
 ```
 
-Only when you click *Test Bedrock Connection*. This is the only time the
-extension sends your key anywhere. It goes to Amazon's Bedrock endpoint for your
-configured region and nowhere else, sends a one-character message, asks for a
-single token of output, and reports only whether it worked. Nothing about the
-answer — including any error text Amazon returns — is logged or shown to you
-verbatim.
+Uses your Bedrock bearer key to check agreement, entitlement, authorisation, and
+regional availability. This requires permission for `GetFoundationModelAvailability`.
+A metadata denial does not prove inference is unavailable. New unconfigured
+candidates require positive preflight before the extension invokes them.
 
-Neither request is proxied by anything of ours: the extension has no proxy
+**3. Model invocation checks.**
+
+```
+POST https://bedrock-runtime.<your region>.amazonaws.com/model/<exact model or profile id>/invoke
+```
+
+During setup, when you run a connection/model check, or after you enable automatic
+checks. Each request sends a fixed `.` message and asks for one output token;
+AWS charges normal inference costs, including input overhead. No project content
+is sent. Automatic batches use at most two concurrent requests and twelve runtime
+calls within a 30-second budget. Configured targets may be tested even if your key
+cannot read availability metadata. Redirects are rejected for authenticated
+model checks. Raw AWS response text is never displayed or logged.
+
+**AWS can automatically initiate a Marketplace subscription on first invocation**
+if the calling principal has the required permissions. Preflight reduces
+unnecessary invocations but is not an atomic subscription guarantee. An
+organisation requiring a strict no-subscription policy must withhold Marketplace
+subscription permissions. The extension never calls agreement-creation APIs.
+Automatic checks are off until enabled, and can be disabled at any time.
+
+These requests are not proxied by anything of ours: the extension has no proxy
 configuration of its own and uses the editor's own network stack, so your
 `http.proxy` settings apply.
 
@@ -355,9 +393,9 @@ Then, at your leisure:
   backups of your previous settings — and a backup taken after you set your key
   contains that key in plain text. `rm -rf ~/.claude/sensible-defaults` when you
   are done with them.
-- **The cached copy of the recommended settings** sits in VS Code's own
-  extension storage. It contains nothing about you and goes when VS Code cleans
-  up the extension's data.
+- **Cached recommendations and model-check evidence** sit in VS Code's own
+  extension storage. Model evidence includes tested model IDs, source region context, and timestamps.
+  These files go when VS Code cleans up the extension's data.
 - **Your project folders have nothing to clean up.** The extension never wrote
   anything inside one.
 
@@ -371,7 +409,7 @@ turns "it does not work" into a sentence naming which one of them is wrong.
 
 That is the whole of it. It is not a proxy and it is not a gateway: your
 requests go from Claude Code straight to AWS, it never sees a prompt or a
-response, and it runs no inference of its own. It configures a tool that
+response, and it performs only the minimal inference checks described above. It configures a tool that
 somebody else wrote, and says so.
 
 MIT licensed. The source is at
