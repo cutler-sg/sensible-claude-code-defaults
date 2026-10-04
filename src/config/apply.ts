@@ -241,6 +241,7 @@ export async function commit(
     return { written: false, reason: "stale", backup: undefined, changes, drift };
   }
 
+  const backedUpBefore = session.backedUp;
   const backup = await backupOnce(env, session, opts, meta?.forceBackup === true);
   const writtenRaw = serialize(next, planned.style);
   let settingsWriteError: unknown;
@@ -252,7 +253,12 @@ export async function commit(
     // when the exact intended bytes did land; any other outcome remains an
     // ordinary failed settings write and must not claim user data.
     const current = await readSettings(file).catch(() => undefined);
-    if (current?.kind !== "ok" || current.raw !== writtenRaw) throw error;
+    if (current?.kind !== "ok" || current.raw !== writtenRaw) {
+      // A failed apply must not consume the backup for a later successful
+      // attempt: settings authored before that retry still need an undo point.
+      session.backedUp = backedUpBefore;
+      throw error;
+    }
     settingsWriteError = error;
   }
 
@@ -278,7 +284,9 @@ export async function commit(
     if (saved === false) {
       // Roll back only while the live bytes are still exactly ours; a
       // concurrent user edit always wins.
-      await rollbackSettings(file, planned.read, writtenRaw, opts);
+      if (await rollbackSettings(file, planned.read, writtenRaw, opts)) {
+        session.backedUp = backedUpBefore;
+      }
     }
     throw error;
   }

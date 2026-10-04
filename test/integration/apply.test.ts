@@ -758,6 +758,50 @@ describe("backup and restore", () => {
 });
 
 describe("write failure", () => {
+  it.each(["settings write", "snapshot save"])(
+    "backs up newly authored settings when retrying after a failed %s in the same window",
+    async (failure) => {
+      const original = '{\n  "model": "original-user-model"\n}\n';
+      const edited = '{\n  "model": "edited-after-failure",\n  "userSetting": true\n}\n';
+      const desired: Desired = { "env.AWS_REGION": "us-east-1" };
+      await seedSettings(original);
+      const durableStore = env.snapshotStore;
+      if (failure === "settings write") {
+        hooks.writeFailure = new Error("disk full before rename");
+      } else {
+        let failSave = true;
+        env = {
+          ...env,
+          snapshotStore: {
+            load: () => durableStore.load(),
+            save: async (snapshot) => {
+              if (failSave) {
+                failSave = false;
+                throw new Error("snapshot save failed before rename");
+              }
+              await durableStore.save(snapshot);
+            },
+          },
+        };
+      }
+
+      await expect(commit(env, session, ready(await plan(env, desired)))).rejects.toThrow();
+      expect(await readText()).toBe(original);
+      await seedSettings(edited);
+
+      const retry = await commit(env, session, ready(await plan(env, desired)));
+      expect(retry.written).toBe(true);
+      expect(await readJson()).toMatchObject({ model: "edited-after-failure", userSetting: true });
+      expect(retry.backup).toBeDefined();
+      expect(await readText(retry.backup?.path)).toBe(edited);
+      const backups = await listBackups(backupsDir(claudeDir));
+      expect(await Promise.all(backups.map((backup) => readText(backup.path)))).toEqual([
+        edited,
+        original,
+      ]);
+    },
+  );
+
   it("rejects and leaves the snapshot untouched", async () => {
     hooks.writeFailure = new Error("disk full");
 

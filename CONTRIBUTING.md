@@ -30,6 +30,13 @@ inside `@vscode/test-cli` off vulnerable releases. They also satisfy our direct
 Mocha 12 dependency. Remove them when the test CLI accepts patched versions;
 verify both stable VS Code and the 1.98.2 API floor when changing this runner.
 
+The `@vscode/vsce` override makes Open VSX use the same VSCE 4 packager as the
+Marketplace CLI. Open VSX's older VSCE 3 dependency brings in vulnerable
+`braces` and `fast-uri` packages. Its `createVSIX` API remains compatible with
+VSCE 4; verify that API without publishing when changing this override. Keep
+both brace-expansion release lines patched in the lockfile: minimatch 9 requires
+2.x, while minimatch 10 requires 5.x.
+
 Write the test with the code, not after. For anything security-relevant,
 mutate your own implementation and confirm the test fails. Several tests in
 this repo's history sat at full coverage and could not fail for the reason

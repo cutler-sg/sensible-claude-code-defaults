@@ -333,6 +333,7 @@
     "test:integration": "node esbuild.js && esbuild test/integration-vscode/*.spec.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:mocha --outdir=out/test/integration-vscode && vscode-test"
   },
   "overrides": {
+    "@vscode/vsce": "^4.0.0",
     "diff": "^9.0.0",
     "serialize-javascript": "^7.1.2"
   },
