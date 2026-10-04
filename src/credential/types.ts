@@ -68,10 +68,11 @@ export interface ShapeVerdict {
   severity: "error" | "warning";
 }
 
-/** Outcome of the user-initiated Bedrock test call (FR-4.7). */
+/** Outcome of a Bedrock connection check (FR-4.7). */
 export type ConnectionResult =
   | { kind: "ok"; model: string }
   | { kind: "ok-without-haiku"; model: string }
+  | { kind: "models-unavailable"; working: number }
   | { kind: "bad-credential"; status: number }
   /** The key is genuine and the models are enabled; its IAM policy forbids the call. */
   | { kind: "insufficient-permissions"; status: number }

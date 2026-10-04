@@ -23,6 +23,7 @@ import type { Logger } from "../../util/log.js";
 import { failureMessage, reportFailure } from "../failures.js";
 import type { FlowDeps } from "../flows.js";
 import { runConnectionTest, saveToken } from "../flows.js";
+import type { ModelsPanel } from "../modelPresentation.js";
 import { render } from "./html.js";
 import {
   derive,
@@ -44,6 +45,7 @@ export interface PanelDeps {
   log: Logger;
   /** The latest report and last-test stamp, read per render. */
   report: () => HealthReport | undefined;
+  models?: () => ModelsPanel;
   lastTestedAt: () => string | undefined;
   consoleUrl: () => string;
   /** `commands.executeCommand`, injected so a unit test can watch it. */
@@ -109,6 +111,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private inputs(): Inputs {
     return {
       report: this.deps.report(),
+      ...(this.deps.models ? { models: this.deps.models() } : {}),
       stored: this.storedStamp,
       lastTestedAt: this.deps.lastTestedAt(),
       progress: this.progress,

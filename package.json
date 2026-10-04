@@ -188,6 +188,31 @@
         "command": "sensibleDefaults.openLeakedFile",
         "title": "Open the file your key was found in",
         "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.recheckModels",
+        "title": "Recheck Model Availability",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.configureModelChecks",
+        "title": "Configure Automatic Model Checks",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.selectProcessingScopes",
+        "title": "Choose Permitted Processing Geographies",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.copyModelAccessRequest",
+        "title": "Copy Model Access Request for Administrator",
+        "category": "Sensible Defaults"
+      },
+      {
+        "command": "sensibleDefaults.reviewModelUpgrade",
+        "title": "Review Available Model Upgrade",
+        "category": "Sensible Defaults"
       }
     ],
     "configuration": {
@@ -209,6 +234,32 @@
           "type": "boolean",
           "default": true,
           "description": "Run configuration health checks when the window finishes starting up."
+        },
+        "sensibleDefaults.autoCheckModels": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Automatically refresh stale Bedrock model access on startup and window focus. Makes tiny billable inference requests. First invocation may initiate a Marketplace subscription if your permissions allow it. Enable with **Configure Automatic Model Checks**."
+        },
+        "sensibleDefaults.modelProcessingScopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "global",
+              "us",
+              "eu",
+              "apac",
+              "au",
+              "jp",
+              "regional",
+              "unknown"
+            ]
+          },
+          "uniqueItems": true,
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "Permitted processing geographies for model probes and upgrade recommendations. Empty follows the scopes of your configured model IDs. `unknown` permits explicitly configured custom IDs whose processing geography is unverified. This preference is not an AWS policy or a legal residency guarantee."
         }
       }
     },
@@ -260,7 +311,7 @@
     "viewsWelcome": [
       {
         "view": "sensibleDefaults.details",
-        "contents": "Checking your Claude Code configuration…",
+        "contents": "Checking your Claude Code configuration\u2026",
         "when": "sensibleDefaults.hasReport == false"
       },
       {

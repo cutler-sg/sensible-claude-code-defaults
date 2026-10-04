@@ -270,7 +270,26 @@ ctx.environmentVariableCollection.replace('CLAUDE_CODE_USE_BEDROCK', '1');
 
 **FR-4.6 — Age tracking.** Store the token's set-date alongside it. Health check goes warn at 90 days, fail at 180 (both configurable via manifest).
 
-**FR-4.7 — Validation.** Offer an explicit "Test connection" action making the cheapest possible Bedrock call with the configured token, region, and Haiku model ID. Distinguish and message separately: bad credential (401/403), model not enabled in account, wrong region, network/proxy failure.
+**FR-4.7 — Validation (amended 2026-09-30).** Test every exact configured Opus,
+Sonnet, and Haiku target independently. Separate credential evidence, model
+access, documented route support, and transient failures; an ambiguous 403 is
+not proof of an invalid key. An optional manifest catalogue records explicit
+foundation-model IDs, inference-profile IDs, source regions, processing scopes,
+and verified AWS sources. Use GetFoundationModelAvailability preflight for new
+candidates before minimal billable InvokeModel probes. Configured targets may
+be tested without metadata permission. Preserve working pins and drift; apply
+verified upgrades only through the existing preview.
+
+Automatic checks are explicitly enabled by the user after cost/subscription
+disclosure, evaluated on activation/focus/settings or catalogue change, and
+bounded to two concurrent calls, twelve targets, and a 30-second batch. Cache
+configured successes and denials for 24 hours, alternative successes for seven
+days, and back off transient failures. Evidence is machine-local, credential and
+source-region scoped, timestamped, and invalidated on replacement. An owned
+expiring lease prevents duplicate batches across windows. Processing geography
+policy constrains probing and recommendations; source region alone does not
+establish residency. AWS can initiate Marketplace subscriptions on invocation;
+preflight is not an atomic guarantee, and the extension does not create agreements.
 
 **FR-4.8 — Leak scan.** Scan open workspace folders for the token value appearing in any `.claude/settings*.json`, `.env`, or tracked file. On hit: fail-level check, offer to remove the occurrence, and warn if the file is git-tracked. This is the check that earns its keep with this audience.
 
@@ -543,9 +562,9 @@ This is not ship-and-forget. Bedrock model IDs move, Claude Code's settings sche
 
 **Performance.** Activation must add < 100ms to window startup. All I/O async. Manifest fetch is fire-and-forget with the UI rendering from cache immediately.
 
-**Privacy.** No telemetry in v1. If added later it must be opt-in, disclosed prominently in the README, and honour `telemetry.telemetryLevel`. The extension makes exactly two categories of outbound request: the defaults manifest fetch, and the user-initiated Bedrock test call. Both documented in the README.
+**Privacy.** No telemetry in v1. If added later it must be opt-in, disclosed prominently in the README, and honour `telemetry.telemetryLevel`. The extension makes three categories of outbound request: the defaults/catalogue fetch, Bedrock availability metadata, and minimal runtime probes (manual or explicitly enabled automatic checks). All are documented in the README. No raw model responses or bearer credentials enter model evidence or diagnostics.
 
-**Trust posture.** A new, unverified publisher asking users for an AWS credential is a legitimately suspicious thing. Counter it by construction: public repository, README stating exactly which files are written and where the token is stored, the non-affiliation statement from §5A, no obfuscation, no telemetry, no network calls beyond the two documented ones. This is also the groundwork for the verified badge later.
+**Trust posture.** A new, unverified publisher asking users for an AWS credential is a legitimately suspicious thing. Counter it by construction: public repository, README stating exactly which files are written and where the token is stored, the non-affiliation statement from §5A, no obfuscation, no telemetry, no network calls beyond the documented categories. This is also the groundwork for the verified badge later.
 
 **Accessibility.** TreeView gives this largely for free. Ensure every check node has a meaningful `tooltip` and `accessibilityInformation`.
 

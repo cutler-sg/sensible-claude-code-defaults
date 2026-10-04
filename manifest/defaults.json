@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "2026-09-29T00:00:00Z",
+  "revision": "2026-09-30T00:00:00Z",
   "minExtensionVersion": "0.1.0",
   "minimumClaudeCodeVersion": "2.1.0",
   "defaults": {
@@ -23,5 +23,472 @@
     "warnAfterDays": 90,
     "failAfterDays": 180,
     "consoleUrl": "https://console.aws.amazon.com/bedrock/home#/api-keys"
-  }
+  },
+  "models": [
+    {
+      "id": "anthropic.claude-sonnet-5-5",
+      "label": "Claude Sonnet 5.5",
+      "family": "sonnet",
+      "rank": 55,
+      "lifecycle": "active",
+      "probeFormat": "anthropic-messages",
+      "verifiedAt": "2026-09-30",
+      "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html",
+      "targets": [
+        {
+          "id": "global.anthropic.claude-sonnet-5-5",
+          "sourceRegions": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ca-central-1",
+            "ca-west-1",
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3",
+            "ap-east-2",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-northeast-3",
+            "ap-south-1",
+            "ap-south-2",
+            "ap-southeast-1",
+            "ap-southeast-2",
+            "ap-southeast-3",
+            "ap-southeast-4",
+            "ap-southeast-5",
+            "ap-southeast-6",
+            "ap-southeast-7",
+            "il-central-1",
+            "me-central-1",
+            "me-south-1",
+            "af-south-1",
+            "sa-east-1",
+            "mx-central-1"
+          ],
+          "scope": "global"
+        }
+      ]
+    },
+    {
+      "id": "anthropic.claude-opus-5-5",
+      "label": "Claude Opus 5.5",
+      "family": "opus",
+      "rank": 55,
+      "lifecycle": "active",
+      "probeFormat": "anthropic-messages",
+      "verifiedAt": "2026-09-30",
+      "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html",
+      "targets": [
+        {
+          "id": "global.anthropic.claude-opus-5-5",
+          "sourceRegions": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ca-central-1",
+            "ca-west-1",
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3",
+            "ap-east-2",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-northeast-3",
+            "ap-south-1",
+            "ap-south-2",
+            "ap-southeast-1",
+            "ap-southeast-2",
+            "ap-southeast-3",
+            "ap-southeast-4",
+            "ap-southeast-5",
+            "ap-southeast-6",
+            "ap-southeast-7",
+            "il-central-1",
+            "me-central-1",
+            "me-south-1",
+            "af-south-1",
+            "sa-east-1",
+            "mx-central-1"
+          ],
+          "scope": "global"
+        },
+        {
+          "id": "us.anthropic.claude-opus-5-5",
+          "sourceRegions": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "us-gov-west-1",
+            "us-gov-east-1"
+          ],
+          "scope": "us"
+        },
+        {
+          "id": "eu.anthropic.claude-opus-5-5",
+          "sourceRegions": [
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3"
+          ],
+          "scope": "eu"
+        },
+        {
+          "id": "au.anthropic.claude-opus-5-5",
+          "sourceRegions": ["ap-southeast-2", "ap-southeast-4"],
+          "scope": "au"
+        },
+        {
+          "id": "jp.anthropic.claude-opus-5-5",
+          "sourceRegions": ["ap-northeast-1", "ap-northeast-3"],
+          "scope": "jp"
+        }
+      ]
+    },
+    {
+      "id": "anthropic.claude-sonnet-5",
+      "label": "Claude Sonnet 5",
+      "family": "sonnet",
+      "rank": 50,
+      "lifecycle": "active",
+      "probeFormat": "anthropic-messages",
+      "verifiedAt": "2026-09-30",
+      "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5.html",
+      "targets": [
+        {
+          "id": "global.anthropic.claude-sonnet-5",
+          "sourceRegions": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ca-central-1",
+            "ca-west-1",
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3",
+            "ap-east-2",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-northeast-3",
+            "ap-south-1",
+            "ap-south-2",
+            "ap-southeast-1",
+            "ap-southeast-2",
+            "ap-southeast-3",
+            "ap-southeast-4",
+            "ap-southeast-5",
+            "ap-southeast-6",
+            "ap-southeast-7",
+            "il-central-1",
+            "me-central-1",
+            "me-south-1",
+            "af-south-1",
+            "sa-east-1",
+            "mx-central-1"
+          ],
+          "scope": "global"
+        },
+        {
+          "id": "us.anthropic.claude-sonnet-5",
+          "sourceRegions": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "us-gov-west-1",
+            "us-gov-east-1"
+          ],
+          "scope": "us"
+        },
+        {
+          "id": "eu.anthropic.claude-sonnet-5",
+          "sourceRegions": [
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3"
+          ],
+          "scope": "eu"
+        },
+        {
+          "id": "au.anthropic.claude-sonnet-5",
+          "sourceRegions": ["ap-southeast-2", "ap-southeast-4"],
+          "scope": "au"
+        }
+      ]
+    },
+    {
+      "id": "anthropic.claude-sonnet-4-6",
+      "label": "Claude Sonnet 4.6",
+      "family": "sonnet",
+      "rank": 46,
+      "lifecycle": "active",
+      "probeFormat": "anthropic-messages",
+      "verifiedAt": "2026-09-30",
+      "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html",
+      "targets": [
+        {
+          "id": "global.anthropic.claude-sonnet-4-6",
+          "sourceRegions": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ca-central-1",
+            "ca-west-1",
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3",
+            "ap-east-2",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-northeast-3",
+            "ap-south-1",
+            "ap-south-2",
+            "ap-southeast-1",
+            "ap-southeast-2",
+            "ap-southeast-3",
+            "ap-southeast-4",
+            "ap-southeast-5",
+            "ap-southeast-6",
+            "ap-southeast-7",
+            "il-central-1",
+            "me-central-1",
+            "me-south-1",
+            "af-south-1",
+            "sa-east-1",
+            "mx-central-1"
+          ],
+          "scope": "global"
+        },
+        {
+          "id": "us.anthropic.claude-sonnet-4-6",
+          "sourceRegions": ["us-east-1", "us-east-2", "us-west-1", "us-west-2"],
+          "scope": "us"
+        },
+        {
+          "id": "eu.anthropic.claude-sonnet-4-6",
+          "sourceRegions": [
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3"
+          ],
+          "scope": "eu"
+        },
+        {
+          "id": "au.anthropic.claude-sonnet-4-6",
+          "sourceRegions": ["ap-southeast-2", "ap-southeast-4"],
+          "scope": "au"
+        },
+        {
+          "id": "jp.anthropic.claude-sonnet-4-6",
+          "sourceRegions": ["ap-northeast-1", "ap-northeast-3"],
+          "scope": "jp"
+        },
+        {
+          "id": "anthropic.claude-sonnet-4-6",
+          "sourceRegions": ["eu-west-2"],
+          "scope": "regional"
+        }
+      ]
+    },
+    {
+      "id": "anthropic.claude-opus-4-6-v1",
+      "label": "Claude Opus 4.6",
+      "family": "opus",
+      "rank": 46,
+      "lifecycle": "active",
+      "probeFormat": "anthropic-messages",
+      "verifiedAt": "2026-09-30",
+      "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-6.html",
+      "targets": [
+        {
+          "id": "global.anthropic.claude-opus-4-6-v1",
+          "sourceRegions": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ca-central-1",
+            "ca-west-1",
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3",
+            "ap-east-2",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-northeast-3",
+            "ap-south-1",
+            "ap-south-2",
+            "ap-southeast-1",
+            "ap-southeast-2",
+            "ap-southeast-3",
+            "ap-southeast-4",
+            "ap-southeast-5",
+            "ap-southeast-6",
+            "ap-southeast-7",
+            "il-central-1",
+            "me-central-1",
+            "me-south-1",
+            "af-south-1",
+            "sa-east-1",
+            "mx-central-1"
+          ],
+          "scope": "global"
+        },
+        {
+          "id": "us.anthropic.claude-opus-4-6-v1",
+          "sourceRegions": ["us-east-1", "us-east-2", "us-west-1", "us-west-2"],
+          "scope": "us"
+        },
+        {
+          "id": "eu.anthropic.claude-opus-4-6-v1",
+          "sourceRegions": [
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3"
+          ],
+          "scope": "eu"
+        },
+        {
+          "id": "au.anthropic.claude-opus-4-6-v1",
+          "sourceRegions": ["ap-southeast-2", "ap-southeast-4"],
+          "scope": "au"
+        },
+        {
+          "id": "anthropic.claude-opus-4-6-v1",
+          "sourceRegions": ["eu-west-2"],
+          "scope": "regional"
+        }
+      ]
+    },
+    {
+      "id": "anthropic.claude-haiku-4-5-20251001-v1:0",
+      "label": "Claude Haiku 4.5",
+      "family": "haiku",
+      "rank": 45,
+      "lifecycle": "active",
+      "probeFormat": "anthropic-messages",
+      "verifiedAt": "2026-09-30",
+      "source": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html",
+      "targets": [
+        {
+          "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "sourceRegions": [
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ca-central-1",
+            "ca-west-1",
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3",
+            "ap-east-2",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-northeast-3",
+            "ap-south-1",
+            "ap-south-2",
+            "ap-southeast-1",
+            "ap-southeast-2",
+            "ap-southeast-3",
+            "ap-southeast-4",
+            "ap-southeast-5",
+            "ap-southeast-6",
+            "ap-southeast-7",
+            "il-central-1",
+            "me-central-1",
+            "me-south-1",
+            "af-south-1",
+            "sa-east-1",
+            "mx-central-1"
+          ],
+          "scope": "global"
+        },
+        {
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "sourceRegions": ["us-east-1", "us-east-2", "us-west-1", "us-west-2"],
+          "scope": "us"
+        },
+        {
+          "id": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "sourceRegions": [
+            "eu-central-1",
+            "eu-central-2",
+            "eu-north-1",
+            "eu-south-1",
+            "eu-south-2",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-west-3"
+          ],
+          "scope": "eu"
+        },
+        {
+          "id": "au.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "sourceRegions": ["ap-southeast-2", "ap-southeast-4"],
+          "scope": "au"
+        },
+        {
+          "id": "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "sourceRegions": ["ap-northeast-1", "ap-northeast-3"],
+          "scope": "jp"
+        }
+      ]
+    }
+  ]
 }
