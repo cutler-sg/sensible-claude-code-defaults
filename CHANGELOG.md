@@ -5,11 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-10-20
+
+### Added
+
+- Bedrock model availability checks verify each configured Opus, Sonnet, and Haiku target independently. The model matrix distinguishes successful invocation, denied access, stale evidence, and unavailable metadata.
+- Upgrade recommendations require verified access and preserve working model pins, custom regions, and user edits. Applying an upgrade still requires a preview and confirmation.
+- Optional automatic model checks disclose billable requests and possible AWS subscription effects before enablement. Checks are bounded, cached per credential and region, deduplicated across windows, and constrained by the selected processing geographies.
 
 ### Fixed
 
 - Failed applies that leave settings unchanged or successfully roll them back no longer consume the window's backup allowance. Retrying in the same window saves settings authored after the failure before replacing them.
+
+### Maintenance
+
+- Updated development dependencies and patched the transitive `source-map-js` denial-of-service advisory. These test tools are not part of the packaged extension.
+- Added daily dependency audits covering the committed transitive dependency graph, including development tools.
+- Extended platform CI to exercise the VS Code 1.98.2 API floor as well as current stable, and explicitly validate Ubuntu 26.04 during GitHub's runner migration.
+- Release submission now requires Marketplace configuration and publishes the same channel-marked VSIX that is uploaded as the workflow artifact.
 
 ## [1.0.0] - 2026-09-29
 
