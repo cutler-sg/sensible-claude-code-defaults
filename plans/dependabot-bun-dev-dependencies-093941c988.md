@@ -24,8 +24,8 @@ health follow-ups and preparation for the next production submission on
 
 - [x] Repair the vulnerable transitive dependency and verify the dependency group.
 - [x] Add scheduled dependency auditing and strengthen release/platform checks.
-- [ ] Prepare 1.2.0 metadata, changelog, release notes, and submission instructions.
-- [ ] Validate lint, types, unit tests, stable/API-floor extension hosts, both
+- [x] Prepare 1.2.0 metadata, changelog, release notes, and submission instructions.
+- [x] Validate lint, types, unit tests, stable/API-floor extension hosts, both
       packagers, and VSIX contents. Investigate and fix failures in scope.
 - [ ] Review the complete diff and hosted checks; finish the PR and session summary.
 
@@ -60,3 +60,34 @@ health follow-ups and preparation for the next production submission on
   select the expected channel; invalid inputs and missing configuration fail.
 - Local extension-host suites pass on VS Code 1.142.0 and 1.98.2: seven passing
   and one existing Windows-only skip each. Both use disposable profiles.
+- Workflow commit `40bc894` passed the expanded hosted matrix in run
+  [39431951437](https://github.com/cutler-sg/sensible-claude-code-defaults/actions/runs/39431951437):
+  Windows, macOS, ubuntu-latest, explicit Ubuntu 26.04, and no-keyring Linux.
+  Each executed both supported VS Code versions successfully. Dependency audit
+  run 39431958987 and CodeQL run 39431958757 also passed.
+- The existing local dependency directory retained an old nested VSCE 3.9.2
+  despite a clean lockfile. A separate clean snapshot confirmed Open VSX
+  resolves VSCE 4.0.0 and packages successfully with the committed override.
+  The working checkout's old dependency directory was preserved under `/tmp`
+  and replaced with a fresh frozen install; it now resolves VSCE 4.0.0 too.
+- Repeated typechecking and all 2,088 unit tests against the clean installation;
+  both passed, with the same two existing skips. Candidate manifest tests pass.
+- Inspected stable, pre-release, and clean Open VSX packager archives: ten
+  expected files, version 1.2.0, publisher `cutler-sg`, correct channel marker,
+  bundled model catalogue and icons, no `preview` or `extensionKind`, and no
+  source maps, dependencies, test fixtures, or plan files.
+- The stable candidate is 105,877 bytes. The locally built Marketplace VSIX
+  SHA-256 is `7328f5a7444a905eeb9e3ff34494b722f8474dae71f8b6e06cea7689adf64688`.
+  ZIP timestamps can differ between builds; publish the exact Release artifact.
+- Independent read-only review found no blocking defects. Verified the CLI
+  handling of prepackaged artifacts, channel metadata, and environment tokens.
+
+## Remaining submission boundaries
+
+- Merge and production publication remain with Michael. No tag or registry
+  submission has been created.
+- Live AWS account entitlement/subscription behaviour, physical keychain
+  prompts, corporate policies, remote-host placement, and screen-reader output
+  remain unverified. See `docs/release-1.2.0.md` for the handoff.
+- Open VSX namespace/token configuration is absent; Marketplace publication
+  remains independent of it.
