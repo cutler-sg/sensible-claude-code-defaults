@@ -1,0 +1,40 @@
+name: Dependency audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - bun.lock
+      - package.json
+      - .github/workflows/dependency-audit.yml
+  pull_request:
+    paths:
+      - bun.lock
+      - package.json
+      - .github/workflows/dependency-audit.yml
+  schedule:
+    - cron: "43 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Audit the committed graph, including development and transitive
+      # dependencies. GitHub's inventory does not currently include all of it.
+      - run: bun install --frozen-lockfile
+      - run: bun audit

@@ -8,9 +8,14 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # The federated credential on the publishing identity trusts this
     # environment, not a branch or tag: a tag-scoped credential matches one
     # exact tag and breaks on the next release, since Entra does no pattern
@@ -18,10 +23,16 @@ jobs:
     environment: marketplace-publish
     # Secrets cannot be referenced directly in `if:`, so surface them as job-level env.
     env:
-      HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' }}
+      HAS_AZURE: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' }}
       HAS_OVSX: ${{ secrets.OVSX_PAT != '' }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Require Marketplace configuration
+        if: ${{ env.HAS_AZURE != 'true' }}
+        run: |
+          echo "::error::marketplace-publish must configure AZURE_CLIENT_ID and AZURE_TENANT_ID."
+          exit 1
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -44,7 +55,8 @@ jobs:
 
       # VS Code's convention: an even minor is a stable release, an odd minor a
       # pre-release. A published version cannot change channel afterwards, so the
-      # tag alone decides it here and must agree with package.json.
+      # tag alone decides it here and must agree with package.json. Package
+      # the channel marker into the VSIX before uploading or publishing it.
       - name: Resolve release channel
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -53,21 +65,32 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match package.json version $manifest"
             exit 1
           fi
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::release versions must be numeric major.minor.patch"
+            exit 1
+          fi
+          echo "VSIX_PATH=sensible-claude-code-defaults-${version}.vsix" >> "$GITHUB_ENV"
           minor="$(echo "$version" | cut -d. -f2)"
           if [ $((minor % 2)) -eq 1 ]; then
-            echo "PRE_RELEASE_FLAG=--pre-release" >> "$GITHUB_ENV"
+            echo "PRE_RELEASE=true" >> "$GITHUB_ENV"
             echo "::notice::$version publishes to the pre-release channel (odd minor)"
           else
+            echo "PRE_RELEASE=false" >> "$GITHUB_ENV"
             echo "::notice::$version publishes as a stable release (even minor)"
           fi
 
       - name: Package
-        run: bun run package
+        run: |
+          args=()
+          if [ "$PRE_RELEASE" = "true" ]; then
+            args+=(--pre-release)
+          fi
+          bun run package "${args[@]}"
 
       - uses: actions/upload-artifact@v7
         with:
           name: vsix
-          path: "*.vsix"
+          path: ${{ env.VSIX_PATH }}
           if-no-files-found: error
 
       # Azure DevOps retires global PATs on 2026-12-01; publish via Entra workload
@@ -77,7 +100,6 @@ jobs:
       # `vsce` asks it for an Azure DevOps token, never an ARM one. Without
       # `allow-no-subscriptions` the login step would fail looking for one.
       - name: Azure login (OIDC)
-        if: ${{ env.HAS_AZURE == 'true' }}
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -85,9 +107,10 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Publish to VS Code Marketplace
-        if: ${{ env.HAS_AZURE == 'true' }}
-        run: bunx vsce publish --azure-credential $PRE_RELEASE_FLAG --no-dependencies
+        run: bunx --no-install vsce publish --azure-credential --packagePath "$VSIX_PATH"
 
       - name: Publish to Open VSX
         if: ${{ env.HAS_OVSX == 'true' }}
-        run: bunx ovsx publish $PRE_RELEASE_FLAG -p "${{ secrets.OVSX_PAT }}"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: bunx --no-install ovsx publish "$VSIX_PATH"

@@ -21,6 +21,7 @@ bun install
 bun audit
 bun run lint && bun run typecheck && bun run test
 xvfb-run -a bun run test:integration   # Linux; bare on macOS and Windows
+xvfb-run -a bun run test:integration --code-version 1.98.2
 ```
 
 ## Tests
@@ -29,6 +30,12 @@ The `diff` and `serialize-javascript` overrides keep the Mocha 11 dependency
 inside `@vscode/test-cli` off vulnerable releases. They also satisfy our direct
 Mocha 12 dependency. Remove them when the test CLI accepts patched versions;
 verify both stable VS Code and the 1.98.2 API floor when changing this runner.
+
+Use Bun 1.4.3 or newer for targeted transitive updates such as
+`bun update source-map-js`. Inspect the diff and rerun `bun audit`: older Bun
+versions may add a direct dependency while retaining vulnerable nested copies.
+The daily Dependency audit workflow checks the frozen graph independently of
+GitHub's dependency inventory.
 
 The `@vscode/vsce` override makes Open VSX use the same VSCE 4 packager as the
 Marketplace CLI. Open VSX's older VSCE 3 dependency brings in vulnerable
@@ -47,8 +54,8 @@ they existed; the review notes in `plans/` record each one.
 - Conventional commit messages (`feat:`, `fix:`, `test:`, `docs:`, `chore:`),
   with a body that explains the decision rather than restating the diff.
 - One concern per PR.
-- CI runs on Linux, macOS, and Windows, plus a Linux leg with no keyring. All
-  four must be green.
+- CI runs on Linux, macOS, and Windows, plus a Linux leg with no keyring and an
+  explicit Ubuntu 26.04 leg. Stable VS Code and the 1.98.2 API floor must pass.
 
 ## Reporting a security problem
 

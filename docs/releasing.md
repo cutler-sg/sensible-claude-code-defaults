@@ -30,6 +30,9 @@ fails if the tag and `package.json` disagree.
    Keep `@types/vscode ~1.98.0` while supporting VS Code 1.98.
 3. Run `bun install --frozen-lockfile`, `bun audit`, `bun run lint`,
    `bun run typecheck`, `bun run test`, and `bun run package`.
+   For transitive security fixes, use Bun 1.4.3 or newer's targeted
+   `bun update <package>` and inspect the lockfile diff. Older Bun versions may
+   add a direct dependency without updating the vulnerable nested copies.
 4. Run the extension-host suite on stable VS Code and the API floor:
    `bun run test:integration` and
    `bun run test:integration --code-version 1.98.2`. Linux needs a display:
@@ -41,6 +44,16 @@ fails if the tag and `package.json` disagree.
 6. Open a PR and wait for all platform jobs, dependency audit, packaging, and
    CodeQL. Review any security findings before merging. Record evidence in the
    branch plan and PR, including manual verification that remains outstanding.
+   CI runs both stable and 1.98.2 extension hosts on Linux, macOS, and Windows.
+   The explicit Ubuntu 26.04 job validates the ongoing `ubuntu-latest` migration.
+
+The **Dependency audit** workflow also runs daily at 02:43 UTC (10:43 Singapore)
+and supports manual dispatch. It installs the frozen lockfile and runs
+`bun audit`, including development and transitive dependencies. Keep Actions
+failure notifications enabled: GitHub's exported dependency inventory omitted
+the vulnerable transitive `source-map-js` entry on 2026-10-20, so zero Dependabot
+alerts alone does not establish a clean dependency graph. The scheduled workflow
+begins running after its PR is merged into the default branch.
 
 ## Publish the merged commit
 
@@ -55,7 +68,9 @@ git push origin v<VERSION>
 
 Watch the Release workflow to completion. Confirm the Marketplace publish step
 actually ran, and that the *Resolve release channel* notice names the channel
-you intended. A green workflow with skipped publishing is not a release. Fetch
+you intended. The workflow fails if either `AZURE_CLIENT_ID` or `AZURE_TENANT_ID`
+is missing from `marketplace-publish`. It packages the channel marker into the
+VSIX and submits that exact uploaded file to each configured registry. Fetch
 the workflow's `vsix` artifact and attach it to a GitHub release with the
 release notes; mark it as a pre-release only for odd-minor versions. Verify the published Marketplace version using the registry API: the version
 has no `Microsoft.VisualStudio.Code.PreRelease` property on even minors, and the
@@ -64,6 +79,10 @@ search indexing and client auto-updates may lag the direct listing.
 
 Open VSX publishing is conditional on `OVSX_PAT`; namespace/token setup is still
 pending. A skipped Open VSX step is expected until that setup is completed.
+
+Keep a prepared version's changelog date as `Unreleased` until publication is
+scheduled. A candidate package and green PR are preparation evidence, not proof
+of a Marketplace submission.
 
 ## Validation boundaries and recovery
 

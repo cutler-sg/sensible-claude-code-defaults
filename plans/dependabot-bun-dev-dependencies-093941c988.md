@@ -23,7 +23,7 @@ health follow-ups and preparation for the next production submission on
 ## Tasks
 
 - [x] Repair the vulnerable transitive dependency and verify the dependency group.
-- [ ] Add scheduled dependency auditing and strengthen release/platform checks.
+- [x] Add scheduled dependency auditing and strengthen release/platform checks.
 - [ ] Prepare 1.2.0 metadata, changelog, release notes, and submission instructions.
 - [ ] Validate lint, types, unit tests, stable/API-floor extension hosts, both
       packagers, and VSIX contents. Investigate and fix failures in scope.
@@ -47,3 +47,16 @@ health follow-ups and preparation for the next production submission on
   committed change is only the resolved `source-map-js` entry, and both versions
   report a clean audit afterwards. Frozen installation succeeds with Bun 1.4.3.
 - Biome's schema now matches the Dependabot update to 2.5.15.
+- The dependency-fix commit passed all existing hosted platform, package, and
+  CodeQL checks in CI run 39431030694.
+- Added a daily 02:43 UTC frozen-lockfile audit, stable/API-floor host runs
+  within the existing required CI job names, and an explicit Ubuntu 26.04 leg.
+  GitHub runner-images issue 14748 documents that label as generally available.
+- actionlint 1.7.12 validates the workflows with a temporary runner-label
+  configuration for Ubuntu 26.04; its bundled label catalogue predates that
+  image. No workflow checks or security scans were suppressed.
+- Executed the release workflow's channel resolver against stable, pre-release,
+  mismatched-tag, suffix, and leading-zero fixtures. Valid numeric versions
+  select the expected channel; invalid inputs and missing configuration fail.
+- Local extension-host suites pass on VS Code 1.142.0 and 1.98.2: seven passing
+  and one existing Windows-only skip each. Both use disposable profiles.
