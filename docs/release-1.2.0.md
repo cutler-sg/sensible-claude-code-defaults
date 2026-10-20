@@ -54,8 +54,14 @@ the new Ubuntu 26.04 runner image.
   override is present. The stable candidate is 105,877 bytes.
 - A clean dependency installation confirms Open VSX uses VSCE 4.0.0 and passes
   the same typecheck and full unit suite. Independent review found no blockers.
-- Package inspection and final hosted results are recorded in the
-  [branch plan](../plans/dependabot-bun-dev-dependencies-093941c988.md).
+- Candidate `3d04b9a` passed all nine GitHub checks. The
+  [hosted CI run](https://github.com/cutler-sg/sensible-claude-code-defaults/actions/runs/39433029054)
+  passed both VS Code versions across Windows, macOS, Ubuntu, Ubuntu 26.04,
+  and no-keyring Linux. Audit, packaging, and CodeQL also passed.
+- The downloaded hosted VSIX passes the archive checks. Its SHA-256 is
+  `69b6f6cb6b5d34cdabef06d7224cb4f1086ea074d76387a39d6a879aa0fe7971`.
+  See the [branch plan](../plans/dependabot-bun-dev-dependencies-093941c988.md)
+  for additional evidence and PR #53 for completion-commit check status.
 
 ## Outstanding environment checks
 

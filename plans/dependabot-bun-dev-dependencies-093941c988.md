@@ -27,7 +27,7 @@ health follow-ups and preparation for the next production submission on
 - [x] Prepare 1.2.0 metadata, changelog, release notes, and submission instructions.
 - [x] Validate lint, types, unit tests, stable/API-floor extension hosts, both
       packagers, and VSIX contents. Investigate and fix failures in scope.
-- [ ] Review the complete diff and hosted checks; finish the PR and session summary.
+- [x] Review the complete diff and hosted checks; finish the PR and session summary.
 
 ## Decisions and evidence
 
@@ -81,6 +81,14 @@ health follow-ups and preparation for the next production submission on
   ZIP timestamps can differ between builds; publish the exact Release artifact.
 - Independent read-only review found no blocking defects. Verified the CLI
   handling of prepackaged artifacts, channel metadata, and environment tokens.
+- Candidate `3d04b9a` passed all nine GitHub checks, including the expanded
+  platform matrix, audit, packaging, and CodeQL:
+  [CI run 39433029054](https://github.com/cutler-sg/sensible-claude-code-defaults/actions/runs/39433029054).
+  Its downloaded VSIX passes the same archive inspection. SHA-256:
+  `69b6f6cb6b5d34cdabef06d7224cb4f1086ea074d76387a39d6a879aa0fe7971`.
+- Final full-diff review is complete. The subsequent completion commit only
+  updates this validation record and the release handoff; its check status is
+  tracked on PR #53 rather than requiring another evidence-only commit.
 
 ## Remaining submission boundaries
 
