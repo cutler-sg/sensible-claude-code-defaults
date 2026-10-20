@@ -4,7 +4,9 @@ Branch: `dependabot/bun/dev-dependencies-093941c988`
 PR: https://github.com/cutler-sg/sensible-claude-code-defaults/pull/53
 Authorization: Michael requested unattended implementation of the repository
 health follow-ups and preparation for the next production submission on
-2026-10-20. Reuse the existing dependency PR; do not merge, tag, or publish.
+2026-10-20. Michael subsequently authorized committing, pushing, merging,
+production deployment, and live validation with agent-browser. Reuse the
+existing dependency PR and publish only after its checks pass.
 
 ## Acceptance criteria
 
@@ -19,6 +21,8 @@ health follow-ups and preparation for the next production submission on
   limits are recorded honestly. Physical desktop and live AWS checks are not
   inferred from synthetic tests.
 - The final diff is reviewed, committed, pushed, and handed off in this PR.
+- Version 1.2.0 is published to the stable Marketplace channel, with the exact
+  workflow artifact attached to its GitHub release and live browser evidence.
 
 ## Tasks
 
@@ -28,6 +32,14 @@ health follow-ups and preparation for the next production submission on
 - [x] Validate lint, types, unit tests, stable/API-floor extension hosts, both
       packagers, and VSIX contents. Investigate and fix failures in scope.
 - [x] Review the complete diff and hosted checks; finish the PR and session summary.
+- [x] Date the release changelog and record production publication authorization.
+- [ ] Merge PR #53 after the final commit passes all checks.
+- [ ] Verify merged-main checks, publish the annotated tag, and verify submission.
+- [ ] Attach the workflow VSIX to the GitHub release and validate the live listing
+      and downloadable package with agent-browser.
+
+Post-merge execution evidence belongs in the GitHub release and session summary;
+this plan records the approved procedure before publication.
 
 ## Decisions and evidence
 
@@ -90,10 +102,10 @@ health follow-ups and preparation for the next production submission on
   updates this validation record and the release handoff; its check status is
   tracked on PR #53 rather than requiring another evidence-only commit.
 
-## Remaining submission boundaries
+## Remaining environment checks
 
-- Merge and production publication remain with Michael. No tag or registry
-  submission has been created.
+- Production publication is authorized. Final check, merge, tag, and submission
+  results will be recorded in the release record and session summary.
 - Live AWS account entitlement/subscription behaviour, physical keychain
   prompts, corporate policies, remote-host placement, and screen-reader output
   remain unverified. See `docs/release-1.2.0.md` for the handoff.

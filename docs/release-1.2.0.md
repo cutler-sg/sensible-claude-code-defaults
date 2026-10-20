@@ -1,7 +1,9 @@
-# Release candidate 1.2.0
+# Release 1.2.0
 
-Prepared for the stable Marketplace channel. This document describes a candidate;
-no tag, GitHub release, or registry submission is implied.
+Prepared for the stable Marketplace channel, with publication authorized on
+2026-10-20. Deployment results and the downloadable artifact are recorded in the
+[GitHub release](https://github.com/cutler-sg/sensible-claude-code-defaults/releases/tag/v1.2.0)
+after successful Marketplace submission.
 
 ## Release notes
 
@@ -81,9 +83,9 @@ unverified risk. This candidate retains that distinction:
 
 ## Final submission
 
-Follow [the release runbook](releasing.md). Merge the reviewed PR, verify the
-merged commit's checks, and date the 1.2.0 changelog when publication is scheduled.
-Only then create the individual annotated `v1.2.0` tag and publish it.
+Follow [the release runbook](releasing.md). The changelog is dated 2026-10-20.
+Merge the reviewed PR and verify the merged commit's checks. Only then create
+the individual annotated `v1.2.0` tag and publish it.
 
 After the Release workflow succeeds, verify the Marketplace version and stable
 channel directly, and attach the workflow's exact VSIX to the GitHub release
