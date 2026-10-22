@@ -1,6 +1,26 @@
-# Sensible Claude Code Defaults
+<p align="center">
+  <img src="media/hero.png" alt="Sensible Claude Code Defaults: Claude Code on AWS Bedrock, set up and kept healthy" width="100%">
+</p>
 
-[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=cutler-sg.sensible-claude-code-defaults)
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=cutler-sg.sensible-claude-code-defaults"><img alt="Visual Studio Marketplace version" src="https://img.shields.io/visual-studio-marketplace/v/cutler-sg.sensible-claude-code-defaults?label=Marketplace&color=5FE3B5&labelColor=0B2F38"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=cutler-sg.sensible-claude-code-defaults"><img alt="Visual Studio Marketplace installs" src="https://img.shields.io/visual-studio-marketplace/i/cutler-sg.sensible-claude-code-defaults?labelColor=0B2F38"></a>
+  <a href="https://github.com/cutler-sg/sensible-claude-code-defaults/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/cutler-sg/sensible-claude-code-defaults/ci.yml?branch=main&label=CI&labelColor=0B2F38"></a>
+  <a href="https://github.com/cutler-sg/sensible-claude-code-defaults/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://img.shields.io/github/actions/workflow/status/cutler-sg/sensible-claude-code-defaults/codeql.yml?branch=main&label=CodeQL&labelColor=0B2F38"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/cutler-sg/sensible-claude-code-defaults?labelColor=0B2F38&color=F1ECE1"></a>
+</p>
+
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=cutler-sg.sensible-claude-code-defaults"><b>Install from the VS Code Marketplace</b></a>
+  &nbsp;·&nbsp;
+  <a href="#getting-started">Getting started</a>
+  &nbsp;·&nbsp;
+  <a href="#what-this-extension-writes">What it writes</a>
+  &nbsp;·&nbsp;
+  <a href="#where-your-bedrock-api-key-is-stored">Where your key lives</a>
+  &nbsp;·&nbsp;
+  <a href="#residual-risk">Residual risk</a>
+</p>
 
 Sets up Claude Code to run on AWS Bedrock, then keeps checking that the setup
 still works. It writes a short, fixed list of keys to your own
@@ -8,14 +28,42 @@ still works. It writes a short, fixed list of keys to your own
 keychain, and tells you plainly when something is wrong — a missing region, an
 ageing key, a setting that drifted.
 
-<!--
-  Screenshot of the health panel goes here as `media/panel.png`, captured from a
-  real window rather than mocked up. Not committed yet; this comment is the
-  placeholder rather than a broken image link.
--->
-
 **An independent tool. Not affiliated with, endorsed by, or sponsored by
-Anthropic, PBC.**
+Anthropic, PBC, or Amazon Web Services.**
+
+<p align="center">
+  <img src="media/panel.png" alt="The health panel reporting that three configured models could not be verified, with a Recheck models button and a model availability table" width="640">
+</p>
+
+<p align="center"><sub>A real capture from the packaged 1.2.1 verification run, not a mock-up. The panel names what is wrong and offers the one button that addresses it.</sub></p>
+
+## At a glance
+
+| | |
+|---|---|
+| **Who it is for** | People who need Claude Code working on Bedrock and would rather not learn what `ANTHROPIC_DEFAULT_SONNET_MODEL` is |
+| **What it touches** | Nine keys in `~/.claude/settings.json`, your editor's secret storage, and nothing inside any project folder |
+| **What it never does** | Proxy your prompts, send telemetry, write without a preview and a backup, or overwrite a value you or Claude Code changed |
+| **Where it runs** | Local windows, WSL, Remote-SSH, and dev containers, on the side where Claude Code runs |
+| **Platforms** | macOS, Windows (including locked-down corporate devices), Linux (with or without a keyring) |
+| **Licence** | MIT. Every claim on this page is a file in the repository |
+
+## How it fits together
+
+<p align="center">
+  <img src="media/how-it-works.png" alt="Diagram: the extension writes nine keys to settings.json and stores the Bedrock API key in the OS keychain; Claude Code reads the settings file and talks to AWS Bedrock directly; the extension only makes one-token health checks" width="100%">
+</p>
+
+Your prompts go from Claude Code straight to AWS. The extension sits beside
+that path, not on it: it writes the configuration, keeps the key somewhere
+sensible, and runs small health checks so that "it does not work" becomes a
+sentence naming which setting is wrong.
+
+<p align="center">
+  <img src="media/upgrade-preview.png" alt="An upgrade preview listing exactly one change, the Sonnet model ID, with Cancel selected by default" width="100%">
+</p>
+
+<p align="center"><sub>Every write is previewed first. This upgrade changes one model ID, and Cancel is the default.</sub></p>
 
 ## Getting started
 

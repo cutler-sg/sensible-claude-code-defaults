@@ -36,6 +36,24 @@
     "color": "#0B2F38",
     "theme": "dark"
   },
+  "pricing": "Free",
+  "badges": [
+    {
+      "url": "https://img.shields.io/visual-studio-marketplace/v/cutler-sg.sensible-claude-code-defaults?label=Marketplace&color=5FE3B5&labelColor=0B2F38",
+      "href": "https://marketplace.visualstudio.com/items?itemName=cutler-sg.sensible-claude-code-defaults",
+      "description": "Visual Studio Marketplace version"
+    },
+    {
+      "url": "https://img.shields.io/github/actions/workflow/status/cutler-sg/sensible-claude-code-defaults/ci.yml?branch=main&label=CI&labelColor=0B2F38",
+      "href": "https://github.com/cutler-sg/sensible-claude-code-defaults/actions/workflows/ci.yml",
+      "description": "CI on Linux, macOS, and Windows"
+    },
+    {
+      "url": "https://img.shields.io/github/license/cutler-sg/sensible-claude-code-defaults?labelColor=0B2F38&color=F1ECE1",
+      "href": "https://github.com/cutler-sg/sensible-claude-code-defaults/blob/main/LICENSE",
+      "description": "MIT licence"
+    }
+  ],
   "engines": {
     "vscode": "^1.98.0"
   },
