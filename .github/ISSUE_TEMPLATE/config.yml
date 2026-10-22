@@ -3,3 +3,6 @@ contact_links:
   - name: Security problem
     url: mailto:security@cutler.sg
     about: Anything involving the Bedrock key. Please do not open a public issue.
+  - name: Install from the VS Code Marketplace
+    url: https://marketplace.visualstudio.com/items?itemName=cutler-sg.sensible-claude-code-defaults
+    about: The published extension, with the current README and changelog.

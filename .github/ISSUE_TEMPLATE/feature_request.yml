@@ -1,0 +1,36 @@
+name: Feature request
+description: Something the extension should do, or do differently
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The extension manages nine keys in `~/.claude/settings.json` and nothing else,
+        and never writes inside a project folder. Requests that stay within those
+        lines are the easiest to take.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the solution. What did you want to happen and what got in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: A sketch is fine. Mention the panel row, command, or setting you would expect it to live under.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Setup and health panel
+        - Bedrock API key handling
+        - Model availability and upgrades
+        - WSL / Remote-SSH / dev containers
+        - Corporate Windows devices
+        - Documentation
+        - Something else
+    validations:
+      required: true
