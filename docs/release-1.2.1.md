@@ -1,9 +1,13 @@
 # Release 1.2.1
 
 Prepared on 2026-10-22 for the stable Marketplace channel in
-[PR #54](https://github.com/cutler-sg/sensible-claude-code-defaults/pull/54).
-Merge, tagging, and publication remain with Michael. The changelog stays
-Unreleased until a publication date is selected.
+[PR #54](https://github.com/cutler-sg/sensible-claude-code-defaults/pull/54),
+merged as `9373054` under Michael's delegation. The public presentation refresh
+in [PR #55](https://github.com/cutler-sg/sensible-claude-code-defaults/pull/55),
+merged as `09f12d1`, ships in the same version: it changes the README, media,
+and Marketplace metadata only, so the product bundle verified below is
+unchanged. Publication was scheduled for 2026-10-23 and the changelog dated
+accordingly.
 
 ## Release notes
 
