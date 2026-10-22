@@ -18,6 +18,7 @@ The extension is published on the VS Code Marketplace as a production release
 implementation has shipped; this is maintenance work, not an initial scaffold.
 Use `CHANGELOG.md` and the current branch's plan in `plans/` for release scope.
 Historical milestone checklists are implementation records, not the live backlog.
+The live backlog and preserved research are indexed in `docs/maintenance-backlog.md`.
 Manual platform checks remain in `docs/manual-verification.md`; Open VSX setup
 is still pending. See `docs/releasing.md` before tagging a release.
 
