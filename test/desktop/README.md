@@ -19,7 +19,10 @@ real credentials; the fixture accepts only `synthetic-desktop-model-check-token`
    the product's `extensionDependencies`. This forces the interceptor to activate
    before the product captures `fetch`, including when its panel restores on
    reload. Do not change the source package or shipped VSIX for this dependency.
-5. Launch VS Code with `DISPLAY=:99`, `VSCODE_PORTABLE=<fixture>/portable`,
+5. Start a dedicated Xvfb display for this run (for example, an unused `:109`),
+   with a window manager. Do not share an existing desktop: another session can
+   steal focus and invalidate the evidence. Launch VS Code with that `DISPLAY`,
+   `VSCODE_PORTABLE=<fixture>/portable`,
    `CLAUDE_CONFIG_DIR=<fixture>/claude`, `SCD_MODEL_QA_DIR=<fixture>`, explicit
    `--user-data-dir` / `--extensions-dir`, and
    `--extensionDevelopmentPath=<fixture>/harness`. Unset inherited
@@ -28,6 +31,15 @@ real credentials; the fixture accepts only `synthetic-desktop-model-check-token`
    through the command palette; the scenario picker runs the real Recheck
    command. The expiry command changes only fixture evidence and reloads the
    window. Inspect `requests.jsonl` alongside screenshots to verify dispatch.
+7. Before each input, verify the active window is the fixture's Extension
+   Development Host. Capture that window explicitly, or capture the dedicated
+   display for native child dialogs. Verify settings bytes and backups after
+   writes; a screenshot alone does not establish that an apply succeeded.
+
+Backups are created once per successful apply session. A later upgrade in the
+same window must preserve the original backup, not replace it with the
+post-setup state. Restore independently backs up the current settings and
+clears the managed snapshot's `values`; the state file itself remains present.
 
 If no OS keyring is available, a disposable profile may use
 `--password-store=basic` for its dummy key. This does not test keyring encryption.

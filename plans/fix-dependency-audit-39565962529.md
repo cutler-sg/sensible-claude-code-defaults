@@ -20,10 +20,11 @@
 - [x] Add a failing credential-recovery regression, implement the smallest fix, and verify temporal/context boundaries (2026-10-22).
 - [x] Trace duplicate dispatch ownership and document the exact external blocker in `docs/automation-handoff.md` (2026-10-22).
 - [?] Repair the external Hadron dispatcher (blocked: separate repository/service; no supported project-scoped control).
-- [ ] Prepare 1.2.1 metadata and release notes.
-- [ ] Run automated validation and inspect both VSIX packagers.
-- [ ] Perform computer-use regression checks and record evidence and limitations.
-- [ ] Review the full diff, commit, push, open the PR, and verify the handoff state.
+- [x] Prepare 1.2.1 metadata and release notes.
+- [x] Run automated validation and inspect both VSIX packagers.
+- [x] Perform computer-use regression checks and record evidence and limitations.
+- [x] Review the full diff and prepare the final commit and existing PR #54 handoff.
+- [ ] Verify the final push, clean working tree, PR registration, and hosted checks.
 
 ## Scope and evidence
 
@@ -44,12 +45,16 @@ that exact lockfile passed on 22 October with no advisories.
 
 Michael explicitly authorized dependency remediation on 22 October 2026 after the bounded investigation established that run 39565962529 fails independently of application code. The prior cross-version fixture reproduced the same five advisories using Bun 1.3.14 and exact CI Bun 1.4.3+c6da4a4d3. This task may repair the dependency graph; no release is authorized until verification and review are complete.
 
-Desktop fixture root: `/tmp/scd-dependency-qa-20261022-Vgo9tF`. Follow `test/desktop/README.md`, use only its synthetic credential and AWS interceptor, and keep real profiles and credentials untouched. Desktop control uses `xdotool` and screenshots on the existing Xvfb display, as in the documented repository workflow.
+The completed replacement desktop fixture is `/tmp/scd121-G4qmj5`, using a
+dedicated Xvfb display `:109` with window-identity checks. It supersedes the
+interrupted `/tmp/scd-dependency-qa-20261022-Vgo9tF` run. See
+`docs/verification-1.2.1/README.md` for committed screenshots, byte-level
+assertions, request counts, isolation details, and limitations.
 
 - GitHub's advisory records identify `follow-redirects@1.16.1` and `vite@7.3.7` as the first patched releases for the five reported advisories. They satisfy the existing Open VSX and Vitest dependency ranges. Only their resolved versions and integrity hashes change.
-- The focused `verify-patched-graph.cjs` fixture fails against the baseline, then passes against the repaired lockfile. It checks every matching dependency path and asserts byte-identical `package.json`, including the VS Code floor. Frozen installation succeeds and installs exactly two changed packages.
+- The initial focused `verify-patched-graph.cjs` fixture failed against the baseline, then passed against the repaired lockfile. It checked every matching dependency path and the then-unchanged `package.json`, including the VS Code floor. The later release preparation changes only its version to 1.2.1. Frozen installation succeeds and installs exactly two changed packages.
 - A disposable Bun resolver selected Vite 8 despite a targeted patch request. That graph was discarded. The retained Vite 7 patch uses published integrity metadata, has unchanged dependency metadata verified against its package archive, and passes frozen installation.
-- Lint and typechecking pass; all 2,088 unit tests pass with two existing skips. Audit requests are currently waiting on the npm advisory endpoint; a separate bounded HTTP request also timed out. This is recorded as pending verification, not an audit pass.
+- The initial audit endpoint timeouts were resolved. Fresh `bun audit` runs pass with no vulnerabilities; the final validation below supersedes the earlier pending audit and 2,088-test baseline.
 
 ## Credential recovery repair
 
@@ -71,3 +76,18 @@ health and `models-unavailable`, rather than conflating those two facts.
 All 2,094 unit tests pass with two existing skips; lint and typechecking pass.
 Independent review found no remaining issues, including timestamp ties, future
 evidence, cross-window recovery, and alternative-model cache lifetimes.
+
+## Final validation and handoff
+
+The 1.2.1 candidate passes frozen installation, audit, lint, typechecking, all
+2,094 unit tests (two existing skips), and Linux extension-host suites on
+VS Code 1.142.0 and 1.98.2 (seven passing and one Windows-only skip each).
+Both packager paths produce the expected ten archive entries with equivalent
+contents. The desktop-tested product bundle matches the final package.
+The fixture window and dedicated display processes exited normally.
+
+See `docs/release-1.2.1.md` for release notes and exact publication steps.
+The changelog remains Unreleased until publication is scheduled, as required
+by `docs/releasing.md`. Hosted checks must pass on the final pushed commit;
+review their current state in PR #54. Hadron's external repair remains a
+separate explicit blocker, not an implemented fix.

@@ -6,16 +6,20 @@ plans describe earlier decisions and proposals. Release preparation is tracked i
 
 ## Release 1.2.1
 
-- Patch the `follow-redirects` and Vite development dependency advisories in PR #54.
-- Fix U1 from the [UX review](uiux-review-2026-09-30.md): a successful credential
+- [x] Patch the `follow-redirects` and Vite development dependency advisories in PR #54.
+- [x] Fix U1 from the [UX review](uiux-review-2026-09-30.md): a successful credential
   recovery must supersede an older rejection after subsequent offline or
   rate-limited checks. Preserve expiry, newer rejections, and credential/context
   isolation. Model access must remain inconclusive after a transient failure.
-- Complete packaged desktop verification, including upgrade consent, drift,
+- [x] Complete packaged desktop verification, including upgrade consent, drift,
   backup/restore, and the recovered-credential sequence. The interrupted
   2026-10-22 run is partial evidence only.
-- Validate the release candidate and retain the existing manual-environment
+- [x] Validate the release candidate and retain the existing manual-environment
   limitations in its handoff. Publication follows the reviewed merge.
+
+The [release handoff](release-1.2.1.md) and
+[completed desktop report](verification-1.2.1/README.md) record the results.
+The final PR checks and reviewed publication steps remain the release gates.
 
 ## Deferred UX proposals
 
@@ -49,6 +53,7 @@ test environment before implementation.
   daily dependency audit remains enabled. Its investigation routing must reuse
   an existing repair PR across daily run IDs and permit compatible dependency
   repairs; repository documentation alone cannot change the active dispatcher.
+  Exact ownership and acceptance criteria are in [the automation handoff](automation-handoff.md).
 - Live AWS entitlement, routing, billing, and subscription behaviour require a
   designated account. Synthetic fixtures do not establish those properties.
 - Physical Keychain/DPAPI, corporate-device policy, WSL/Remote-SSH placement,
