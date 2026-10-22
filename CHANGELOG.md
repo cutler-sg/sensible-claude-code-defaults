@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Patched the transitive `follow-redirects` and Vite development dependencies. They are not bundled with the extension.
 - Preserved the earlier UX review and Azure Foundry research, with deferred proposals tracked in the maintenance backlog.
+- Refreshed the public README with screenshots from the packaged verification run, a how-it-works diagram, and Marketplace badges. Added a code of conduct and structured issue forms. No extension behaviour changed.
 
 ## [1.2.0] - 2026-10-20
 

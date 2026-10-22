@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 640" width="1400" height="640" role="img" aria-label="How Sensible Claude Code Defaults fits between VS Code, your settings file, your keychain, Claude Code, and AWS Bedrock">
+  <!-- Master for media/how-it-works.png. The Marketplace README rejects SVG images,
+       so the PNG is what the README references; edit this file and re-render. -->
+  <defs>
+    <style>
+      text { font-family: Inter, "Segoe UI", "Liberation Sans", "DejaVu Sans", Arial, sans-serif; fill: #F1ECE1; }
+      .eyebrow { font-size: 13px; letter-spacing: 2px; fill: #9DB7BC; font-weight: 600; }
+      .title { font-size: 22px; font-weight: 700; }
+      .mono { font-family: "JetBrains Mono", "SF Mono", Menlo, "Liberation Mono", "DejaVu Sans Mono", monospace; font-size: 18px; font-weight: 700; }
+      .body { font-size: 15px; fill: #C9D6D8; }
+      .label { font-size: 13px; fill: #5FE3B5; font-weight: 600; }
+      .footer { font-size: 14px; fill: #9DB7BC; }
+      .box { fill: #113E49; stroke: #1C5461; stroke-width: 2; }
+      .inner { fill: #0B2F38; stroke: #5FE3B5; stroke-width: 2; }
+      .flow { stroke: #5FE3B5; stroke-width: 3; fill: none; }
+      .check { stroke: #5FE3B5; stroke-width: 2.5; fill: none; stroke-dasharray: 7 7; }
+      .thin { stroke: #9DB7BC; stroke-width: 2; fill: none; stroke-dasharray: 4 6; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#5FE3B5"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#9DB7BC"/>
+    </marker>
+  </defs>
+
+  <rect width="1400" height="640" rx="28" fill="#0B2F38"/>
+
+  <!-- VS Code -->
+  <rect class="box" x="60" y="110" width="330" height="400" rx="18"/>
+  <text class="eyebrow" x="84" y="148">VS CODE</text>
+  <rect class="inner" x="84" y="172" width="286" height="306" rx="14"/>
+  <g transform="translate(112 196) scale(0.5)">
+    <path d="M34 32c-8 0-11 4-11 11v10c0 7-3 11-10 11 7 0 10 4 10 11v10c0 7 3 11 11 11 M94 32c8 0 11 4 11 11v10c0 7 3 11 10 11-7 0-10 4-10 11v10c0 7-3 11-11 11" fill="none" stroke="#F1ECE1" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M40 64h10l6-14 9 30 7-22 4 6h12" fill="none" stroke="#5FE3B5" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text class="title" x="108" y="300">Sensible Claude</text>
+  <text class="title" x="108" y="328">Code Defaults</text>
+  <text class="body" x="108" y="372">Guided setup, one button</text>
+  <text class="body" x="108" y="398">A panel that names the fault</text>
+  <text class="body" x="108" y="424">Diagnostics, key redacted</text>
+  <text class="body" x="108" y="450">Preview and backup first</text>
+
+  <!-- settings.json -->
+  <rect class="box" x="540" y="110" width="320" height="170" rx="16"/>
+  <text class="mono" x="564" y="150">~/.claude/settings.json</text>
+  <text class="body" x="564" y="186">Nine managed keys, nothing else</text>
+  <text class="body" x="564" y="212">Backed up before every change</text>
+  <text class="body" x="564" y="238">Your other settings left untouched</text>
+
+  <!-- keychain -->
+  <rect class="box" x="540" y="340" width="320" height="170" rx="16"/>
+  <text class="title" x="564" y="380">OS keychain</text>
+  <text class="body" x="564" y="406">through VS Code secret storage</text>
+  <text class="body" x="564" y="442">Holds your Bedrock API key</text>
+  <text class="body" x="564" y="468">Reminds you to rotate at 90 days</text>
+
+  <!-- Claude Code -->
+  <rect class="box" x="1000" y="110" width="340" height="170" rx="16"/>
+  <text class="title" x="1024" y="150">Claude Code</text>
+  <text class="body" x="1024" y="186">Reads the settings file at launch</text>
+  <text class="body" x="1024" y="212">Talks to AWS directly</text>
+  <text class="body" x="1024" y="238">This extension never sees a prompt</text>
+
+  <!-- AWS Bedrock -->
+  <rect class="box" x="1000" y="340" width="340" height="170" rx="16"/>
+  <text class="title" x="1024" y="380">AWS Bedrock</text>
+  <text class="body" x="1024" y="416">Your account, your region</text>
+  <text class="body" x="1024" y="442">Opus, Sonnet, and Haiku pins</text>
+  <text class="body" x="1024" y="468">each verified separately</text>
+
+  <!-- Flows -->
+  <path class="flow" d="M390 195H540" marker-end="url(#arrow)"/>
+  <text class="label" x="465" y="182" text-anchor="middle">writes, after a preview</text>
+
+  <path class="flow" d="M390 425H540" marker-end="url(#arrow)"/>
+  <text class="label" x="465" y="412" text-anchor="middle">stores the key</text>
+
+  <path class="flow" d="M860 195H1000" marker-end="url(#arrow)"/>
+  <text class="label" x="930" y="182" text-anchor="middle">read at launch</text>
+
+  <path class="flow" d="M1170 280V340" marker-end="url(#arrow)"/>
+  <text class="label" x="1186" y="315">prompts and responses</text>
+
+  <path class="thin" d="M700 340V280" marker-end="url(#arrow-muted)"/>
+  <text class="footer" x="712" y="316">copied in, readable only by you</text>
+
+  <path class="check" d="M225 510V560H1170V510" marker-end="url(#arrow)"/>
+  <text class="label" x="700" y="552" text-anchor="middle">health checks: one-token invocations, model availability, nothing from your project</text>
+
+  <!-- Footer -->
+  <text class="footer" x="700" y="612" text-anchor="middle">Never writes inside a project folder  ·  Sends no telemetry  ·  Independent of Anthropic and AWS  ·  MIT licensed</text>
+</svg>
