@@ -324,6 +324,14 @@ export class ModelAvailabilityService {
           const previous = this.validEvidence(candidate);
           const now = this.now();
           const lastCredentialFailureAt = this.credentialFailureAt();
+          // Metadata changes invalidate model-access evidence, not the fact
+          // that this same target accepted the credential in this context.
+          const historical = this.evidence.get(candidate.target.id);
+          const lastSuccessAt =
+            historical && historical.checkedAt <= now + 60_000
+              ? (historical.lastSuccessAt ??
+                (historical.status === "available" ? historical.checkedAt : undefined))
+              : undefined;
           // A crash during dispatch still backs off instead of causing an activation loop.
           this.evidence.set(candidate.target.id, {
             modelId: candidate.target.id,
@@ -335,9 +343,7 @@ export class ModelAvailabilityService {
             nextCheckAt: now + 900_000,
             failures: previous?.failures ?? 0,
             ...(lastCredentialFailureAt >= 0 ? { lastCredentialFailureAt } : {}),
-            ...(previous?.lastSuccessAt !== undefined
-              ? { lastSuccessAt: previous.lastSuccessAt }
-              : {}),
+            ...(lastSuccessAt !== undefined ? { lastSuccessAt } : {}),
           });
           this.checkingIds.add(candidate.target.id);
           if (!(await persist()) || !active()) return;
@@ -393,8 +399,8 @@ export class ModelAvailabilityService {
                 : {}),
             ...(outcome.status === "available"
               ? { lastSuccessAt: checkedAt }
-              : previous?.lastSuccessAt !== undefined
-                ? { lastSuccessAt: previous.lastSuccessAt }
+              : lastSuccessAt !== undefined
+                ? { lastSuccessAt }
                 : {}),
             ...(preflight ? { preflight } : {}),
           });

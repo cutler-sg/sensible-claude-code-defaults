@@ -76,9 +76,13 @@ function runtimeCalls(call: typeof fetch) {
 }
 
 describe("model availability scheduling", () => {
-  it.each(["offline", "throttled"])(
-    "retains recovered authentication through %s checks without claiming model access",
-    async (failure) => {
+  it.each([
+    { failure: "offline", metadataChanged: false },
+    { failure: "throttled", metadataChanged: false },
+    { failure: "offline", metadataChanged: true },
+  ])(
+    "retains recovered authentication without claiming model access: %j",
+    async ({ failure, metadataChanged }) => {
       let now = DAY;
       const store = new Store();
       const call = goodFetch();
@@ -101,6 +105,13 @@ describe("model availability scheduling", () => {
       await service.refresh({ force: true });
       expect(service.snapshot().credential).toBe("valid");
       const recoveredAt = now;
+
+      if (metadataChanged) {
+        for (const definition of input.manifest.models ?? []) {
+          for (const target of definition.targets) target.sourceRegions.push("us-west-2");
+        }
+        await service.setContext(input);
+      }
 
       now++;
       vi.mocked(call).mockImplementation(transient);

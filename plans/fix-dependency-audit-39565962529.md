@@ -18,7 +18,8 @@
 - [x] Apply the minimal dependency fix; verify the repaired graph and package compatibility.
 - [x] Preserve the unmerged research and UX findings; record release scope and remaining backlog (2026-10-22).
 - [x] Add a failing credential-recovery regression, implement the smallest fix, and verify temporal/context boundaries (2026-10-22).
-- [ ] Trace duplicate dispatch ownership and apply supported project-scoped controls or document the exact external blocker.
+- [x] Trace duplicate dispatch ownership and document the exact external blocker in `docs/automation-handoff.md` (2026-10-22).
+- [?] Repair the external Hadron dispatcher (blocked: separate repository/service; no supported project-scoped control).
 - [ ] Prepare 1.2.1 metadata and release notes.
 - [ ] Run automated validation and inspect both VSIX packagers.
 - [ ] Perform computer-use regression checks and record evidence and limitations.
@@ -52,7 +53,7 @@ Desktop fixture root: `/tmp/scd-dependency-qa-20261022-Vgo9tF`. Follow `test/des
 
 ## Credential recovery repair
 
-Five new regression cases fail against the original implementation and pass
+Six new regression cases fail against the original implementation and pass
 after the fix. They cover rejected → recovered → offline/throttled, persistence
 across restart, processing-policy exclusion, 24-hour expiry, a newer rejection,
 and isolation by credential generation, source region, and configuration path.
@@ -60,3 +61,13 @@ Authentication uses the newest success/rejection in its persisted context,
 with a 24-hour lifetime; alternative model availability may still be cached for
 seven days. Current failed model checks remain inconclusive and cannot drive an
 upgrade from historical successful authentication.
+
+Independent review reproduced an additional metadata-change edge: invalidating
+model metadata erased historical success during the next transient request.
+The follow-up preserves historical same-target authentication independently of
+metadata validity. Its regression fails before the follow-up and passes after.
+The controller test now asserts valid historical authentication alongside warning
+health and `models-unavailable`, rather than conflating those two facts.
+All 2,094 unit tests pass with two existing skips; lint and typechecking pass.
+Independent review found no remaining issues, including timestamp ties, future
+evidence, cross-window recovery, and alternative-model cache lifetimes.
