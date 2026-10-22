@@ -24,7 +24,7 @@
 - [x] Run automated validation and inspect both VSIX packagers.
 - [x] Perform computer-use regression checks and record evidence and limitations.
 - [x] Review the full diff and prepare the final commit and existing PR #54 handoff.
-- [ ] Verify the final push, clean working tree, PR registration, and hosted checks.
+- [x] Verify the final push, clean working tree, PR registration, and hosted checks.
 
 ## Scope and evidence
 
@@ -91,3 +91,10 @@ The changelog remains Unreleased until publication is scheduled, as required
 by `docs/releasing.md`. Hosted checks must pass on the final pushed commit;
 review their current state in PR #54. Hadron's external repair remains a
 separate explicit blocker, not an implemented fix.
+
+Candidate `4032471` passed all nine hosted check entries: the five platform
+jobs, packaging, dependency audit, and both CodeQL entries. The
+[CI run](https://github.com/cutler-sg/sensible-claude-code-defaults/actions/runs/39796996950)
+completed successfully on that exact SHA. Every entry in its downloaded VSIX
+matches the locally validated package. The subsequent completion commit only
+records this evidence; PR Checks remains authoritative for its own result.

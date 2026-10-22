@@ -42,6 +42,12 @@ with future work tracked in [the maintenance backlog](maintenance-backlog.md).
   Archive timestamps can differ between builds; entry contents were compared.
 - Independent review found and verified the catalogue-change edge case before
   completion, then found no remaining correctness blockers.
+- Candidate `4032471` passed all nine hosted check entries, including the
+  [platform matrix and packaging](https://github.com/cutler-sg/sensible-claude-code-defaults/actions/runs/39796996950),
+  [dependency audit](https://github.com/cutler-sg/sensible-claude-code-defaults/actions/runs/39797005183),
+  and [CodeQL](https://github.com/cutler-sg/sensible-claude-code-defaults/actions/runs/39797005199).
+  All ten entries in the downloaded hosted VSIX match the locally validated
+  package, including the desktop-tested product bundle.
 
 The PR checks report the final pushed commit's platform matrix, dependency
 audit, package, and CodeQL results. Earlier green commits do not establish that
