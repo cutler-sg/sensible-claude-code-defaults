@@ -33,7 +33,7 @@ asset derived from the existing icon.
 - [x] Add a CHANGELOG line under 1.2.1.
 - [x] Verify: `bun run lint`, `vsce ls` shows no new media beyond the icon and
       README-referenced images, package size unchanged within a few KB.
-- [ ] Open PR; link it to the thread.
+- [x] Open PR #55; linked to the thread.
 
 ## Proposals for Michael (repo settings, not in this PR)
 
