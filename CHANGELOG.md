@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - Unreleased
+
+### Fixed
+
+- A recovered Bedrock credential no longer reappears as rejected after an offline or rate-limited model check. Authentication evidence follows the latest success or rejection in the current credential context and expires after 24 hours. Transient model failures remain inconclusive, and a newer credential rejection still takes precedence.
+- Historical authentication survives catalogue metadata updates without treating previous model access as current verification.
+
+### Maintenance
+
+- Patched the transitive `follow-redirects` and Vite development dependencies. They are not bundled with the extension.
+- Preserved the earlier UX review and Azure Foundry research, with deferred proposals tracked in the maintenance backlog.
+
 ## [1.2.0] - 2026-10-20
 
 ### Added

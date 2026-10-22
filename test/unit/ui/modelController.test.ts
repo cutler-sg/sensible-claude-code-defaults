@@ -7,6 +7,7 @@ import { BUNDLED_MANIFEST } from "../../../src/manifest/bundled.js";
 import type { Manifest } from "../../../src/manifest/types.js";
 import { FileModelStore } from "../../../src/models/store.js";
 import { ModelController } from "../../../src/ui/modelController.js";
+import { connectionFromModels, modelHealth } from "../../../src/ui/modelPresentation.js";
 
 const TOKEN = "synthetic-controller-test-credential";
 const modelId = "global.anthropic.claude-sonnet-test";
@@ -203,7 +204,12 @@ describe("model host coordination", () => {
     const r = controller.panel().snapshot.rows.find((r) => r.configured);
     expect(r?.status).toBe("network-error");
     expect(r?.lastSuccessAt).toBe(now);
-    expect(controller.panel().snapshot.credential).toBe("unknown");
+    expect(controller.panel().snapshot.credential).toBe("valid");
+    expect(modelHealth(controller.panel().snapshot).level).toBe("warning");
+    expect(connectionFromModels(controller.panel().snapshot)).toEqual({
+      kind: "models-unavailable",
+      working: 0,
+    });
   });
   it("never exports credential identities or mutates configuration while probing", async () => {
     const before = await readFile(join(dir, "settings.json"), "utf8");

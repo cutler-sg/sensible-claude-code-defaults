@@ -159,20 +159,26 @@ export class ModelAvailabilityService {
     const lastCheckedAt = current.length
       ? Math.max(...current.map((row) => row.checkedAt ?? 0))
       : undefined;
+    // Authentication evidence belongs to the credential context, independently
+    // of current model outcomes or processing-policy filters. Transient retries
+    // retain the last success and must not revive an older credential rejection.
     const successAt = Math.max(
       -1,
-      ...current
-        .filter((row) => row.status === "available" && !row.stale)
-        .map((row) => row.checkedAt ?? -1),
+      ...[...this.evidence.values()]
+        .filter((evidence) => evidence.checkedAt <= now + 60_000)
+        .map(
+          (evidence) =>
+            evidence.lastSuccessAt ?? (evidence.status === "available" ? evidence.checkedAt : -1),
+        ),
     );
     return {
       rows,
       checking: this.inFlight !== undefined,
       region: context.region,
       credential:
-        successAt > invalidAt
+        successAt > invalidAt && now < successAt + DAY
           ? "valid"
-          : invalidAt >= 0 && now < invalidAt + DAY
+          : invalidAt >= successAt && invalidAt >= 0 && now < invalidAt + DAY
             ? "invalid"
             : "unknown",
       ...(lastCheckedAt === undefined ? {} : { lastCheckedAt }),
@@ -318,6 +324,14 @@ export class ModelAvailabilityService {
           const previous = this.validEvidence(candidate);
           const now = this.now();
           const lastCredentialFailureAt = this.credentialFailureAt();
+          // Metadata changes invalidate model-access evidence, not the fact
+          // that this same target accepted the credential in this context.
+          const historical = this.evidence.get(candidate.target.id);
+          const lastSuccessAt =
+            historical && historical.checkedAt <= now + 60_000
+              ? (historical.lastSuccessAt ??
+                (historical.status === "available" ? historical.checkedAt : undefined))
+              : undefined;
           // A crash during dispatch still backs off instead of causing an activation loop.
           this.evidence.set(candidate.target.id, {
             modelId: candidate.target.id,
@@ -329,9 +343,7 @@ export class ModelAvailabilityService {
             nextCheckAt: now + 900_000,
             failures: previous?.failures ?? 0,
             ...(lastCredentialFailureAt >= 0 ? { lastCredentialFailureAt } : {}),
-            ...(previous?.lastSuccessAt !== undefined
-              ? { lastSuccessAt: previous.lastSuccessAt }
-              : {}),
+            ...(lastSuccessAt !== undefined ? { lastSuccessAt } : {}),
           });
           this.checkingIds.add(candidate.target.id);
           if (!(await persist()) || !active()) return;
@@ -387,8 +399,8 @@ export class ModelAvailabilityService {
                 : {}),
             ...(outcome.status === "available"
               ? { lastSuccessAt: checkedAt }
-              : previous?.lastSuccessAt !== undefined
-                ? { lastSuccessAt: previous.lastSuccessAt }
+              : lastSuccessAt !== undefined
+                ? { lastSuccessAt }
                 : {}),
             ...(preflight ? { preflight } : {}),
           });

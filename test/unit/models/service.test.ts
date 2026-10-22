@@ -76,6 +76,109 @@ function runtimeCalls(call: typeof fetch) {
 }
 
 describe("model availability scheduling", () => {
+  it.each([
+    { failure: "offline", metadataChanged: false },
+    { failure: "throttled", metadataChanged: false },
+    { failure: "offline", metadataChanged: true },
+  ])(
+    "retains recovered authentication without claiming model access: %j",
+    async ({ failure, metadataChanged }) => {
+      let now = DAY;
+      const store = new Store();
+      const call = goodFetch();
+      const options = { store, fetch: call, now: () => now };
+      let service = new ModelAvailabilityService(options);
+      const input = context([model("opus"), model("sonnet"), model("haiku"), model("sonnet", 2)]);
+      const reject = async () =>
+        new Response(JSON.stringify({ __type: "ExpiredTokenException" }), { status: 403 });
+      const transient = async () => {
+        if (failure === "offline") throw new TypeError("Synthetic network failure");
+        return new Response("{}", { status: 429 });
+      };
+      await service.setContext(input);
+      vi.mocked(call).mockImplementation(reject);
+      await service.refresh({ force: true });
+      expect(service.snapshot().credential).toBe("invalid");
+
+      now++;
+      vi.mocked(call).mockImplementation(goodFetch());
+      await service.refresh({ force: true });
+      expect(service.snapshot().credential).toBe("valid");
+      const recoveredAt = now;
+
+      if (metadataChanged) {
+        for (const definition of input.manifest.models ?? []) {
+          for (const target of definition.targets) target.sourceRegions.push("us-west-2");
+        }
+        await service.setContext(input);
+      }
+
+      now++;
+      vi.mocked(call).mockImplementation(transient);
+      await service.refresh({ force: true });
+      expect(service.snapshot().credential).toBe("valid");
+      expect(
+        service
+          .snapshot()
+          .rows.every(
+            (row) => row.status === (failure === "offline" ? "network-error" : "throttled"),
+          ),
+      ).toBe(true);
+      expect(service.recommendedManifest()?.defaults.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
+        input.configured.sonnet,
+      );
+      service.dispose();
+      service = new ModelAvailabilityService(options);
+      await service.setContext(input);
+      expect(service.snapshot().credential).toBe("valid");
+      await service.setContext({ ...input, allowedScopes: [] });
+      expect(service.snapshot().credential).toBe("valid");
+      expect(service.snapshot().rows.every((row) => row.status === "out-of-scope")).toBe(true);
+      await service.setContext(input);
+
+      now = recoveredAt + DAY;
+      expect(service.snapshot().credential).toBe("unknown");
+      now++;
+      vi.mocked(call).mockImplementation(goodFetch());
+      await service.refresh({ force: true });
+      now++;
+      vi.mocked(call).mockImplementation(reject);
+      await service.refresh({ force: true });
+      expect(service.snapshot().credential).toBe("invalid");
+      now++;
+      vi.mocked(call).mockImplementation(transient);
+      await service.refresh({ force: true });
+      expect(service.snapshot().credential).toBe("invalid");
+      service.dispose();
+    },
+  );
+
+  it.each([
+    { credentialGeneration: "replacement" },
+    { region: "ap-southeast-1" },
+    { configLocation: "/another/config" },
+  ])("does not carry historical authentication across context changes: %j", async (change) => {
+    let now = DAY;
+    const call = goodFetch();
+    const service = new ModelAvailabilityService({
+      store: new Store(),
+      fetch: call,
+      now: () => now,
+    });
+    const input = context();
+    await service.setContext(input);
+    await service.refresh();
+    now++;
+    vi.mocked(call).mockImplementation(async () => new Response("{}", { status: 503 }));
+    await service.refresh({ force: true });
+    expect(service.snapshot().credential).toBe("valid");
+    await service.setContext({ ...input, ...change });
+    expect(service.snapshot().credential).toBe("unknown");
+    await service.refresh({ force: true });
+    expect(service.snapshot().credential).toBe("unknown");
+    service.dispose();
+  });
+
   it("never resurrects older successful alternatives after a credential rejection expires or its row is excluded", async () => {
     let now = DAY;
     const store = new Store();
