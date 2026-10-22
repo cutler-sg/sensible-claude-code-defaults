@@ -17,7 +17,7 @@
 - [x] Reproduce advisories and identify their patched releases and dependency paths.
 - [x] Apply the minimal dependency fix; verify the repaired graph and package compatibility.
 - [x] Preserve the unmerged research and UX findings; record release scope and remaining backlog (2026-10-22).
-- [ ] Add a failing credential-recovery regression, implement the smallest fix, and verify temporal/context boundaries.
+- [x] Add a failing credential-recovery regression, implement the smallest fix, and verify temporal/context boundaries (2026-10-22).
 - [ ] Trace duplicate dispatch ownership and apply supported project-scoped controls or document the exact external blocker.
 - [ ] Prepare 1.2.1 metadata and release notes.
 - [ ] Run automated validation and inspect both VSIX packagers.
@@ -49,3 +49,14 @@ Desktop fixture root: `/tmp/scd-dependency-qa-20261022-Vgo9tF`. Follow `test/des
 - The focused `verify-patched-graph.cjs` fixture fails against the baseline, then passes against the repaired lockfile. It checks every matching dependency path and asserts byte-identical `package.json`, including the VS Code floor. Frozen installation succeeds and installs exactly two changed packages.
 - A disposable Bun resolver selected Vite 8 despite a targeted patch request. That graph was discarded. The retained Vite 7 patch uses published integrity metadata, has unchanged dependency metadata verified against its package archive, and passes frozen installation.
 - Lint and typechecking pass; all 2,088 unit tests pass with two existing skips. Audit requests are currently waiting on the npm advisory endpoint; a separate bounded HTTP request also timed out. This is recorded as pending verification, not an audit pass.
+
+## Credential recovery repair
+
+Five new regression cases fail against the original implementation and pass
+after the fix. They cover rejected → recovered → offline/throttled, persistence
+across restart, processing-policy exclusion, 24-hour expiry, a newer rejection,
+and isolation by credential generation, source region, and configuration path.
+Authentication uses the newest success/rejection in its persisted context,
+with a 24-hour lifetime; alternative model availability may still be cached for
+seven days. Current failed model checks remain inconclusive and cannot drive an
+upgrade from historical successful authentication.
