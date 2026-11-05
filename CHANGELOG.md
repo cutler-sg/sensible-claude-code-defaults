@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.1] - 2026-10-23
+## [1.2.1] - 2026-11-06
 
 ### Fixed
 
@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Maintenance
 
 - Patched the transitive `follow-redirects` and Vite development dependencies. They are not bundled with the extension.
+- Resolved later advisories in the test and publishing toolchain: `happy-dom`, `@azure/msal-node` (through `vsce`), `glob`, `minimatch`, `qs`, and `serialize-javascript`. None are bundled with the extension, and the packaged extension code is unchanged.
 - Preserved the earlier UX review and Azure Foundry research, with deferred proposals tracked in the maintenance backlog.
 - Refreshed the public README with screenshots from the packaged verification run, a how-it-works diagram, and Marketplace badges. Added a code of conduct and structured issue forms. No extension behaviour changed.
 
