@@ -358,19 +358,19 @@
     "minimatch": "^11.0.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.5",
+    "@biomejs/biome": "^2.6.9",
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.6.6",
     "@types/vscode": "~1.98.0",
-    "@vitest/coverage-v8": "^5.1.0",
+    "@vitest/coverage-v8": "^5.1.1",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^4.1.0",
+    "@vscode/vsce": "^4.1.1",
     "esbuild": "^0.28.2",
     "happy-dom": "^21.0.4",
     "mocha": "^12.0.3",
-    "ovsx": "^1.3.0",
+    "ovsx": "^1.4.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   }
 }
